@@ -115,6 +115,24 @@ describe("app.ws on Cloudflare Workers (WebSocketPair)", () => {
     expect(c!.sent).toEqual(["hello"]);
   });
 
+  test("app.publish reaches every subscriber in this isolate", async () => {
+    const app = new Miu({ logger: false }).ws("/ws", {
+      open(ws) {
+        if (ws.data === undefined) ws.subscribe("t");
+      },
+    });
+    await app.request("/ws", { headers: H });
+    await app.request("/ws", { headers: H });
+    await tick();
+    app.publish("t", "all");
+    app.publish("t", { n: 1 });
+    app.publish("other", "nobody");
+    expect(pairs.map((p) => p.server.sent)).toEqual([
+      ["all", JSON.stringify({ n: 1 })],
+      ["all", JSON.stringify({ n: 1 })],
+    ]);
+  });
+
   test("close() and readyState go to the underlying socket", async () => {
     const app = new Miu({ logger: false }).ws("/c", { open: (ws) => ws.close(4001, `state:${ws.readyState}`) });
     await app.request("/c", { headers: H });
