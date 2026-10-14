@@ -1,6 +1,6 @@
 # MiuJS
 
-**As fast as Hono and closing in on Elysia, runs anywhere, and every route is automatically an agent tool.**
+**Fast (ahead of Hono, ~90% of Elysia), secure by default, runs anywhere, and every route is automatically an agent tool.**
 
 MiuJS is an open-source TypeScript web framework for Bun, Node and Cloudflare Workers, built for apps that
 humans *and* AI agents use. Declare a route with a schema once, and you get:
@@ -10,10 +10,10 @@ humans *and* AI agents use. Declare a route with a schema once, and you get:
 - an **OpenAPI 3.1** operation
 - consistent **RFC 9457 problem+json** errors
 
-> Status: **v0.3 — feature-complete preview.** Core, batteries, Cloudflare, realtime, migration kit, CLI and
-> tooling are done and tested (432 tests). Remaining work toward 1.0 (compiled build, typed client, Elysia-level
-> GET throughput, CI) is in [docs/ROADMAP.md](docs/ROADMAP.md). Full guide: [docs/guide.md](docs/guide.md),
-> deployment: [docs/deploy.md](docs/deploy.md).
+> Status: **v0.4 — 1.0 candidate.** Core, batteries, Cloudflare, realtime (Bun/Node/Workers), migration kit, CLI,
+> typed client, DevTools debugging, Redis drivers and MCP OAuth are done and tested (641 tests, CI on every push).
+> Next: app kits — a generated admin back-office and a virtual-tour kit ([docs/ROADMAP.md](docs/ROADMAP.md)).
+> Guides: [docs/guide.md](docs/guide.md), [docs/deploy.md](docs/deploy.md), [docs/debugging.md](docs/debugging.md).
 
 ## Quick start
 
@@ -58,8 +58,8 @@ curl -X POST localhost:3000/mcp -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"post_todos","arguments":{"title":"Ship it"}}}'
 ```
 
-> **Bun note:** Bun automatically serves an entry file's default export if it has a `fetch` method. Use either
-> `export default app` *or* `app.listen(port)` in your entry file, not both.
+> **Bun note:** `app.listen(port)` (or `Bun.serve(app.serveOptions({ port }))`) is the fastest way to serve: it
+> registers routes with Bun's native router. `export default app` also works (via `fetch`) — use one or the other.
 
 ## Runs anywhere
 
@@ -238,7 +238,8 @@ app.ws("/rooms/:id", {
 
 Works on Bun (native pub/sub) and Workers (`WebSocketPair`); `MiuRoom` is a hibernating Durable Object room for
 cross-connection state on Cloudflare; `createGame()` runs Kahoot-style rounds with speed-based scoring — see
-`examples/quiz`. Node WebSockets are not supported yet (501).
+`examples/quiz`. On Node, `serve(app)` from `miujs/node` handles WebSockets with a built-in, dependency-free
+server (size, masking, UTF-8, idle and backpressure limits). `app.publish(topic, data)` broadcasts on every runtime.
 
 ## Migrating from PHP / Python (`miujs/migrate`)
 
@@ -270,18 +271,58 @@ app
 `app.use(llms())` serves `/llms.txt` and `/llms-full.txt`. `miujs/client` has `createClient()` (HTTP, problem+json
 errors) and `createMcpClient()` for testing agent access.
 
+## Typed client
+
+```ts
+export const app = new Miu()
+  .get("/todos/:id", { params: t.object({ id: t.integer() }), response: Todo }, (c) => db.todo(c.params.id))
+  .post("/todos", { body: t.object({ title: t.string() }) }, (c) => db.create(c.body));
+export type App = typeof app;
+
+// elsewhere
+import { createClient } from "miujs/client";
+const api = createClient<App>("https://api.example.com");
+const todo = await api.get("/todos/:id", { params: { id: 1 } }); // typed from the Todo schema
+// api.get("/todos/:id")  -> type error: params required
+```
+
+Chain route registrations so the type records them; handlers returning `c.json(...)` give `unknown` — add a
+`response` schema for a typed result.
+
+## Security and scale
+
+- **Agents with OAuth:** `app.use(mcpAuth({ resource, authorizationServers, verify: mcpJwtVerifier({ key: jwks, algorithms: ["RS256"] }) }))`
+  serves RFC 9728 metadata and makes MCP tool calls run as the token's user.
+- **JWT:** HS256, EdDSA, RS256, ES256 and remote JWKS; algorithms are an explicit allow-list bound to the key type.
+- **Redis:** `redisStore(client)` and `redisQueueDriver(client)` work with `Bun.RedisClient`, ioredis or node-redis —
+  swap them in for SQLite when you run more than one instance.
+- **Laravel:** `laravelSessionBridge({ appKey, read })` in `miujs/migrate` reads encrypted Laravel sessions.
+
+## Debugging in browser DevTools
+
+```ts
+import { inspector, timing, devLogger, devErrors } from "miujs";
+app.use(inspector()).use(timing()).use(devLogger()).onError(devErrors());
+```
+
+`Server-Timing` shows up in the Network tab, dev errors render with stack traces (secrets redacted), and
+`/__miu` is a live request inspector. All of it is off in production; the inspector only answers on loopback and
+requires a token printed to the console. Run `MIU_ENV=development bun --inspect app.ts` for breakpoints — see
+[docs/debugging.md](docs/debugging.md).
+
 ## Performance
 
-Measured against Hono and Elysia on the same machine (`bench/`, full tables in
-[bench/results.md](bench/results.md)): Miu is on par with Hono over the network, Elysia is ~15–25% faster on
-simple GET routes, and Miu is within ~15% of Elysia on validated JSON POSTs. Closing the GET gap is on the 1.0
-roadmap.
+Measured on the same machine against Hono and Elysia ([bench/results.md](bench/results.md)): over the network Miu is
+level with Hono on plain text, ~15% ahead of Hono on JSON params and validated POSTs, ~90% of Elysia on simple
+GETs, and level with Elysia on validated POSTs.
 
 ## Development
 
 ```bash
 bun install
-bun test           # 432 tests
+bun test           # 641 tests
+bun run build      # dist/ with source maps
+bun run typecheck:cf  # Cloudflare binding types
 bun run bench:micro  # in-process framework benchmark
 bun run typecheck
 bun examples/basic.ts

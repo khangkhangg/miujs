@@ -1,6 +1,6 @@
 {
   "name": "create-miu",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Scaffold a new MiuJS app: npm create miu@latest my-app / bun create miu my-app",
   "type": "module",
   "license": "AGPL-3.0-or-later",
@@ -27,6 +27,6 @@
     "template"
   ],
   "dependencies": {
-    "miujs": "^0.3.0"
+    "miujs": "^0.4.0"
   }
 }
