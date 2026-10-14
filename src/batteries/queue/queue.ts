@@ -60,8 +60,10 @@ export interface Queue {
   define<P = unknown>(name: string, def: JobDefinition<P> & { schema?: undefined }): JobType<P>;
   /** Enqueue by name. Validates against the schema when the job is defined in this process. */
   dispatch(name: string, payload: unknown, opts?: DispatchOptions): Promise<string>;
-  /** Claim and run every due job, one at a time. */
-  runOnce(): Promise<{ processed: number; failed: number }>;
+  /** Claim and run due jobs one at a time, at most `max` claims (default 1000). */
+  runOnce(opts?: { max?: number }): Promise<{ processed: number; failed: number }>;
+  /** The definition registered for `name` (with defaults applied), for external consumers such as Cloudflare Queues. */
+  definition(name: string): ResolvedDefinition | undefined;
   /** Poll and run jobs until `signal` aborts; resolves once stopped. */
   work(opts?: WorkOptions): Promise<void>;
   get(id: string): Promise<Job | undefined>;
@@ -77,6 +79,15 @@ export interface Queue {
 }
 
 type AnyDefinition = JobDefinition<unknown> & { schema?: AnySchema };
+
+export interface ResolvedDefinition {
+  name: string;
+  schema?: AnySchema;
+  handler: (payload: any, job: JobContext<any>) => unknown | Promise<unknown>;
+  retries: number;
+  backoff: (attempt: number) => number;
+  timeout?: number;
+}
 
 const defaultBackoff = (attempt: number) => Math.min(1000 * 2 ** (attempt - 1), 3_600_000);
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -151,8 +162,9 @@ export function createQueue(opts: QueueOptions): Queue {
     const def = defs.get(job.name);
     if (!def) {
       const error = `No handler defined for job "${job.name}"`;
-      await driver.fail(job.id, error, null, now());
-      emit({ type: "failed", job: { ...job, status: "failed", lastError: error }, error });
+      if (await driver.fail(job.id, error, null, now(), job.attempts)) {
+        emit({ type: "failed", job: { ...job, status: "failed", lastError: error }, error });
+      }
       return false;
     }
     try {
@@ -162,16 +174,18 @@ export function createQueue(opts: QueueOptions): Queue {
       const retries = def.retries ?? 3;
       if (job.attempts <= retries) {
         const runAt = now() + (def.backoff ?? defaultBackoff)(job.attempts);
-        await driver.fail(job.id, error, runAt, now());
-        emit({ type: "retry", job: { ...job, status: "pending", runAt, lastError: error }, error });
-      } else {
-        await driver.fail(job.id, error, null, now());
+        // A false return means another worker reclaimed the job after our lock expired: stay silent.
+        if (await driver.fail(job.id, error, runAt, now(), job.attempts)) {
+          emit({ type: "retry", job: { ...job, status: "pending", runAt, lastError: error }, error });
+        }
+      } else if (await driver.fail(job.id, error, null, now(), job.attempts)) {
         emit({ type: "failed", job: { ...job, status: "failed", lastError: error }, error });
       }
       return false;
     }
-    await driver.complete(job.id, now());
-    emit({ type: "completed", job: { ...job, status: "completed" } });
+    if (await driver.complete(job.id, now(), job.attempts)) {
+      emit({ type: "completed", job: { ...job, status: "completed" } });
+    }
     return true;
   };
 
@@ -193,14 +207,29 @@ export function createQueue(opts: QueueOptions): Queue {
       return { name, dispatch: (payload: unknown, o?: DispatchOptions) => dispatch(name, payload, o) };
     },
     dispatch,
-    async runOnce() {
+    async runOnce(o = {}) {
+      const max = o.max ?? 1000;
       let processed = 0;
       let failed = 0;
-      for (let job = await driver.claim(now(), lockMs()); job; job = await driver.claim(now(), lockMs())) {
+      while (processed < max) {
+        const job = await driver.claim(now(), lockMs());
+        if (!job) break;
         processed++;
         if (!(await execute(job))) failed++;
       }
       return { processed, failed };
+    },
+    definition(name) {
+      const d = defs.get(name);
+      if (!d) return undefined;
+      return {
+        name,
+        schema: d.schema,
+        handler: d.handler as ResolvedDefinition["handler"],
+        retries: d.retries ?? 3,
+        backoff: d.backoff ?? defaultBackoff,
+        timeout: d.timeout,
+      };
     },
     async work(o = {}) {
       const { signal, pollInterval = 1000 } = o;

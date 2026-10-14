@@ -9,6 +9,7 @@ export {
   type QueueEvent,
   type QueueEventType,
   type QueueOptions,
+  type ResolvedDefinition,
   type WorkOptions,
 } from "./queue.ts";
 export { memoryQueueDriver } from "./memory.ts";

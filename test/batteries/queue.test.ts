@@ -45,6 +45,48 @@ for (const [name, makeDriver] of drivers) {
       return { queue, driver, clock };
     };
 
+    test("a stale worker cannot complete or fail a job another worker reclaimed", async () => {
+      const { driver, clock } = setup();
+      await driver.push(job("j1", clock.now));
+      const first = (await driver.claim(clock.now, 1_000))!;
+      clock.advance(2_000); // lock expires
+      const second = (await driver.claim(clock.now, 1_000))!;
+      expect(second.attempts).toBe(first.attempts + 1);
+      expect(await driver.complete("j1", clock.now, first.attempts)).toBe(false);
+      expect(await driver.fail("j1", "late", null, clock.now, first.attempts)).toBe(false);
+      expect((await driver.get("j1"))?.status).toBe("running");
+      expect(await driver.complete("j1", clock.now, second.attempts)).toBe(true);
+      expect((await driver.get("j1"))?.status).toBe("completed");
+    });
+
+    test("runOnce stops after `max` claims so zero-backoff retries cannot loop forever", async () => {
+      const { queue } = setup();
+      let runs = 0;
+      const flaky = queue.define("flaky", {
+        handler: async () => {
+          runs++;
+          throw new Error("always");
+        },
+        retries: 1_000_000,
+        backoff: () => 0,
+      });
+      await flaky.dispatch({});
+      const r = await queue.runOnce({ max: 25 });
+      expect(runs).toBe(25);
+      expect(r.processed).toBe(25);
+    });
+
+    test("definition(name) exposes schema, retries and backoff for external consumers", async () => {
+      const { queue } = setup();
+      const schema = t.object({ a: t.integer() });
+      queue.define("d", { schema, handler: async () => {}, retries: 7 });
+      const def = queue.definition("d")!;
+      expect(def.retries).toBe(7);
+      expect(def.schema).toBe(schema);
+      expect(def.backoff(3)).toBe(4_000);
+      expect(queue.definition("missing")).toBeUndefined();
+    });
+
     test("dispatch + runOnce completes a job", async () => {
       const { queue } = setup();
       const seen: unknown[] = [];
