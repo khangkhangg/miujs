@@ -1,0 +1,32 @@
+{
+  "name": "create-miu",
+  "version": "0.3.0",
+  "description": "Scaffold a new MiuJS app: npm create miu@latest my-app / bun create miu my-app",
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "author": "khangkhangg",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/khangkhangg/miujs",
+    "directory": "packages/create-miu"
+  },
+  "bin": {
+    "create-miu": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "miujs",
+    "create",
+    "scaffold",
+    "template"
+  ],
+  "dependencies": {
+    "miujs": "^0.3.0"
+  }
+}

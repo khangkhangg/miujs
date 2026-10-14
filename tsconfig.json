@@ -14,5 +14,7 @@
     "verbatimModuleSyntax": true,
     "erasableSyntaxOnly": true
   },
-  "include": ["src", "test", "examples", "bin"]
+  "include": ["src", "test", "examples", "bin", "scripts"],
+  // Checked against @cloudflare/workers-types instead: bun run typecheck:cf (tsconfig.cf.json).
+  "exclude": ["test/cloudflare/compat"]
 }

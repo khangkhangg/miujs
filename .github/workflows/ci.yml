@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Test
+        run: bun test
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Typecheck against @cloudflare/workers-types
+        run: bun run typecheck:cf
+
+      - name: Build dist/
+        run: bun run build
+
+      - name: Node smoke test (plain node, no type stripping)
+        run: |
+          node dist/bin/miu.js --version
+          node --input-type=module -e '
+            const { Miu } = await import("./dist/index.js");
+            const { sqliteStore } = await import("./dist/sqlite.js");
+            const res = await new Miu().get("/x", (c) => c.json({ ok: true })).request("/x");
+            const store = sqliteStore({ path: ":memory:" });
+            await store.set("k", 1);
+            if (res.status !== 200 || (await store.get("k")) !== 1) process.exit(1);
+            console.log("node smoke ok");
+          '
+
+      - name: Workers bundle checks (no Node/Bun built-ins in edge entries)
+        run: |
+          set -euo pipefail
+          for entry in src/index.ts src/adapters/cloudflare/index.ts src/realtime/index.ts src/migrate/index.ts src/client/index.ts; do
+            out="$RUNNER_TEMP/workers-bundle/$(echo "$entry" | tr / _)"
+            bun build "$entry" --target=browser --outdir="$out"
+            if grep -rEn '(from|import\()\s*"(node:|bun:|bun")' "$out"; then
+              echo "::error::$entry bundle imports a Node/Bun built-in"
+              exit 1
+            fi
+            echo "$entry ok ($(du -sh "$out" | cut -f1))"
+          done
+
+      - name: Pack dry run
+        run: npm pack --dry-run

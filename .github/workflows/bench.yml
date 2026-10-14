@@ -1,0 +1,40 @@
+name: Bench
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1" # Mondays 04:17 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  micro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install
+        run: |
+          bun install --frozen-lockfile
+          cd bench && bun install
+
+      - name: Micro benchmark
+        run: |
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "bun: $(bun --version)"
+            echo "runner: $RUNNER_OS $(uname -m) $(nproc) cpus"
+            echo
+            bun run bench:micro
+          } 2>&1 | tee bench-micro.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-micro-${{ github.run_number }}
+          path: bench-micro.txt
