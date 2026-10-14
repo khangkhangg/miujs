@@ -1,7 +1,7 @@
 import { Router } from "./router.ts";
-import { Context, type Env, type ExecutionContext } from "./context.ts";
+import { Context, addValue, type Env, type ExecutionContext } from "./context.ts";
 import { HttpError, ValidationError, problem } from "./errors.ts";
-import { validate, type AnySchema, type Infer, type Issue } from "./schema.ts";
+import { validate, type AnySchema, type Infer, type Issue, type Result } from "./schema.ts";
 import { isBunServer, isUpgradeRequest, upgradeRequired, upgradeWebSocket } from "../realtime/upgrade.ts";
 import { bunWebSocket, type BunServerLike } from "../realtime/bun.ts";
 import type { WsForward, WsHandlers } from "../realtime/types.ts";
@@ -87,7 +87,11 @@ interface MountedMiddleware {
 interface Compiled {
   route: Route;
   middleware: Middleware[];
+  /** Route declares params/query/headers/body schemas, so input must be parsed and validated. */
+  needsInput: boolean;
 }
+
+const needsInput = (m: RouteMeta) => !!(m.params || m.query || m.headers || m.body);
 
 export interface MiuOptions {
   /** Log unexpected (500) errors with console.error. Default true. */
@@ -113,6 +117,7 @@ export class Miu<E extends Env = Env> {
   private middleware: MountedMiddleware[] = [];
   private router = new Router<Compiled>();
   private wsRouter = new Router<Compiled>();
+  private hasWs = false;
   private errorHandler?: ErrorHandler<E>;
   private notFoundHandler?: (c: Context<E>) => Response | Promise<Response>;
 
@@ -143,7 +148,8 @@ export class Miu<E extends Env = Env> {
     const meta: RouteMeta = { ...(b ? a : {}), tool: false, hidden: true };
     const route: Route = { method: "WS", path: normalize(path), meta, handler: upgradeRequired, ws: handlers };
     this.routes.push(route);
-    this.wsRouter.add("WS", route.path, { route, middleware: meta.use ?? [] });
+    this.wsRouter.add("WS", route.path, { route, middleware: meta.use ?? [], needsInput: needsInput(meta) });
+    this.hasWs = true;
     return this;
   }
 
@@ -158,7 +164,7 @@ export class Miu<E extends Env = Env> {
     if (!handler) throw new Error(`Missing handler for ${method} ${path}`);
     const route: Route = { method, path: normalize(path), meta, handler };
     this.routes.push(route);
-    this.router.add(method, route.path, { route, middleware: meta.use ?? [] });
+    this.router.add(method, route.path, { route, middleware: meta.use ?? [], needsInput: needsInput(meta) });
     return this;
   }
 
@@ -209,32 +215,39 @@ export class Miu<E extends Env = Env> {
     const path = pathOf(req.url);
     const method = req.method;
     try {
-      const match = (isUpgradeRequest(req) && this.wsRouter.find("WS", path)) || this.router.find(method, path);
-      const chain: Middleware[] = [];
-      for (const m of this.middleware) if (!m.match || m.match(path)) chain.push(m.fn);
+      const match =
+        (this.hasWs && isUpgradeRequest(req) && this.wsRouter.find("WS", path)) || this.router.find(method, path);
+      let chain: Middleware[] | undefined;
+      for (const m of this.middleware) if (!m.match || m.match(path)) (chain ??= []).push(m.fn);
       let final: Middleware;
       if (match) {
         c.params = match.params as any;
-        chain.push(...match.handler.middleware);
+        if (match.handler.middleware.length) (chain ??= []).push(...match.handler.middleware);
         const route = match.handler.route;
+        const needsInput = match.handler.needsInput;
+        if (!chain && !route.ws) {
+          // Fast path: no middleware. Skip the compose machinery entirely.
+          if (needsInput) await prepareInput(c, route.meta);
+          const out = route.handler(c);
+          c.res = c.respond(out instanceof Promise ? await out : out);
+          return method === "HEAD" ? headOnly(c.res) : c.res;
+        }
         final = async (ctx) => {
-          await prepareInput(ctx, route.meta);
+          if (needsInput) await prepareInput(ctx, route.meta);
           if (route.ws) return upgradeWebSocket(ctx, route.meta, route.ws, server);
-          return ctx.respond(await route.handler(ctx));
+          const out = route.handler(ctx);
+          return ctx.respond(out instanceof Promise ? await out : out);
         };
-      } else if (this.wsRouter.find("WS", path)) {
+      } else if (this.hasWs && this.wsRouter.find("WS", path)) {
         final = () => upgradeRequired();
       } else {
         final = (ctx) => this.handleNotFound(ctx, path);
       }
-      await compose(c, chain, final, (err, ctx) => this.handleError(err, ctx));
+      await compose(c, chain ?? [], final, (err, ctx) => this.handleError(err, ctx));
     } catch (err) {
       c.res = await this.handleError(err, c);
     }
-    if (method === "HEAD" && c.res.body) {
-      return new Response(null, { status: c.res.status, headers: c.res.headers });
-    }
-    return c.res;
+    return method === "HEAD" ? headOnly(c.res) : c.res;
   };
 
   /** Convenience for tests and in-process calls (used by the MCP bridge). */
@@ -310,24 +323,35 @@ async function compose(
 
 async function prepareInput(c: Context<any, any>, meta: RouteMeta): Promise<void> {
   const issues: Issue[] = [];
-  const run = async (where: string, schema: AnySchema | undefined, raw: unknown, coerce: boolean) => {
-    if (!schema) return raw;
-    const r = await validate(schema, raw, { coerce });
+  // Built-in schemas validate synchronously; only Standard Schemas may return a Promise.
+  const run = (where: string, schema: AnySchema, raw: unknown, coerce: boolean): unknown | Promise<unknown> => {
+    const v = validate(schema, raw, { coerce });
+    return v instanceof Promise ? v.then((r) => take(where, r)) : take(where, v);
+  };
+  const take = (where: string, r: Result): unknown => {
     if (r.ok) return r.value;
     for (const i of r.issues) issues.push({ path: [where, ...i.path], message: i.message });
     return undefined;
   };
-
-  c.params = await run("params", meta.params, c.params, true);
-  c.query = await run("query", meta.query, searchToObject(c.url.searchParams), true);
+  let v: unknown;
+  if (meta.params) {
+    v = run("params", meta.params, c.params, true);
+    c.params = (v instanceof Promise ? await v : v) as any;
+  }
+  if (meta.query) {
+    v = run("query", meta.query, c.query, true);
+    c.query = (v instanceof Promise ? await v : v) as any;
+  }
   if (meta.headers) {
     const h: Record<string, string> = {};
-    c.req.headers.forEach((v, k) => (h[k] = v));
-    (c as any).headers = await run("headers", meta.headers, h, true);
+    c.req.headers.forEach((val, k) => (h[k] = val));
+    v = run("headers", meta.headers, h, true);
+    (c as any).headers = v instanceof Promise ? await v : v;
   }
   if (meta.body) {
     const { value, form } = await readBody(c.req);
-    c.body = await run("body", meta.body, value, form);
+    v = run("body", meta.body, value, form);
+    c.body = v instanceof Promise ? await v : v;
   }
   if (issues.length) throw new ValidationError(issues);
 }
@@ -354,17 +378,8 @@ async function readBody(req: Request): Promise<{ value: unknown; form: boolean }
   throw new HttpError(415, `Unsupported content-type: ${type}`);
 }
 
-function searchToObject(sp: URLSearchParams): Record<string, string | string[]> {
-  const obj: Record<string, unknown> = {};
-  for (const [k, v] of sp) addValue(obj, k.endsWith("[]") ? k.slice(0, -2) : k, v);
-  return obj as Record<string, string | string[]>;
-}
-
-function addValue(obj: Record<string, unknown>, k: string, v: unknown) {
-  const cur = obj[k];
-  if (cur === undefined) obj[k] = v;
-  else if (Array.isArray(cur)) cur.push(v);
-  else obj[k] = [cur, v];
+function headOnly(res: Response): Response {
+  return res.body ? new Response(null, { status: res.status, headers: res.headers }) : res;
 }
 
 function pathOf(url: string): string {

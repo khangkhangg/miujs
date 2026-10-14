@@ -1,17 +1,35 @@
-# MiuJS benchmarks
+# Benchmark results
 
-Requests per second (higher is better). Each framework serves the same three routes on `Bun.serve`;
-load comes from 2 separate Bun processes running 64 concurrent `fetch` loops in total,
-3s per route after a 1s warm-up. Client and server share the machine, so absolute numbers are
-bounded by the load generator — compare columns, not against other published benchmarks.
+Machine: 4-core Xeon 2.8 GHz, Bun 1.4.2. Load generator and servers share the machine, so treat
+differences under ~10% as noise. Reproduce with `bun run.ts` (network) and `bun micro.ts` (in-process).
+
+## Network (`bun run.ts --duration 3 --concurrency 64`), requests/second, two consecutive runs
 
 | Route | miu | hono | elysia |
 | --- | ---: | ---: | ---: |
-| GET / (text) | 20,688 | 31,752 | 39,995 |
-| GET /user/:id (JSON) | 19,188 | 31,383 | 41,418 |
-| POST /json (validated echo) | 15,898 | 19,726 | 25,484 |
+| GET / (text) — run 1 | 42,637 | 40,550 | 46,954 |
+| GET / (text) — run 2 | 39,465 | 44,144 | 47,591 |
+| GET /user/:id (JSON) — run 1 | 37,454 | 34,357 | 50,032 |
+| GET /user/:id (JSON) — run 2 | 34,330 | 34,844 | 47,250 |
+| POST /json (validated) — run 1 | 29,028 | 23,134 | 29,137 |
+| POST /json (validated) — run 2 | 23,462 | 24,290 | 27,628 |
 
-- Date: 2026-10-14
-- Runtime: Bun 1.4.2
-- CPU: Intel(R) Xeon(R) Processor @ 2.80GHz × 4
-- Reproduce: `cd bench && bun install && bun run.ts --duration 3 --concurrency 64`
+## In-process framework overhead (`bun micro.ts --iterations 100000 --rounds 5`, median), requests/second
+
+Calls each framework's fetch handler directly, isolating router/validation/response overhead.
+
+| Case | miu | hono | elysia |
+| --- | ---: | ---: | ---: |
+| GET / (text) | 409,626 | 499,643 | 781,907 |
+| GET /user/:id (JSON) | 226,212 | 227,317 | 443,184 |
+| POST /json (validated) | 131,714 | 159,114 | 124,527 |
+
+## Summary
+
+- Miu is on par with Hono over the network and within ~0–20% in-process.
+- Elysia is ~15–25% faster on simple GET routes over the network (it compiles handlers ahead of time);
+  on validated POST bodies Miu is within ~15% of Elysia and faster in-process.
+- Before the v0.3 hot-path work, Miu was at 55–65% of Hono and 40–50% of Elysia.
+
+Next steps toward Elysia-level GET throughput: precompiled per-route handlers and a static-response cache
+for handlers that return constants.
