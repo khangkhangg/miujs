@@ -1,5 +1,5 @@
 export { Miu, METHODS } from "./core/app.ts";
-export type { Handler, Middleware, Next, ErrorHandler, Method, Route, RouteMeta, RouteInput, MiuOptions, ToolOptions } from "./core/app.ts";
+export type { Handler, Middleware, Next, ErrorHandler, Method, Route, RouteMeta, RouteInput, MiuOptions, MiuServeOptions, ToolOptions } from "./core/app.ts";
 export { Context } from "./core/context.ts";
 export type { Env, ExecutionContext, CookieOptions } from "./core/context.ts";
 export { HttpError, ValidationError, problem } from "./core/errors.ts";

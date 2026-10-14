@@ -94,6 +94,16 @@ interface Compiled {
 
 const needsInput = (m: RouteMeta) => !!(m.params || m.query || m.headers || m.body);
 
+/**
+ * Result of `app.serveOptions()`, ready for `Bun.serve()`. `websocket` and `routes` are typed loosely because
+ * Bun's own types for them are generic over per-socket data and literal route paths.
+ */
+export interface MiuServeOptions {
+  fetch: (req: Request, server?: any, executionCtx?: ExecutionContext) => Promise<Response>;
+  websocket: any;
+  routes: Record<string, Record<string, (req: any, server: any) => Promise<Response>>>;
+}
+
 export interface MiuOptions {
   /** Log unexpected (500) errors with console.error. Default true. */
   logger?: boolean;
@@ -176,6 +186,8 @@ export class Miu<E extends Env = Env, R extends RouteSchema = {}> {
   private middleware: MountedMiddleware[] = [];
   private router = new Router<Compiled>();
   private wsRouter = new Router<Compiled>();
+  /** Every HTTP route with its compiled entry, for native-router integration (serveOptions). */
+  private compiled: { route: Route; compiled: Compiled }[] = [];
   private hasWs = false;
   private errorHandler?: ErrorHandler<E>;
   private notFoundHandler?: (c: Context<E>) => Response | Promise<Response>;
@@ -232,7 +244,9 @@ export class Miu<E extends Env = Env, R extends RouteSchema = {}> {
     if (!handler) throw new Error(`Missing handler for ${method} ${path}`);
     const route: Route = { method, path: normalize(path), meta, handler };
     this.routes.push(route);
-    this.router.add(method, route.path, { route, middleware: meta.use ?? [], needsInput: needsInput(meta) });
+    const compiled: Compiled = { route, middleware: meta.use ?? [], needsInput: needsInput(meta) };
+    this.router.add(method, route.path, compiled);
+    this.compiled.push({ route, compiled });
     return this;
   }
 
@@ -272,7 +286,36 @@ export class Miu<E extends Env = Env, R extends RouteSchema = {}> {
   }
 
   /** Web-standard entry point. Works as a Bun, Deno, Cloudflare Workers or Vercel handler. */
-  fetch = async (req: Request, env?: E["Bindings"], executionCtx?: ExecutionContext): Promise<Response> => {
+  fetch = (req: Request, env?: E["Bindings"], executionCtx?: ExecutionContext): Promise<Response> =>
+    this.handle(req, env, executionCtx, undefined);
+
+  /**
+   * Options for `Bun.serve()` that let Bun's native router dispatch routes directly (faster than routing every
+   * request through `fetch`). Routes Bun can't express exactly — wildcards, `all()`, paths shared with WebSocket
+   * routes — plus 404/405 handling stay on the `fetch` fallback, so behavior is identical.
+   */
+  serveOptions<O extends object = {}>(opts?: O): O & MiuServeOptions {
+    const routes: Record<string, Record<string, (req: Request & { params?: Record<string, string> }, server: unknown) => Promise<Response>>> = {};
+    const skip = new Set<string>();
+    for (const route of this.routes) {
+      if (route.method === "ALL" || route.method === "WS" || route.path.includes("*")) skip.add(route.path);
+    }
+    for (const { route, compiled } of this.compiled) {
+      if (skip.has(route.path)) continue;
+      const hasParams = route.path.includes(":");
+      (routes[route.path] ??= {})[route.method] = (req, server) =>
+        this.handle(req, server as any, undefined, { handler: compiled, params: hasParams ? decodeParams(req.params) : {} });
+    }
+    return { ...(opts as O), fetch: this.fetch, websocket: this.websocket, routes };
+  }
+
+
+  private async handle(
+    req: Request,
+    env: E["Bindings"] | undefined,
+    executionCtx: ExecutionContext | undefined,
+    preMatched: { handler: Compiled; params: Record<string, string> } | undefined,
+  ): Promise<Response> {
     // Bun calls fetch(req, server): keep the server for WebSocket upgrades, not as env.
     let server: BunServerLike | undefined;
     if (isBunServer(env)) {
@@ -285,7 +328,8 @@ export class Miu<E extends Env = Env, R extends RouteSchema = {}> {
     const method = req.method;
     try {
       const match =
-        (this.hasWs && isUpgradeRequest(req) && this.wsRouter.find("WS", path)) || this.router.find(method, path);
+        preMatched ??
+        ((this.hasWs && isUpgradeRequest(req) && this.wsRouter.find("WS", path)) || this.router.find(method, path));
       let chain: Middleware[] | undefined;
       for (const m of this.middleware) if (!m.match || m.match(path)) (chain ??= []).push(m.fn);
       let final: Middleware;
@@ -321,7 +365,7 @@ export class Miu<E extends Env = Env, R extends RouteSchema = {}> {
       c.res = await this.handleError(err, c);
     }
     return method === "HEAD" ? headOnly(c.res) : c.res;
-  };
+  }
 
   /** Convenience for tests and in-process calls (used by the MCP bridge). */
   request(input: string | Request, init?: RequestInit, env?: E["Bindings"], executionCtx?: ExecutionContext) {
@@ -333,7 +377,7 @@ export class Miu<E extends Env = Env, R extends RouteSchema = {}> {
   listen(port = 3000, hostname?: string) {
     const B = (globalThis as { Bun?: { serve: (o: object) => unknown } }).Bun;
     if (!B) throw new Error("app.listen() requires Bun. On Node, use `import { serve } from 'miujs/node'`.");
-    return B.serve({ port, hostname, fetch: this.fetch, websocket: this.websocket }) as { port: number; stop: (force?: boolean) => void };
+    return B.serve(this.serveOptions({ port, hostname })) as { port: number; stop: (force?: boolean) => void };
   }
 
   private async handleNotFound(c: Context<E>, path: string): Promise<Response> {
@@ -450,6 +494,20 @@ async function readBody(req: Request): Promise<{ value: unknown; form: boolean }
     }
   }
   throw new HttpError(415, `Unsupported content-type: ${type}`);
+}
+
+function decodeParams(params: Record<string, string> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!params) return out;
+  for (const k in params) {
+    const v = params[k]!;
+    try {
+      out[k] = v.includes("%") ? decodeURIComponent(v) : v;
+    } catch {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 function headOnly(res: Response): Response {
