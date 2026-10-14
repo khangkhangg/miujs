@@ -2,9 +2,15 @@
  * Runtime HTTP + MCP clients for Miu apps. Web-standard only (fetch), so they
  * run in browsers, Bun, Node, Deno and Workers.
  *
- * Route types are not inferred yet: pass a result type explicitly
+ * Pass the app type to get params/query/body/result types per route
+ * (`createClient<typeof app>(url).get("/todos/:id", { params: { id: 1 } })`).
+ * Without it the client is loose: any path, explicit result type
  * (`client.get<Todo>("/todos/:id", { params: { id: 1 } })`).
  */
+
+import type { Endpoint, RouteSchema } from "../core/app.ts";
+
+export type { Endpoint, RouteSchema };
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 export type HeadersOption = HeadersInit | (() => HeadersInit | Promise<HeadersInit>);
@@ -105,8 +111,71 @@ export interface Client {
   delete: Shortcut;
 }
 
-/** Create an HTTP client for a Miu (or any JSON/problem+json) API. */
-export function createClient(baseUrl: string, opts: ClientOptions = {}): Client {
+// ---------------------------------------------------------------- typed client
+
+/** Route table of an app type (`typeof app`), or a route table given directly. */
+export type RoutesOf<App> = App extends { "~routes": infer R } ? R : App;
+
+type Base = Omit<RequestOptions, "params" | "query" | "body">;
+
+/** Paths that answer `M` (a route registered for `M`, or with `app.all()`). */
+export type PathsFor<R, M extends string> = {
+  [K in keyof R]: M extends keyof R[K] ? K : "ALL" extends keyof R[K] ? K : never;
+}[keyof R] &
+  string;
+
+/** The endpoint for method `M` on path `P` (falling back to an `ALL` route). */
+export type EndpointFor<R, P extends keyof R, M extends string> = M extends keyof R[P]
+  ? R[P][M]
+  : "ALL" extends keyof R[P]
+    ? R[P]["ALL"]
+    : never;
+
+type ParamsOpt<P> = [keyof P] extends [never] ? { params?: never } : {} extends P ? { params?: P } : { params: P };
+type QueryOpt<Q> = {} extends Q ? { query?: Q } : { query: Q };
+type BodyOpt<B> = undefined extends B
+  ? { body?: B | BodyInit }
+  : {} extends B
+    ? { body?: B | FormData }
+    : { body: B | FormData };
+
+/** Request options for one endpoint: params required when the path has any, query/body typed by their schemas. */
+export type TypedRequestOptions<EP> = EP extends Endpoint<infer P, infer Q, infer B, unknown>
+  ? Base & ParamsOpt<P> & QueryOpt<Q> & BodyOpt<B>
+  : RequestOptions;
+
+/** Options argument: required only when some option is. */
+type Args<EP> = {} extends TypedRequestOptions<EP> ? [opts?: TypedRequestOptions<EP>] : [opts: TypedRequestOptions<EP>];
+type OutputOf<EP> = EP extends { output: infer O } ? O : unknown;
+
+type TypedShortcut<R, M extends string> = <P extends PathsFor<R, M>>(
+  path: P,
+  ...opts: Args<EndpointFor<R, P, M>>
+) => Promise<OutputOf<EndpointFor<R, P, M>>>;
+
+/** Client typed from an app's route table (`createClient<typeof app>()`). */
+export interface TypedClient<R> {
+  request<M extends Method, P extends PathsFor<R, M>>(
+    method: M,
+    path: P,
+    ...opts: Args<EndpointFor<R, P, M>>
+  ): Promise<OutputOf<EndpointFor<R, P, M>>>;
+  get: TypedShortcut<R, "GET">;
+  post: TypedShortcut<R, "POST">;
+  put: TypedShortcut<R, "PUT">;
+  patch: TypedShortcut<R, "PATCH">;
+  delete: TypedShortcut<R, "DELETE">;
+}
+
+/** `Client` when no app type is given, else `TypedClient` for its routes. */
+export type ClientFor<App> = [App] extends [never] ? Client : TypedClient<RoutesOf<App>>;
+
+/**
+ * Create an HTTP client for a Miu (or any JSON/problem+json) API.
+ * `createClient<typeof app>(url)` types every call from the app's routes.
+ */
+export function createClient<App = never>(baseUrl: string, opts?: ClientOptions): ClientFor<App>;
+export function createClient(baseUrl: string, opts: ClientOptions = {}): Client | TypedClient<any> {
   const doFetch = opts.fetch ?? ((i: RequestInfo | URL, init?: RequestInit) => fetch(i, init));
   const base = baseUrl.replace(/\/+$/, "");
 

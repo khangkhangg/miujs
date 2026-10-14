@@ -83,7 +83,7 @@ async function invoke(def: ResolvedDefinition, payload: unknown, job: Job): Prom
   try {
     await Promise.race([run, timedOut]);
   } finally {
-    clearTimeout(timer);
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 

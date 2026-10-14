@@ -58,8 +58,22 @@ export function upgradeBun(
 ): Response | null {
   const socket = new BunSocket(handlers, data);
   if (!server.upgrade(req, { data: { miu: socket }, headers })) return null;
-  // Bun ignores the response after a successful upgrade; this keeps middleware happy.
-  return new Response(null, { status: 101 });
+  // The runtime ignores the response after a successful upgrade; this keeps middleware happy.
+  return switchingProtocols();
+}
+
+/**
+ * A `101` placeholder response. Bun accepts status 101; Node's (undici)
+ * `Response` only allows 200-599, so there it is a 200 reporting 101.
+ */
+function switchingProtocols(): Response {
+  try {
+    return new Response(null, { status: 101 });
+  } catch {
+    const res = new Response(null, { status: 200 });
+    Object.defineProperty(res, "status", { value: 101 });
+    return res;
+  }
 }
 
 const socketOf = (ws: BunWebSocketLike): BunSocket<any> | undefined => {

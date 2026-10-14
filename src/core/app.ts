@@ -2,7 +2,7 @@ import { Router } from "./router.ts";
 import { Context, addValue, type Env, type ExecutionContext } from "./context.ts";
 import { HttpError, ValidationError, problem } from "./errors.ts";
 import { validate, type AnySchema, type Infer, type Issue, type Result } from "./schema.ts";
-import { isBunServer, isUpgradeRequest, upgradeRequired, upgradeWebSocket } from "../realtime/upgrade.ts";
+import { isBunServer, isUpgradeRequest, publishTopic, upgradeRequired, upgradeWebSocket } from "../realtime/upgrade.ts";
 import { bunWebSocket, type BunServerLike } from "../realtime/bun.ts";
 import type { WsForward, WsHandlers } from "../realtime/types.ts";
 
@@ -25,13 +25,14 @@ export interface RouteMeta<
   Q extends AnySchema | undefined = AnySchema | undefined,
   B extends AnySchema | undefined = AnySchema | undefined,
   H extends AnySchema | undefined = AnySchema | undefined,
+  S extends AnySchema | undefined = AnySchema | undefined,
 > {
   params?: P;
   query?: Q;
   body?: B;
   headers?: H;
-  /** Schema of a successful response; documented in OpenAPI and MCP. */
-  response?: AnySchema;
+  /** Schema of a successful response; documented in OpenAPI and MCP, and the typed client's result type. */
+  response?: S;
   summary?: string;
   description?: string;
   tags?: string[];
@@ -93,6 +94,16 @@ interface Compiled {
 
 const needsInput = (m: RouteMeta) => !!(m.params || m.query || m.headers || m.body);
 
+/**
+ * Result of `app.serveOptions()`, ready for `Bun.serve()`. `websocket` and `routes` are typed loosely because
+ * Bun's own types for them are generic over per-socket data and literal route paths.
+ */
+export interface MiuServeOptions {
+  fetch: (req: Request, server?: any, executionCtx?: ExecutionContext) => Promise<Response>;
+  websocket: any;
+  routes: Record<string, Record<string, (req: any, server: any) => Promise<Response>>>;
+}
+
 export interface MiuOptions {
   /** Log unexpected (500) errors with console.error. Default true. */
   logger?: boolean;
@@ -102,21 +113,81 @@ export interface MiuOptions {
   description?: string;
 }
 
-type RouteFn<E extends Env, Self> = {
-  <P extends AnySchema | undefined = undefined, Q extends AnySchema | undefined = undefined, B extends AnySchema | undefined = undefined, H extends AnySchema | undefined = undefined>(
-    path: string,
-    meta: RouteMeta<P, Q, B, H>,
-    handler: Handler<E, RouteInput<P, Q, B, H>>,
-  ): Self;
-  (path: string, handler: Handler<E, RouteInput<undefined, undefined, undefined, undefined>>): Self;
+// ---------- route table types (used by `createClient<typeof app>()`; erased at runtime) ----------
+
+/** Client-facing types of one route: what to send and what comes back. */
+export interface Endpoint<P = unknown, Q = unknown, B = unknown, O = unknown> {
+  params: P;
+  query: Q;
+  body: B;
+  output: O;
+}
+
+/** Route table accumulated on the app type: path -> method (`GET`, ..., `ALL`) -> Endpoint. */
+export type RouteSchema = { [path: string]: { [method: string]: Endpoint } };
+
+type TrimEnd<P extends string> = P extends `${infer X}/` ? (X extends "" ? "/" : X) : P;
+/** Type-level twin of `normalize()`: leading slash, no trailing slash. */
+export type NormalizePath<P extends string> = TrimEnd<P extends `/${string}` ? P : `/${P}`>;
+type JoinPath<A extends string, B extends string> = A extends "/" ? B : B extends "/" ? A : `${A}${B}`;
+
+type PathParamNames<P extends string> = P extends `${string}:${infer Rest}`
+  ? Rest extends `${infer Name}/${infer Tail}`
+    ? Name | PathParamNames<Tail>
+    : Rest
+  : never;
+/** `:name` segments of a path (and `path` for a trailing `*`), as the client sends them. */
+export type PathParams<P extends string> = {
+  [K in PathParamNames<P> | (P extends `${string}*` ? "path" : never)]: string | number;
 };
 
-export class Miu<E extends Env = Env> {
+/** What the client receives: `Response` is opaque (unknown), no content is void. */
+type HandlerOutput<T> = 0 extends 1 & T
+  ? any
+  : [T] extends [Response]
+    ? unknown
+    : [T] extends [undefined | void]
+      ? void
+      : Exclude<T, Response>;
+
+type EndpointOf<Path extends string, P, Q, B, S, Ret> = Endpoint<
+  P extends AnySchema ? Infer<P> : PathParams<Path>,
+  Q extends AnySchema ? Infer<Q> : Record<string, unknown>,
+  B extends AnySchema ? Infer<B> : unknown,
+  S extends AnySchema ? Infer<S> : HandlerOutput<Awaited<Ret>>
+>;
+
+type AddRoute<R, Path extends string, M extends string, EP> = R & { [K in NormalizePath<Path>]: { [X in M]: EP } };
+
+/** Routes of a mounted sub-app, re-keyed under `prefix`. */
+export type PrefixRoutes<Prefix extends string, SR> = {
+  [K in keyof SR & string as JoinPath<NormalizePath<Prefix>, K>]: SR[K];
+};
+
+type Opt = AnySchema | undefined;
+
+type RouteFn<E extends Env, R extends RouteSchema, M extends string> = {
+  <Path extends string, P extends Opt = undefined, Q extends Opt = undefined, B extends Opt = undefined, H extends Opt = undefined, S extends Opt = undefined, Ret = unknown>(
+    path: Path,
+    meta: RouteMeta<P, Q, B, H, S>,
+    handler: (c: Context<E, RouteInput<P, Q, B, H>>) => Ret,
+  ): Miu<E, AddRoute<R, Path, M, EndpointOf<Path, P, Q, B, S, Ret>>>;
+  <Path extends string, Ret = unknown>(
+    path: Path,
+    handler: (c: Context<E, RouteInput<undefined, undefined, undefined, undefined>>) => Ret,
+  ): Miu<E, AddRoute<R, Path, M, EndpointOf<Path, undefined, undefined, undefined, undefined, Ret>>>;
+};
+
+export class Miu<E extends Env = Env, R extends RouteSchema = {}> {
+  /** Type-only route table for `createClient<typeof app>()`; never set at runtime. */
+  declare readonly "~routes": R;
   readonly config: MiuOptions;
   readonly routes: Route[] = [];
   private middleware: MountedMiddleware[] = [];
   private router = new Router<Compiled>();
   private wsRouter = new Router<Compiled>();
+  /** Every HTTP route with its compiled entry, for native-router integration (serveOptions). */
+  private compiled: { route: Route; compiled: Compiled }[] = [];
   private hasWs = false;
   private errorHandler?: ErrorHandler<E>;
   private notFoundHandler?: (c: Context<E>) => Response | Promise<Response>;
@@ -125,13 +196,13 @@ export class Miu<E extends Env = Env> {
     this.config = { logger: true, name: "miu-app", version: "0.0.0", ...options };
   }
 
-  get: RouteFn<E, this> = (path: string, a: any, b?: any) => this.on("GET", path, a, b);
-  post: RouteFn<E, this> = (path: string, a: any, b?: any) => this.on("POST", path, a, b);
-  put: RouteFn<E, this> = (path: string, a: any, b?: any) => this.on("PUT", path, a, b);
-  patch: RouteFn<E, this> = (path: string, a: any, b?: any) => this.on("PATCH", path, a, b);
-  delete: RouteFn<E, this> = (path: string, a: any, b?: any) => this.on("DELETE", path, a, b);
-  options: RouteFn<E, this> = (path: string, a: any, b?: any) => this.on("OPTIONS", path, a, b);
-  all: RouteFn<E, this> = (path: string, a: any, b?: any) => this.on("ALL", path, a, b);
+  get: RouteFn<E, R, "GET"> = (path: string, a: any, b?: any): any => this.on("GET", path, a, b);
+  post: RouteFn<E, R, "POST"> = (path: string, a: any, b?: any): any => this.on("POST", path, a, b);
+  put: RouteFn<E, R, "PUT"> = (path: string, a: any, b?: any): any => this.on("PUT", path, a, b);
+  patch: RouteFn<E, R, "PATCH"> = (path: string, a: any, b?: any): any => this.on("PATCH", path, a, b);
+  delete: RouteFn<E, R, "DELETE"> = (path: string, a: any, b?: any): any => this.on("DELETE", path, a, b);
+  options: RouteFn<E, R, "OPTIONS"> = (path: string, a: any, b?: any): any => this.on("OPTIONS", path, a, b);
+  all: RouteFn<E, R, "ALL"> = (path: string, a: any, b?: any): any => this.on("ALL", path, a, b);
 
   /**
    * Register a WebSocket route. Middleware and validation run before the
@@ -158,13 +229,24 @@ export class Miu<E extends Env = Env> {
     return bunWebSocket;
   }
 
+  /**
+   * Send to every WebSocket subscribed to `topic` (via `ws.subscribe`).
+   * Strings and binary go as-is; other values as JSON. Bun and Node reach the
+   * whole server; Workers reach this isolate only (use `MiuRoom` across isolates).
+   */
+  publish(topic: string, data: unknown): void {
+    publishTopic(this, topic, data);
+  }
+
   on(method: Method, path: string, metaOrHandler: RouteMeta | Handler<E, any>, maybeHandler?: Handler<E, any>): this {
     const meta = typeof metaOrHandler === "function" ? {} : metaOrHandler;
     const handler = typeof metaOrHandler === "function" ? metaOrHandler : maybeHandler;
     if (!handler) throw new Error(`Missing handler for ${method} ${path}`);
     const route: Route = { method, path: normalize(path), meta, handler };
     this.routes.push(route);
-    this.router.add(method, route.path, { route, middleware: meta.use ?? [], needsInput: needsInput(meta) });
+    const compiled: Compiled = { route, middleware: meta.use ?? [], needsInput: needsInput(meta) };
+    this.router.add(method, route.path, compiled);
+    this.compiled.push({ route, compiled });
     return this;
   }
 
@@ -178,7 +260,8 @@ export class Miu<E extends Env = Env> {
   }
 
   /** Mount another app's routes and middleware under a prefix. */
-  route(prefix: string, sub: Miu<any>): this {
+  route<Prefix extends string, SR extends RouteSchema>(prefix: Prefix, sub: Miu<any, SR>): Miu<E, R & PrefixRoutes<Prefix, SR>>;
+  route(prefix: string, sub: Miu<any, any>): this {
     const base = normalize(prefix);
     const join = (p: string) => normalize(base === "/" ? p : p === "/" ? base : base + p);
     for (const m of sub.middleware) {
@@ -203,7 +286,36 @@ export class Miu<E extends Env = Env> {
   }
 
   /** Web-standard entry point. Works as a Bun, Deno, Cloudflare Workers or Vercel handler. */
-  fetch = async (req: Request, env?: E["Bindings"], executionCtx?: ExecutionContext): Promise<Response> => {
+  fetch = (req: Request, env?: E["Bindings"], executionCtx?: ExecutionContext): Promise<Response> =>
+    this.handle(req, env, executionCtx, undefined);
+
+  /**
+   * Options for `Bun.serve()` that let Bun's native router dispatch routes directly (faster than routing every
+   * request through `fetch`). Routes Bun can't express exactly — wildcards, `all()`, paths shared with WebSocket
+   * routes — plus 404/405 handling stay on the `fetch` fallback, so behavior is identical.
+   */
+  serveOptions<O extends object = {}>(opts?: O): O & MiuServeOptions {
+    const routes: Record<string, Record<string, (req: Request & { params?: Record<string, string> }, server: unknown) => Promise<Response>>> = {};
+    const skip = new Set<string>();
+    for (const route of this.routes) {
+      if (route.method === "ALL" || route.method === "WS" || route.path.includes("*")) skip.add(route.path);
+    }
+    for (const { route, compiled } of this.compiled) {
+      if (skip.has(route.path)) continue;
+      const hasParams = route.path.includes(":");
+      (routes[route.path] ??= {})[route.method] = (req, server) =>
+        this.handle(req, server as any, undefined, { handler: compiled, params: hasParams ? decodeParams(req.params) : {} });
+    }
+    return { ...(opts as O), fetch: this.fetch, websocket: this.websocket, routes };
+  }
+
+
+  private async handle(
+    req: Request,
+    env: E["Bindings"] | undefined,
+    executionCtx: ExecutionContext | undefined,
+    preMatched: { handler: Compiled; params: Record<string, string> } | undefined,
+  ): Promise<Response> {
     // Bun calls fetch(req, server): keep the server for WebSocket upgrades, not as env.
     let server: BunServerLike | undefined;
     if (isBunServer(env)) {
@@ -216,20 +328,25 @@ export class Miu<E extends Env = Env> {
     const method = req.method;
     try {
       const match =
-        (this.hasWs && isUpgradeRequest(req) && this.wsRouter.find("WS", path)) || this.router.find(method, path);
+        preMatched ??
+        ((this.hasWs && isUpgradeRequest(req) && this.wsRouter.find("WS", path)) || this.router.find(method, path));
       let chain: Middleware[] | undefined;
       for (const m of this.middleware) if (!m.match || m.match(path)) (chain ??= []).push(m.fn);
       let final: Middleware;
       if (match) {
         c.params = match.params as any;
+        c.route = match.handler.route;
         if (match.handler.middleware.length) (chain ??= []).push(...match.handler.middleware);
         const route = match.handler.route;
         const needsInput = match.handler.needsInput;
         if (!chain && !route.ws) {
           // Fast path: no middleware. Skip the compose machinery entirely.
           if (needsInput) await prepareInput(c, route.meta);
-          const out = route.handler(c);
-          c.res = c.respond(out instanceof Promise ? await out : out);
+          const ret = route.handler(c);
+          const out = ret instanceof Promise ? await ret : ret;
+          // Behind a real server nothing in-process observes this response, so a bare string body can use the
+          // runtime's native text/plain default (much cheaper than a headers init; same bytes on the wire).
+          c.res = server && typeof out === "string" && c.pristine ? new Response(out) : c.respond(out);
           return method === "HEAD" ? headOnly(c.res) : c.res;
         }
         final = async (ctx) => {
@@ -248,7 +365,7 @@ export class Miu<E extends Env = Env> {
       c.res = await this.handleError(err, c);
     }
     return method === "HEAD" ? headOnly(c.res) : c.res;
-  };
+  }
 
   /** Convenience for tests and in-process calls (used by the MCP bridge). */
   request(input: string | Request, init?: RequestInit, env?: E["Bindings"], executionCtx?: ExecutionContext) {
@@ -260,7 +377,7 @@ export class Miu<E extends Env = Env> {
   listen(port = 3000, hostname?: string) {
     const B = (globalThis as { Bun?: { serve: (o: object) => unknown } }).Bun;
     if (!B) throw new Error("app.listen() requires Bun. On Node, use `import { serve } from 'miujs/node'`.");
-    return B.serve({ port, hostname, fetch: this.fetch, websocket: this.websocket }) as { port: number; stop: (force?: boolean) => void };
+    return B.serve(this.serveOptions({ port, hostname })) as { port: number; stop: (force?: boolean) => void };
   }
 
   private async handleNotFound(c: Context<E>, path: string): Promise<Response> {
@@ -274,6 +391,7 @@ export class Miu<E extends Env = Env> {
   }
 
   private async handleError(err: unknown, c: Context<E>): Promise<Response> {
+    c.error = err;
     if (this.errorHandler) {
       try {
         return await this.errorHandler(err, c);
@@ -376,6 +494,20 @@ async function readBody(req: Request): Promise<{ value: unknown; form: boolean }
     }
   }
   throw new HttpError(415, `Unsupported content-type: ${type}`);
+}
+
+function decodeParams(params: Record<string, string> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!params) return out;
+  for (const k in params) {
+    const v = params[k]!;
+    try {
+      out[k] = v.includes("%") ? decodeURIComponent(v) : v;
+    } catch {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 function headOnly(res: Response): Response {

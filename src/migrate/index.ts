@@ -24,3 +24,14 @@ export { recordContract, verifyContract, formatDiffs, VOLATILE_HEADERS } from ".
 export type { Contract, ContractRequest, RecordedResponse, ContractDiff, RecordOptions, VerifyOptions, NormalizeOptions, BodyNormalizer } from "./contract.ts";
 export { introspect, introspectMongo, mapColumnType, toSchemaSource, toCrudSource } from "./introspect.ts";
 export type { Dialect, QueryFn, Column, Table, IntrospectOptions, IntrospectMongoOptions, SchemaSourceOptions, CrudSourceOptions } from "./introspect.ts";
+export {
+  parseAppKey,
+  laravelDecrypt,
+  laravelEncrypt,
+  laravelCookiePrefix,
+  decryptLaravelCookie,
+  laravelSessionPayload,
+  decodeLaravelSession,
+  laravelSessionBridge,
+} from "./laravel-session.ts";
+export type { LaravelCipher, LaravelCryptOptions, LaravelSessionDataOptions, LaravelSessionBridgeOptions } from "./laravel-session.ts";

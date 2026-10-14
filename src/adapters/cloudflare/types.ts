@@ -138,7 +138,7 @@ export interface QueueSendOptions {
 
 /** A Queue producer binding. */
 export interface QueueProducer<Body = unknown> {
-  send(body: Body, options?: QueueSendOptions): Promise<void>;
+  send(body: Body, options?: QueueSendOptions): Promise<unknown>;
 }
 
 export interface QueueRetryOptions {

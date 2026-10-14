@@ -1,0 +1,16 @@
+{
+  // Emit for the published package: dist/ mirrors src/ as ESM .js + .d.ts with source and declaration maps.
+  // Run via `bun run build` (scripts/build.ts), which also writes dist/bin/miu.js.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "rewriteRelativeImportExtensions": true,
+    "removeComments": false
+  },
+  "include": ["src"]
+}

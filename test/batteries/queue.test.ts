@@ -6,6 +6,8 @@ import {
   sqliteQueueDriver,
   type QueueDriver,
 } from "../../src/batteries/queue/index.ts";
+import { redisQueueDriver } from "../../src/batteries/queue/redis.ts";
+import { testRedis } from "./redis-server.ts";
 import { ValidationError } from "../../src/core/errors.ts";
 import { t } from "../../src/core/schema.ts";
 
@@ -19,9 +21,12 @@ afterAll(() => {
   for (const p of tmpFiles) for (const s of ["", "-wal", "-shm"]) rmSync(p + s, { force: true });
 });
 
+const redis = await testRedis();
 const drivers: [string, () => QueueDriver][] = [
   ["memory", () => memoryQueueDriver()],
   ["sqlite", () => sqliteQueueDriver({ path: ":memory:" })],
+  // Real redis-server (started by the helper, or REDIS_URL); skipped when unavailable.
+  ...(redis ? [["redis", () => redisQueueDriver(redis.client, { prefix: redis.prefix() })] as [string, () => QueueDriver]] : []),
 ];
 
 const job = (id: string, runAt: number, extra: Record<string, unknown> = {}) => ({
@@ -235,6 +240,40 @@ for (const [name, makeDriver] of drivers) {
       // once completed, the key is free again
       const d = await j.dispatch({ n: 4 }, { key: "welcome:42" });
       expect(d).not.toBe(a);
+    });
+
+    test('dedupe "active" also matches a running job; the default only matches pending ones', async () => {
+      const { queue, driver, clock } = setup();
+      queue.define("sync", { handler: () => {} });
+      const a = await queue.dispatch("sync", { n: 1 }, { key: "sync:1" });
+      const claimed = (await driver.claim(clock.now, 60_000))!;
+      expect(claimed.id).toBe(a);
+      // running: "active" returns it…
+      expect(await queue.dispatch("sync", { n: 2 }, { key: "sync:1", dedupe: "active" })).toBe(a);
+      expect((await driver.list()).length).toBe(1);
+      // …the default ("pending") enqueues a follow-up run
+      const b = await queue.dispatch("sync", { n: 3 }, { key: "sync:1" });
+      expect(b).not.toBe(a);
+      // with both a running and a pending job, "active" returns one of them without adding more
+      expect([a, b]).toContain(await queue.dispatch("sync", { n: 4 }, { key: "sync:1", dedupe: "active" }));
+      expect((await driver.list()).length).toBe(2);
+      // once neither is pending or running, the key is free again
+      await driver.complete(a, clock.now, claimed.attempts);
+      await queue.runOnce();
+      const c = await queue.dispatch("sync", { n: 5 }, { key: "sync:1", dedupe: "active" });
+      expect([a, b]).not.toContain(c);
+    });
+
+    test('dedupe "active" matches a job waiting to retry, and never a failed one', async () => {
+      const { queue, clock } = setup();
+      queue.define("flaky", { retries: 1, backoff: () => 1000, handler: () => { throw new Error("x"); } });
+      const a = await queue.dispatch("flaky", {}, { key: "f" });
+      await queue.runOnce(); // attempt 1 fails → pending again
+      expect(await queue.dispatch("flaky", {}, { key: "f", dedupe: "active" })).toBe(a);
+      clock.advance(1000);
+      await queue.runOnce(); // attempt 2 fails → failed
+      expect((await queue.get(a))?.status).toBe("failed");
+      expect(await queue.dispatch("flaky", {}, { key: "f", dedupe: "active" })).not.toBe(a);
     });
 
     test("timeout counts as a failure", async () => {

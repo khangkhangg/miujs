@@ -75,6 +75,27 @@ describe("createClient", () => {
   });
 });
 
+describe("createClient<typeof app>", () => {
+  const typed = createClient<typeof app>("http://api.test", { fetch: shim });
+
+  test("same runtime behavior, results typed from the route table", async () => {
+    const todo = await typed.get("/todos/:id", { params: { id: 7 } });
+    expect(todo.title).toBe("Buy milk");
+    const created = await typed.post("/todos", { body: { title: "Ship" } });
+    expect(created).toEqual({ id: 1, title: "Ship" });
+    expect(await typed.delete("/todos/:id", { params: { id: 1 } })).toBeUndefined();
+    expect(await typed.request("GET", "/files/*", { params: { path: "x/y" } })).toEqual({ path: "x/y" });
+  });
+
+  test("works with mounted sub-apps", async () => {
+    const v1 = new Miu().get("/items/:id", (c) => ({ id: c.params.id }));
+    const root = new Miu({ logger: false }).route("/v1", v1);
+    const c = createClient<typeof root>("http://x", { fetch: (i, init) => root.fetch(new Request(i, init)) });
+    const item = await c.get("/v1/items/:id", { params: { id: "a" } });
+    expect(item.id).toBe("a");
+  });
+});
+
 describe("createMcpClient", () => {
   const agent = createMcpClient("http://api.test/mcp", { fetch: shim, headers: { authorization: "Bearer t0k" } });
 

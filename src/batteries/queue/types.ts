@@ -1,6 +1,6 @@
 /**
  * Background job queue: jobs are persisted by a driver, claimed with a lock,
- * and retried with backoff. Drivers: memory (dev/tests) and SQLite (default).
+ * and retried with backoff. Drivers: memory (dev/tests), SQLite (default) and Redis (scale-out).
  */
 
 export type JobStatus = "pending" | "running" | "completed" | "failed";
@@ -21,9 +21,22 @@ export interface Job<P = unknown> {
   finishedAt?: number;
 }
 
+/**
+ * Which existing jobs a dedupe key matches: `"pending"` (default) only jobs waiting to run, so a job that
+ * is already running can be followed by one more run; `"active"` pending or running jobs.
+ */
+export type DedupeMode = "pending" | "active";
+
+export interface PushOptions {
+  dedupe?: DedupeMode;
+}
+
 export interface QueueDriver {
-  /** Store a new job. If `job.key` matches a pending job, store nothing and return that job instead. */
-  push(job: Job): Promise<Job>;
+  /**
+   * Store a new job. If `job.key` matches a pending job (or, with `dedupe: "active"`, a pending or running
+   * job), store nothing and return that job instead. The check and insert must be atomic.
+   */
+  push(job: Job, opts?: PushOptions): Promise<Job>;
   /**
    * Atomically take one due pending job (or a running job whose lock expired),
    * mark it running until `now + lockMs`, and increment its attempts.

@@ -1,15 +1,23 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import type { AppLike } from "../core/context.ts";
+import { bunWebSocket } from "../realtime/bun.ts";
+import { NodeWsServer, type NodeWsOptions } from "./node-ws.ts";
+
+export type { NodeWsOptions } from "./node-ws.ts";
 
 export interface NodeServeOptions {
   port?: number;
   hostname?: string;
+  /** WebSocket limits for `app.ws()` routes (zero-dependency RFC 6455 server). */
+  ws?: NodeWsOptions;
 }
 
 export interface NodeServer {
   port: number;
   server: Server;
+  /** Publish to every WebSocket on this server subscribed to `topic` (same as `app.publish`). */
+  publish(topic: string, data: string | ArrayBuffer | ArrayBufferView): number;
   close(): Promise<void>;
 }
 
@@ -66,6 +74,21 @@ export function serve(app: AppLike, opts: NodeServeOptions = {}): Promise<NodeSe
       out.end();
     }
   });
+  // WebSockets: Node emits `upgrade` for requests with an Upgrade header. The
+  // request runs through the normal pipeline with `wss` as the 2nd fetch arg
+  // (the same shape as Bun's server), so middleware, validation and the
+  // route's `upgrade()` hook decide before the handshake completes.
+  const wss = new NodeWsServer(bunWebSocket, opts.ws);
+  server.on("upgrade", (req: IncomingMessage, socket, head: Buffer) => {
+    const host = req.headers.host ?? `${opts.hostname ?? "localhost"}`;
+    let request: Request;
+    try {
+      request = toRequest(req, `http://${host}`);
+    } catch {
+      return void socket.end("HTTP/1.1 400 Bad Request\r\nconnection: close\r\ncontent-length: 0\r\n\r\n");
+    }
+    void wss.handle(request, socket, head, (r, s) => app.fetch(r, s));
+  });
   return new Promise((resolve) => {
     server.listen(opts.port ?? 3000, opts.hostname, () => {
       const addr = server.address();
@@ -73,7 +96,13 @@ export function serve(app: AppLike, opts: NodeServeOptions = {}): Promise<NodeSe
       resolve({
         port,
         server,
-        close: () => new Promise<void>((r) => server.close(() => r())),
+        publish: (topic, data) => wss.publish(topic, data),
+        close: () =>
+          new Promise<void>((r) => {
+            server.close(() => r());
+            server.closeAllConnections?.();
+            for (const ws of wss.connections) ws.terminate();
+          }),
       });
     });
   });

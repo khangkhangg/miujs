@@ -49,6 +49,10 @@ export class Context<E extends Env = Env, I extends Input = Input> {
   body = undefined as I["body"];
   /** The final response; set after the handler runs. Middleware may read or mutate it after `next()`. */
   res!: Response;
+  /** The matched route (method, path, meta), when one matched. For logging and tooling. */
+  route?: { method: string; path: string; meta: Record<string, any> };
+  /** The error thrown while handling this request, if any (the response is already rendered from it). */
+  error?: unknown;
 
   private _url?: URL;
   private _status = 200;
@@ -73,6 +77,11 @@ export class Context<E extends Env = Env, I extends Input = Input> {
   }
   set query(value) {
     this._query = value;
+  }
+
+  /** No status or headers were set on this context, so a response can use runtime defaults. */
+  get pristine(): boolean {
+    return !this._headers && this._status === 200;
   }
 
   get url(): URL {

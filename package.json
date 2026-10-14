@@ -1,7 +1,7 @@
 {
   "name": "miujs",
-  "version": "0.3.0",
-  "description": "About as fast as Elysia, runs anywhere like Hono, and every route is automatically an agent tool.",
+  "version": "0.4.0",
+  "description": "Fast, secure, runs anywhere (Bun, Node, Cloudflare Workers), and every route is automatically an agent tool.",
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "author": "khangkhangg",
@@ -9,21 +9,57 @@
     "type": "git",
     "url": "https://github.com/khangkhangg/miujs"
   },
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "bin": {
-    "miu": "./bin/miu.ts"
+    "miu": "./dist/bin/miu.js"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./client": "./src/client/index.ts",
-    "./cloudflare": "./src/adapters/cloudflare/index.ts",
-    "./migrate": "./src/migrate/index.ts",
-    "./node": "./src/adapters/node.ts",
-    "./realtime": "./src/realtime/index.ts",
-    "./sqlite": "./src/sqlite.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "bun": "./src/client/index.ts",
+      "import": "./dist/client/index.js",
+      "default": "./dist/client/index.js"
+    },
+    "./cloudflare": {
+      "types": "./dist/adapters/cloudflare/index.d.ts",
+      "bun": "./src/adapters/cloudflare/index.ts",
+      "import": "./dist/adapters/cloudflare/index.js",
+      "default": "./dist/adapters/cloudflare/index.js"
+    },
+    "./migrate": {
+      "types": "./dist/migrate/index.d.ts",
+      "bun": "./src/migrate/index.ts",
+      "import": "./dist/migrate/index.js",
+      "default": "./dist/migrate/index.js"
+    },
+    "./node": {
+      "types": "./dist/adapters/node.d.ts",
+      "bun": "./src/adapters/node.ts",
+      "import": "./dist/adapters/node.js",
+      "default": "./dist/adapters/node.js"
+    },
+    "./realtime": {
+      "types": "./dist/realtime/index.d.ts",
+      "bun": "./src/realtime/index.ts",
+      "import": "./dist/realtime/index.js",
+      "default": "./dist/realtime/index.js"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite.d.ts",
+      "bun": "./src/sqlite.ts",
+      "import": "./dist/sqlite.js",
+      "default": "./dist/sqlite.js"
+    }
   },
   "files": [
+    "dist",
     "src",
     "bin",
     "templates",
@@ -33,9 +69,13 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "dev": "bun --watch examples/basic.ts",
+    "dev": "MIU_ENV=development bun --watch examples/basic.ts",
+    "devtools": "MIU_ENV=development bun --inspect examples/devtools.ts",
     "bench": "cd bench && bun run.ts",
-    "bench:micro": "cd bench && bun micro.ts"
+    "bench:micro": "cd bench && bun micro.ts",
+    "build": "bun scripts/build.ts",
+    "typecheck:cf": "tsc -p tsconfig.cf.json",
+    "prepublishOnly": "bun run build"
   },
   "keywords": [
     "framework",
@@ -47,6 +87,7 @@
     "agents"
   ],
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261014.1",
     "@types/bun": "latest",
     "typescript": "^5.6.0"
   }

@@ -271,10 +271,37 @@ describe("app.ws on Bun", () => {
     expect(app.routes.find((r) => r.path === "/live")?.method).toBe("WS");
   });
 
-  test("without Bun server or WebSocketPair (e.g. Node) upgrade returns 501", async () => {
+  test("app.publish reaches every subscriber via Bun's server.publish (objects as JSON)", async () => {
+    const app = new Miu({ logger: false })
+      .ws("/news", {
+        open(ws) {
+          ws.subscribe("news");
+          ws.send("subscribed");
+        },
+      })
+      .post("/announce", async (c) => {
+        app.publish("news", await c.req.text());
+        app.publish("news", { kind: "json" });
+        return { ok: true };
+      });
+    app.publish("news", "before anyone connected"); // no-op, must not throw
+    const url = serve(app);
+    const a = connect(`${url}/news`);
+    const b = connect(`${url}/news`);
+    await a.next(1);
+    await b.next(1);
+    await fetch(`${url.replace("ws:", "http:")}/announce`, { method: "POST", body: "hello all" });
+    const expected = ["subscribed", "hello all", JSON.stringify({ kind: "json" })];
+    expect(await a.next(3)).toEqual(expected);
+    expect(await b.next(3)).toEqual(expected);
+    a.ws.close();
+    b.ws.close();
+  });
+
+  test("without an upgrade backend (plain fetch, e.g. Node without serve()) upgrade returns 501", async () => {
     const app = new Miu({ logger: false }).ws("/n", { open: () => {} });
     const res = await app.request("/n", { headers: { upgrade: "websocket", connection: "Upgrade" } });
     expect(res.status).toBe(501);
-    expect((await res.json()).detail).toContain("ws adapter");
+    expect((await res.json()).detail).toContain("miujs/node");
   });
 });

@@ -39,7 +39,8 @@ PHP/Python apps, MiuJS can be the easiest path from a legacy app to an AI-ready 
 | 4. Realtime | WebSockets + rooms (Bun native & Durable Objects) for games / Kahoot-style apps | **Done (v0.3)** |
 | 5. Migration kit | Reverse proxy, shared PHP/Python sessions, contract tests, DB introspection | **Done (v0.3)** |
 | 6. DX & launch | CLI, templates, `llms.txt`, client, benchmarks, guides | **Mostly done (v0.3)** — 1.0 items open |
-| 7. Toward 1.0 | Compiled JS build, typed client, Node WebSockets, perf parity with Elysia, CI | Next |
+| 7. Toward 1.0 | Compiled build, typed client, Node WebSockets, Elysia-level perf, security/scale drivers, DevTools debugging, CI | In progress |
+| 8. App kits | Schema-driven admin back-office; virtual-tour kit (panoramas, hotspots, uploads, viewer) | Planned |
 
 ## 4. File structure
 
@@ -153,16 +154,27 @@ miujs/
 - [ ] Benchmarks in CI; Express comparison
 - [ ] Docs site
 
-### Phase 7 — Toward 1.0
-- [ ] Compiled JS build (`dist/`) so the published package runs on Node without `tsx` and `miu` runs under Node
-- [ ] Typed client inferred from the app's route table (needs route types accumulated on `Miu`)
-- [ ] Elysia-level GET throughput: precompiled per-route handlers, constant-response caching
-- [ ] WebSockets on Node (`ws` adapter); app-wide `publish`
-- [ ] Verify Cloudflare binding types against `@cloudflare/workers-types`; run Workers tests in workerd/Miniflare
-- [ ] Queue dedupe across running jobs; Cloudflare Queues dedupe; Redis store + queue drivers
-- [ ] OAuth 2.1 resource metadata for MCP auth; EdDSA/RS256 JWT
-- [ ] Laravel encrypted session decoding (APP_KEY); SQLite datetime coercion in generated CRUD
-- [ ] GitHub Actions CI: test, typecheck, Node smoke, Workers bundle check
+### Phase 7 — Toward 1.0 ✅ (v0.4)
+- [x] Compiled build (`dist/`, ESM + `.d.ts` + source maps); conditional exports (bun → src, Node/bundlers → dist); `miu` runs on plain Node
+- [x] `create-miu` package (`bun create miu` / `npm create miu`)
+- [x] Typed client: `Miu<E, R>` accumulates a route table; `createClient<typeof app>()` checks paths/params/query/body and infers output
+- [x] Speed: server-only native text responses, Bun native routes via `app.serveOptions()`/`listen()` — ~90% of Elysia on simple GETs, ahead of Hono on JSON/POST
+- [x] WebSockets on Node (zero-dependency RFC 6455 server with strict limits); `app.publish()` on Bun/Node/Workers
+- [x] Cloudflare binding types verified against `@cloudflare/workers-types` (`typecheck:cf`)
+- [x] Redis store + queue drivers (tested against real redis-server); queue dedupe across running jobs
+- [x] MCP OAuth 2.1 protected-resource auth (`mcpAuth`); EdDSA/RS256/ES256 JWT + remote JWKS
+- [x] Laravel encrypted cookie/session decoding
+- [x] GitHub Actions CI (test, typecheck, Workers types, build, Node smoke, bundle checks, pack) + weekly bench
+- [x] DevTools: `Server-Timing`, dev error pages, `/__miu` request inspector, dev logger, source maps, `--inspect` guide
+- [x] `c.route` and `c.error` for logging and tooling
+- [ ] Remaining: per-route compiled handlers for the last ~10% vs Elysia; Workers tests in workerd/Miniflare; Cloudflare Queues dedupe; SQLite datetime coercion in generated CRUD; typed `c.json()` output; PS256/ES384 JWT
+
+### Phase 8 — App kits
+- [ ] `miujs/admin`: back-office generated from `t` schemas (list/search/create/edit/delete, uploads, auth, roles)
+- [ ] Virtual-tour kit: scenes (equirectangular panoramas), hotspots linking scenes, info points, tour publishing
+- [ ] Image pipeline: uploads to local disk or R2, thumbnails/tiles, signed URLs
+- [ ] Tour viewer (vanilla JS/WebGL, no build step) + editor for placing hotspots by clicking the panorama
+- [ ] `miu create --template tour` and `--template admin`
 
 ## 6. Prompts per feature
 

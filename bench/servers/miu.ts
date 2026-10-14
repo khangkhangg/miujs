@@ -6,5 +6,6 @@ const app = new Miu({ logger: false })
   .get("/user/:id", (c) => ({ id: c.params.id }))
   .post("/json", { body: t.object({ name: t.string(), age: t.integer() }) }, (c) => c.body);
 
-const server = Bun.serve({ port: Number(process.env.PORT ?? 0), fetch: app.fetch });
+// serveOptions() lets Bun's native router dispatch routes (what app.listen() uses).
+const server = Bun.serve(app.serveOptions({ port: Number(process.env.PORT ?? 0) }));
 console.log(`LISTENING ${server.port}`);

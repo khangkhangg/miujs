@@ -262,6 +262,34 @@ r.isError; r.structuredContent; r.content[0].text;
 JSON-RPC errors (unknown tool, bad method) throw `McpClientError` with the JSON-RPC `code`. `agent.rpc(method, params)`
 sends any other request.
 
+
+### Typed client
+
+Pass your app's type to `createClient` and every call is checked against your routes — params, query and
+body come from the route schemas, the result from `response` (or the handler's return type):
+
+```ts
+// server.ts
+export const app = new Miu()
+  .get("/todos/:id", { params: t.object({ id: t.integer() }), response: Todo }, (c) => db.todo(c.params.id))
+  .post("/todos", { body: t.object({ title: t.string() }) }, (c) => db.create(c.body));
+export type App = typeof app;
+
+// web.ts
+import { createClient } from "miujs/client";
+import type { App } from "./server.ts";
+
+const api = createClient<App>("https://api.example.com");
+const todo = await api.get("/todos/:id", { params: { id: 1 } }); // { id: number; title: string; ... }
+await api.post("/todos", { body: { title: "Ship" } });
+// api.get("/todos/:id")          -> type error: params required
+// api.put("/todos")              -> type error: no PUT /todos route
+```
+
+Chain route registrations (`new Miu().get(...).post(...)`) so the type records them; sub-apps mounted with
+`.route("/v1", v1)` appear under their prefix. Handlers that return `c.json(...)` give `unknown` — add a
+`response` schema for a typed result. Without the type argument the client is untyped (`client.get<T>(path)`).
+
 ## CLI
 
 The `miu` command runs on Bun (`bunx miu …`) and on Node 22 (`node --experimental-strip-types bin/miu.ts …`).
