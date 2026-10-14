@@ -1,0 +1,12 @@
+{
+  "name": "miujs-bench",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench": "bun run.ts"
+  },
+  "devDependencies": {
+    "elysia": "^1.2.0",
+    "hono": "^4.6.0"
+  }
+}

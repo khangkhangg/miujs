@@ -45,7 +45,7 @@ export class Context<E extends Env = Env, I extends Input = Input> {
   /** The top-level app handling this request (used by plugins such as mcp() and openapi()). */
   app!: AppLike;
   params = {} as I["params"] extends undefined ? Record<string, string> : I["params"];
-  query = {} as I["query"] extends undefined ? Record<string, string | string[]> : I["query"];
+  private _query?: unknown;
   body = undefined as I["body"];
   /** The final response; set after the handler runs. Middleware may read or mutate it after `next()`. */
   res!: Response;
@@ -60,6 +60,19 @@ export class Context<E extends Env = Env, I extends Input = Input> {
     this.req = req;
     this.env = (env ?? {}) as Bindings<E>;
     this.executionCtx = executionCtx;
+  }
+
+  /** Query string as an object (repeated keys become arrays). Parsed lazily unless a route schema validated it. */
+  get query(): I["query"] extends undefined ? Record<string, string | string[]> : I["query"] {
+    if (this._query === undefined) {
+      const url = this.req.url;
+      const q = url.indexOf("?");
+      this._query = q < 0 ? {} : searchToObject(new URLSearchParams(url.slice(q + 1, hashIndex(url, q))));
+    }
+    return this._query as any;
+  }
+  set query(value) {
+    this._query = value;
   }
 
   get url(): URL {
@@ -129,6 +142,7 @@ export class Context<E extends Env = Env, I extends Input = Input> {
   }
 
   newResponse(body: BodyInit | null, status = this._status, headers?: HeadersInit): Response {
+    if (!this._headers) return new Response(body, { status, headers });
     const h = new Headers(headers);
     if (this._headers) {
       for (const [k, v] of this._headers) {
@@ -141,15 +155,16 @@ export class Context<E extends Env = Env, I extends Input = Input> {
   }
 
   json(data: unknown, status?: number, headers?: HeadersInit): Response {
-    const h = new Headers(headers);
-    h.set("content-type", "application/json; charset=utf-8");
-    return this.newResponse(JSON.stringify(data), status, h);
+    // Native Response.json (application/json;charset=utf-8) is the fast path when nothing custom is set.
+    if (!headers && !this._headers) {
+      const st = status ?? this._status;
+      return st === 200 ? Response.json(data) : Response.json(data, { status: st });
+    }
+    return this.newResponse(JSON.stringify(data), status, withType(headers, JSON_TYPE));
   }
 
   text(text: string, status?: number, headers?: HeadersInit): Response {
-    const h = new Headers(headers);
-    h.set("content-type", "text/plain; charset=utf-8");
-    return this.newResponse(text, status, h);
+    return this.newResponse(text, status, withType(headers, TEXT_TYPE));
   }
 
   html(html: string, status?: number, headers?: HeadersInit): Response {
@@ -176,4 +191,34 @@ export class Context<E extends Env = Env, I extends Input = Input> {
     }
     return this.json(value);
   }
+}
+
+const JSON_TYPE = { "content-type": "application/json; charset=utf-8" };
+const TEXT_TYPE = { "content-type": "text/plain; charset=utf-8" };
+
+/** Content-type plus caller headers; a shared literal on the common no-extra-headers path. */
+function withType(headers: HeadersInit | undefined, type: { "content-type": string }): HeadersInit {
+  if (!headers) return type;
+  const h = new Headers(headers);
+  h.set("content-type", type["content-type"]);
+  return h;
+}
+
+function hashIndex(url: string, from: number): number {
+  const h = url.indexOf("#", from);
+  return h < 0 ? url.length : h;
+}
+
+/** URLSearchParams to an object; repeated keys (and `key[]`) become arrays. */
+export function searchToObject(sp: URLSearchParams): Record<string, string | string[]> {
+  const obj: Record<string, unknown> = {};
+  for (const [k, v] of sp) addValue(obj, k.endsWith("[]") ? k.slice(0, -2) : k, v);
+  return obj as Record<string, string | string[]>;
+}
+
+export function addValue(obj: Record<string, unknown>, k: string, v: unknown) {
+  const cur = obj[k];
+  if (cur === undefined) obj[k] = v;
+  else if (Array.isArray(cur)) cur.push(v);
+  else obj[k] = [cur, v];
 }

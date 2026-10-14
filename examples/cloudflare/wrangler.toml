@@ -4,3 +4,63 @@ compatibility_date = "2026-10-01"
 
 [vars]
 GREETING = "Xin chào"
+
+# ---------------------------------------------------------------------------
+# Bindings used by full.ts (set `main = "full.ts"` and uncomment what you need).
+# Create resources with: wrangler kv namespace create CACHE / wrangler d1 create miu /
+# wrangler r2 bucket create miu-files / wrangler queues create miu-jobs
+# ---------------------------------------------------------------------------
+
+# Workers KV — kvStore(): caches and read-heavy data (eventually consistent, no atomic incr).
+# [[kv_namespaces]]
+# binding = "CACHE"
+# id = "<kv-namespace-id>"
+
+# D1 — d1Store(): sessions and other strongly consistent keys (table miu_kv is created on first use).
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "miu"
+# database_id = "<d1-database-id>"
+
+# R2 — r2Files() / uploadHandler().
+# [[r2_buckets]]
+# binding = "FILES"
+# bucket_name = "miu-files"
+
+# Queues — cloudflareQueue() produces, queueConsumer() consumes.
+# Keep max_retries >= the largest `retries` of your jobs.
+# [[queues.producers]]
+# binding = "JOBS"
+# queue = "miu-jobs"
+#
+# [[queues.consumers]]
+# queue = "miu-jobs"
+# max_batch_size = 10
+# max_batch_timeout = 5
+# max_retries = 3
+# dead_letter_queue = "miu-jobs-dlq"
+
+# Durable Objects — doStore() talks to MiuStoreObject (export it from your worker).
+# Atomic counters for rateLimit().
+# [[durable_objects.bindings]]
+# name = "MIU_STORE"
+# class_name = "MiuStoreObject"
+#
+# [[migrations]]
+# tag = "v1"
+# new_sqlite_classes = ["MiuStoreObject"]
+
+# Workflows — defineWorkflow("SIGNUP", schema, run); export class SignupWorkflow extends WorkflowEntrypoint.
+# [[workflows]]
+# name = "signup"
+# binding = "SIGNUP"
+# class_name = "SignupWorkflow"
+
+# Hyperdrive — hyperdriveUrl(env.HYPERDRIVE) for postgres/mysql drivers.
+# [[hyperdrive]]
+# binding = "HYPERDRIVE"
+# id = "<hyperdrive-id>"
+
+# Cron triggers — toWorker(app, { scheduled }).
+# [triggers]
+# crons = ["*/15 * * * *"]

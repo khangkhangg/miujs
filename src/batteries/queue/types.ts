@@ -29,9 +29,13 @@ export interface QueueDriver {
    * mark it running until `now + lockMs`, and increment its attempts.
    */
   claim(now: number, lockMs: number): Promise<Job | undefined>;
-  complete(id: string, now: number): Promise<void>;
-  /** Record a failed attempt: reschedule at `nextRunAt`, or fail permanently when it is null. */
-  fail(id: string, error: string, nextRunAt: number | null, now: number): Promise<void>;
+  /**
+   * Mark a running job completed. `attempt` fences stale workers: the update applies only while the job is
+   * still running under that attempt number (a reclaimed job has a higher one). Returns whether it applied.
+   */
+  complete(id: string, now: number, attempt: number): Promise<boolean>;
+  /** Record a failed attempt: reschedule at `nextRunAt`, or fail permanently when it is null. Fenced like `complete`. */
+  fail(id: string, error: string, nextRunAt: number | null, now: number, attempt: number): Promise<boolean>;
   get(id: string): Promise<Job | undefined>;
   list(opts?: { status?: JobStatus; limit?: number }): Promise<Job[]>;
   findPendingByKey(key: string): Promise<Job | undefined>;

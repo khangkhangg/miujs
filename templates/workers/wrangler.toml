@@ -1,0 +1,6 @@
+name = "{{name}}"
+main = "src/worker.ts"
+compatibility_date = "{{date}}"
+# compatibility_flags = ["nodejs_compat"]
+
+# Add bindings with: npx miu wrangler --name {{name}} --kv CACHE --d1 DB --out wrangler.toml --force

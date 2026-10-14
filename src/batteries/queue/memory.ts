@@ -35,16 +35,17 @@ export function memoryQueueDriver(): QueueDriver {
       j.attempts++;
       return copy(j);
     },
-    async complete(id, now) {
+    async complete(id, now, attempt) {
       const j = jobs.get(id);
-      if (!j) return;
+      if (!j || j.status !== "running" || j.attempts !== attempt) return false;
       j.status = "completed";
       j.finishedAt = now;
       j.lockedUntil = undefined;
+      return true;
     },
-    async fail(id, error, nextRunAt, now) {
+    async fail(id, error, nextRunAt, now, attempt) {
       const j = jobs.get(id);
-      if (!j) return;
+      if (!j || j.status !== "running" || j.attempts !== attempt) return false;
       j.lastError = error;
       j.lockedUntil = undefined;
       if (nextRunAt === null) {
@@ -54,6 +55,7 @@ export function memoryQueueDriver(): QueueDriver {
         j.status = "pending";
         j.runAt = nextRunAt;
       }
+      return true;
     },
     async get(id) {
       const j = jobs.get(id);

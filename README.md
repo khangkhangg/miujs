@@ -1,6 +1,6 @@
 # MiuJS
 
-**About as fast as Elysia, runs anywhere like Hono, and every route is automatically an agent tool.**
+**As fast as Hono and closing in on Elysia, runs anywhere, and every route is automatically an agent tool.**
 
 MiuJS is an open-source TypeScript web framework for Bun, Node and Cloudflare Workers, built for apps that
 humans *and* AI agents use. Declare a route with a schema once, and you get:
@@ -10,11 +10,19 @@ humans *and* AI agents use. Declare a route with a schema once, and you get:
 - an **OpenAPI 3.1** operation
 - consistent **RFC 9457 problem+json** errors
 
-> Status: **v0.2 — core + batteries.** Router, schemas, middleware, errors, OpenAPI, MCP, Node adapter, stores,
-> sessions, auth, HTTP middleware, rate limiting, caching and job queues are done and tested. Cloudflare bindings,
-> realtime and the migration kit are next — see [docs/ROADMAP.md](docs/ROADMAP.md).
+> Status: **v0.3 — feature-complete preview.** Core, batteries, Cloudflare, realtime, migration kit, CLI and
+> tooling are done and tested (432 tests). Remaining work toward 1.0 (compiled build, typed client, Elysia-level
+> GET throughput, CI) is in [docs/ROADMAP.md](docs/ROADMAP.md). Full guide: [docs/guide.md](docs/guide.md),
+> deployment: [docs/deploy.md](docs/deploy.md).
 
 ## Quick start
+
+```bash
+bunx miujs create my-app            # --template bun | node | workers
+cd my-app && bun install && bun dev
+```
+
+Or by hand:
 
 ```ts
 // app.ts — run with: bun app.ts
@@ -192,11 +200,89 @@ await welcome.dispatch({ to: "ann@example.com" }, { delay: 60, key: "welcome:ann
 queue.work({ concurrency: 4 }); // in a worker process
 ```
 
+## Cloudflare (`miujs/cloudflare`)
+
+```ts
+import { Miu, sessions, rateLimit, mcp } from "miujs";
+import { d1Store, doStore, MiuStoreObject, queueConsumer, toWorker, workerEnv } from "miujs/cloudflare";
+
+const env = workerEnv<Env>();                    // bindings exist per request; stores take getters
+const app = new Miu<{ Bindings: Env }>()
+  .use(sessions({ store: d1Store(() => env.current.DB), secret: SECRET }))
+  .use(rateLimit({ store: doStore(() => env.current.LIMITS), limit: 60, window: 60 })) // atomic counters
+  .use(mcp());
+
+export { MiuStoreObject };                       // Durable Object class for doStore()
+export default toWorker(app, { env, queue: queueConsumer(queue) });
+```
+
+Stores for KV, D1 and Durable Objects; Cloudflare Queues producer/consumer that reuse Miu job definitions;
+R2 file serving (ETag, Range) and uploads; Workflows and Hyperdrive helpers. `miu wrangler --d1 DB --kv CACHE …`
+writes the matching `wrangler.toml`. KV is eventually consistent — use D1 or a Durable Object for counters.
+
+## Realtime (`app.ws`, `miujs/realtime`)
+
+```ts
+import { createRoomHub } from "miujs/realtime";
+const rooms = createRoomHub<{ name: string }>();
+
+app.ws("/rooms/:id", {
+  params: t.object({ id: t.string() }),
+  use: [requireAuth()],                               // middleware runs before the upgrade
+  upgrade: (c) => ({ user: currentUser(c), room: c.params.id }),
+}, {
+  open: (ws) => rooms.join(ws.data.room, ws, { name: ws.data.user.name }),
+  message: (ws, msg) => rooms.broadcast(ws.data.room, { from: ws.data.user.name, msg }, { except: ws }),
+});
+```
+
+Works on Bun (native pub/sub) and Workers (`WebSocketPair`); `MiuRoom` is a hibernating Durable Object room for
+cross-connection state on Cloudflare; `createGame()` runs Kahoot-style rounds with speed-based scoring — see
+`examples/quiz`. Node WebSockets are not supported yet (501).
+
+## Migrating from PHP / Python (`miujs/migrate`)
+
+```ts
+import { legacyProxy, phpSessionBridge, verifyLegacyPassword } from "miujs/migrate";
+
+app
+  .get("/api/products", listProducts)                  // ported routes are served by Miu…
+  .use(legacyProxy({ target: "https://legacy.internal" })); // …everything else still goes to the old app
+```
+
+- **Strangler proxy** forwards unported routes (method-aware) with cookies, streaming and redirects intact.
+- **Shared logins:** read PHP (`PHPSESSID`) and Django sessions; verify PHP `password_hash` bcrypt and Django
+  password hashes, so users keep their passwords.
+- **Contract tests:** `recordContract()` against the legacy app, `verifyContract()` against Miu.
+- **Introspection:** `miu introspect sqlite:app.db` (or MySQL/Postgres/Mongo via the API) generates `t` schemas
+  and CRUD routes.
+
+## CLI and agent tooling
+
+| Command | Does |
+| --- | --- |
+| `miu create <dir> --template bun\|node\|workers` | scaffold a project |
+| `miu routes [entry]` | table of routes and their MCP tool names |
+| `miu openapi` / `miu llms [--full]` / `miu tools` | export OpenAPI, llms.txt, MCP tool list |
+| `miu wrangler --d1 DB --kv CACHE …` | generate `wrangler.toml` |
+| `miu introspect sqlite:app.db` | database → schemas |
+
+`app.use(llms())` serves `/llms.txt` and `/llms-full.txt`. `miujs/client` has `createClient()` (HTTP, problem+json
+errors) and `createMcpClient()` for testing agent access.
+
+## Performance
+
+Measured against Hono and Elysia on the same machine (`bench/`, full tables in
+[bench/results.md](bench/results.md)): Miu is on par with Hono over the network, Elysia is ~15–25% faster on
+simple GET routes, and Miu is within ~15% of Elysia on validated JSON POSTs. Closing the GET gap is on the 1.0
+roadmap.
+
 ## Development
 
 ```bash
 bun install
-bun test           # 199 tests
+bun test           # 432 tests
+bun run bench:micro  # in-process framework benchmark
 bun run typecheck
 bun examples/basic.ts
 ```

@@ -35,10 +35,11 @@ PHP/Python apps, MiuJS can be the easiest path from a legacy app to an AI-ready 
 | --- | --- | --- |
 | 1. Core | Router, schemas, context, middleware, errors, OpenAPI, MCP, Node adapter | **Done (v0.1)** |
 | 2. Batteries | Auth, sessions, cache, rate limit, CORS, logger, queues — SQLite default | **Done (v0.2)** |
-| 3. Cloudflare | D1/KV/R2/Queues/Durable Objects/Workflows/Hyperdrive adapters, realtime rooms | Planned |
-| 4. Realtime | WebSockets + rooms (Bun native & Durable Objects) for games / Kahoot-style apps | Planned |
-| 5. Migration kit | Reverse proxy, shared PHP/Python sessions, contract tests, DB introspection | Planned |
-| 6. DX & launch | CLI (`create-miu`), docs site, `llms.txt`, benchmarks, 1.0 | Planned |
+| 3. Cloudflare | D1/KV/R2/Queues/Durable Objects/Workflows/Hyperdrive adapters | **Done (v0.3)** |
+| 4. Realtime | WebSockets + rooms (Bun native & Durable Objects) for games / Kahoot-style apps | **Done (v0.3)** |
+| 5. Migration kit | Reverse proxy, shared PHP/Python sessions, contract tests, DB introspection | **Done (v0.3)** |
+| 6. DX & launch | CLI, templates, `llms.txt`, client, benchmarks, guides | **Mostly done (v0.3)** — 1.0 items open |
+| 7. Toward 1.0 | Compiled JS build, typed client, Node WebSockets, perf parity with Elysia, CI | Next |
 
 ## 4. File structure
 
@@ -56,10 +57,10 @@ miujs/
 │   │   ├── mcp.ts            # MCP server: routes -> tools                                 ✅
 │   │   ├── openapi.ts        # OpenAPI 3.1 generator                                       ✅
 │   │   ├── shared.ts         # operation ids, path helpers                                 ✅
-│   │   └── llms.ts           # llms.txt generator                                          ⏳
+│   │   └── llms.ts           # llms.txt generator                                          ✅
 │   ├── adapters/
 │   │   ├── node.ts           # node:http adapter                                           ✅
-│   │   └── cloudflare/       # D1, KV, R2, Queues, DO bindings                             ⏳
+│   │   └── cloudflare/       # KV/D1/DO stores, Queues, R2, Workflows, Hyperdrive          ✅
 │   ├── sqlite.ts             # "miujs/sqlite" entry (native SQLite drivers)                ✅
 │   ├── batteries/
 │   │   ├── store/            # Store interface, memory + sqlite drivers                    ✅
@@ -69,11 +70,15 @@ miujs/
 │   │   ├── cors.ts, secure-headers.ts, request-id.ts, logger.ts                            ✅
 │   │   ├── rate-limit.ts, cache.ts                                                         ✅
 │   │   └── sqlite.ts         # shared bun:sqlite / node:sqlite opener                      ✅
-│   ├── realtime/             # websocket rooms, presence, broadcast                        ⏳
-│   └── migrate/              # proxy, php/python session bridges, contract tests           ⏳
+│   ├── realtime/             # app.ws backends, rooms, MiuRoom DO, game engine             ✅
+│   ├── migrate/              # proxy, PHP/Django sessions, bcrypt, contracts, introspection ✅
+│   ├── client/               # HTTP + MCP client                                           ✅
+│   └── cli/                  # miu CLI (bin/miu.ts)                                        ✅
 ├── test/                     # bun test suites (one per module)
 ├── examples/                 # basic.ts, node.ts, cloudflare/worker.ts
-├── bench/                    # vs Hono / Elysia / Express                                  ⏳
+├── bin/miu.ts                # CLI entry                                                   ✅
+├── templates/                # bun / node / workers starters                               ✅
+├── bench/                    # vs Hono / Elysia (network + in-process)                     ✅
 └── docs/ROADMAP.md
 ```
 
@@ -116,29 +121,48 @@ miujs/
 - [ ] Queue: cap `runOnce()` iterations (zero-backoff unlimited retries loop today); dedupe across running jobs
 - [ ] Redis store + queue drivers
 
-### Phase 3 — Cloudflare
-- [ ] Store drivers: Workers KV, D1, Durable Object
-- [ ] Queue driver: Cloudflare Queues (`queue()` export helper)
-- [ ] R2 file helper; Hyperdrive Postgres helper
-- [ ] Workflows wrapper for long-running agent tasks
-- [ ] `miu deploy` → wrangler config generation
+### Phase 3 — Cloudflare ✅
+- [x] Store drivers: Workers KV (exact expiry via metadata), D1 (atomic incr), Durable Object (`MiuStoreObject`, `doStore`)
+- [x] Cloudflare Queues: `cloudflareQueue` producer + `queueConsumer` reusing Miu job definitions
+- [x] R2: `r2Files` (ETag/304, Range/206) and multipart `uploadHandler`; `hyperdriveUrl`
+- [x] Workflows: `defineWorkflow` with validated params; `toWorker()` export helper
+- [x] `miu wrangler` generates wrangler.toml with bindings
+- [x] Bindings accepted as getters (Workers `env` exists per request)
 
-### Phase 4 — Realtime
-- [ ] WebSocket routes (`app.ws(path, handlers)`) on Bun and Workers
-- [ ] Rooms, broadcast, presence; Durable Object backing on Cloudflare
-- [ ] Game-loop helpers (timed rounds, scoreboard) — Kahoot-style example
+### Phase 4 — Realtime ✅
+- [x] `app.ws(path, meta, handlers)`: middleware + validation before upgrade, typed `ws.data`, 426 for plain requests
+- [x] Bun backend (native pub/sub, `export default app` support) and Workers backend (`WebSocketPair`)
+- [x] Room hub with presence; `MiuRoom` Durable Object (hibernation API) + `roomRoute()`
+- [x] `createGame` Kahoot-style engine (speed scoring, streaks, reveal/leaderboard); `examples/quiz`
 
-### Phase 5 — Migration kit
-- [ ] Strangler reverse proxy: unmatched routes forwarded to the legacy PHP/Python app
-- [ ] Read PHP (`PHPSESSID`, serialized) and Django/Flask sessions
-- [ ] Contract tests: record legacy responses, replay against Miu routes
-- [ ] DB introspection → `t` schemas + CRUD route scaffolds (MySQL, Postgres, SQLite, MongoDB)
+### Phase 5 — Migration kit ✅
+- [x] `legacyProxy` / `legacyFallback` strangler proxy (streams, cookies, manual redirects, Location rewrite)
+- [x] PHP `serialize` + sessions (`php`, `php_serialize`) and Django signed/DB sessions, read-only bridges
+- [x] Pure-TS bcrypt (`$2a/$2b/$2y`) + `verifyLegacyPassword` (Django bcrypt/pbkdf2, opt-in md5/sha1)
+- [x] `recordContract` / `verifyContract` response diffing
+- [x] Introspection for SQLite/MySQL/Postgres/Mongo → `t` schemas + CRUD route source; `miu introspect`
 
 ### Phase 6 — DX & launch
-- [ ] `bun create miu` / `npm create miu` templates (Bun, Node, Workers)
-- [ ] `llms.txt` + `llms-full.txt` generation from routes
-- [ ] Benchmarks vs Hono, Elysia, Express in CI
-- [ ] Docs site, typed client (`miu/client`), 1.0 release
+- [x] `miu` CLI: create (bun/node/workers templates), routes, openapi, llms, tools, wrangler, introspect
+- [x] `llms.txt` + `llms-full.txt` generation (`llms()` middleware)
+- [x] `miujs/client`: HTTP client + MCP client
+- [x] Benchmarks vs Hono and Elysia (network + in-process), honest results in `bench/results.md`
+- [x] Hot-path optimization (~2.5x in-process; Hono parity over the network)
+- [x] Guides: `docs/guide.md`, `docs/deploy.md`
+- [ ] Separate `create-miu` package so `bun create miu` works (today: `bunx miujs create`)
+- [ ] Benchmarks in CI; Express comparison
+- [ ] Docs site
+
+### Phase 7 — Toward 1.0
+- [ ] Compiled JS build (`dist/`) so the published package runs on Node without `tsx` and `miu` runs under Node
+- [ ] Typed client inferred from the app's route table (needs route types accumulated on `Miu`)
+- [ ] Elysia-level GET throughput: precompiled per-route handlers, constant-response caching
+- [ ] WebSockets on Node (`ws` adapter); app-wide `publish`
+- [ ] Verify Cloudflare binding types against `@cloudflare/workers-types`; run Workers tests in workerd/Miniflare
+- [ ] Queue dedupe across running jobs; Cloudflare Queues dedupe; Redis store + queue drivers
+- [ ] OAuth 2.1 resource metadata for MCP auth; EdDSA/RS256 JWT
+- [ ] Laravel encrypted session decoding (APP_KEY); SQLite datetime coercion in generated CRUD
+- [ ] GitHub Actions CI: test, typecheck, Node smoke, Workers bundle check
 
 ## 6. Prompts per feature
 
@@ -159,3 +183,10 @@ Use these to drive each feature with Claude Code (TDD: failing test first).
 13. **Introspection:** "Add `miu introspect <db-url>` that reads MySQL/Postgres/SQLite/MongoDB schemas and emits `t` schemas + CRUD routes."
 14. **llms.txt:** "Generate `/llms.txt` from route metadata and README sections; add `llms()` middleware."
 15. **Benchmarks:** "Add `bench/` comparing Miu, Hono and Elysia on Bun with oha/bombardier; publish results in README via CI."
+
+### Phase 7 prompts
+16. **Compiled build:** "Add a `bun build`/`tsc` emit step producing `dist/` ESM + `.d.ts` for every entry in package.json `exports`, point `exports`/`bin` at `dist/` with `types` conditions, and add a test that `node dist/bin/miu.js --version` works without type stripping."
+17. **Typed client:** "Accumulate route types on `Miu` (method, path, input, output) through `.get/.post/...` return types, and make `createClient<typeof app>()` infer params/query/body/response per path. Keep `bunx tsc` time reasonable; add type tests with `@ts-expect-error`."
+18. **Elysia-level GET speed:** "Precompile a per-route handler at registration (no middleware → direct call; constant-returning handlers cached as a cloned Response). Measure with `bench/micro.ts` and `bench/run.ts`; no behavior changes."
+19. **Node WebSockets:** "Add an optional `ws`-based adapter in `miujs/node` that implements the `app.ws()` backend, with the same tests as Bun."
+20. **CI:** "Add GitHub Actions: bun test, typecheck, Node 22 smoke scripts, Workers bundle checks for edge entry points, and a weekly benchmark job publishing `bench/results.md`."

@@ -191,8 +191,9 @@ const FORMATS: Record<StringFormat, RegExp> = {
 };
 
 function check(s: TSchema, v: unknown, path: Issue["path"], issues: Issue[], coerce: boolean): unknown {
+  // `path` is a shared stack (pushed/popped around children); copy it only when recording an issue.
   const fail = (message: string) => {
-    issues.push({ path, message });
+    issues.push({ path: path.slice(), message });
     return undefined;
   };
   switch (s.kind) {
@@ -236,13 +237,20 @@ function check(s: TSchema, v: unknown, path: Issue["path"], issues: Issue[], coe
       if (!Array.isArray(arr)) return fail("Expected array");
       if (s.min !== undefined && arr.length < s.min) return fail(`Must have at least ${s.min} items`);
       if (s.max !== undefined && arr.length > s.max) return fail(`Must have at most ${s.max} items`);
-      return arr.map((item, i) => check(s.items, item, [...path, i], issues, coerce));
+      const items = new Array(arr.length);
+      for (let i = 0; i < arr.length; i++) {
+        path.push(i);
+        items[i] = check(s.items, arr[i], path, issues, coerce);
+        path.pop();
+      }
+      return items;
     }
     case "object": {
       if (typeof v !== "object" || v === null || Array.isArray(v)) return fail("Expected object");
       const src = v as Record<string, unknown>;
       const out: Record<string, unknown> = {};
-      for (const [key, sub] of Object.entries(s.shape)) {
+      for (const key in s.shape) {
+        const sub = s.shape[key]!;
         const raw = src[key];
         if (raw === undefined) {
           if (sub.kind === "optional") continue;
@@ -253,14 +261,20 @@ function check(s: TSchema, v: unknown, path: Issue["path"], issues: Issue[], coe
           issues.push({ path: [...path, key], message: "Required" });
           continue;
         }
-        out[key] = check(sub, raw, [...path, key], issues, coerce);
+        path.push(key);
+        out[key] = check(sub, raw, path, issues, coerce);
+        path.pop();
       }
       return out;
     }
     case "record": {
       if (typeof v !== "object" || v === null || Array.isArray(v)) return fail("Expected object");
       const out: Record<string, unknown> = {};
-      for (const [k, raw] of Object.entries(v)) out[k] = check(s.values, raw, [...path, k], issues, coerce);
+      for (const [k, raw] of Object.entries(v)) {
+        path.push(k);
+        out[k] = check(s.values, raw, path, issues, coerce);
+        path.pop();
+      }
       return out;
     }
     case "union": {

@@ -31,8 +31,16 @@ function decode(s: string): string {
 
 export class Router<H> {
   private root: Node<H> = node();
+  /** Param-free paths resolve with one map lookup instead of a trie walk. */
+  private statics = new Map<string, Map<string, H>>();
 
   add(method: string, path: string, handler: H): void {
+    if (!path.includes(":") && !path.includes("*")) {
+      const key = "/" + split(path).join("/");
+      let m = this.statics.get(key);
+      if (!m) this.statics.set(key, (m = new Map()));
+      m.set(method, handler);
+    }
     let cur = this.root;
     const segments = split(path);
     for (let i = 0; i < segments.length; i++) {
@@ -59,6 +67,11 @@ export class Router<H> {
   }
 
   find(method: string, path: string): Match<H> | null {
+    const exact = this.statics.get(path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path);
+    if (exact) {
+      const handler = pick(exact, method);
+      if (handler !== undefined) return { handler, params: {} };
+    }
     const params: Record<string, string> = {};
     const handlers = this.walk(this.root, split(path), 0, params, method);
     if (!handlers) return null;

@@ -72,13 +72,16 @@ export function sqliteQueueDriver(opts: SqliteQueueOptions = {}): QueueDriver {
          RETURNING ${cols}`,
       ),
       complete: db.prepare(
-        `UPDATE ${table} SET status = 'completed', finished_at = ?, locked_until = NULL WHERE id = ?`,
+        `UPDATE ${table} SET status = 'completed', finished_at = ?, locked_until = NULL
+         WHERE id = ? AND status = 'running' AND attempts = ? RETURNING id`,
       ),
       retryLater: db.prepare(
-        `UPDATE ${table} SET status = 'pending', last_error = ?, run_at = ?, locked_until = NULL WHERE id = ?`,
+        `UPDATE ${table} SET status = 'pending', last_error = ?, run_at = ?, locked_until = NULL
+         WHERE id = ? AND status = 'running' AND attempts = ? RETURNING id`,
       ),
       failed: db.prepare(
-        `UPDATE ${table} SET status = 'failed', last_error = ?, finished_at = ?, locked_until = NULL WHERE id = ?`,
+        `UPDATE ${table} SET status = 'failed', last_error = ?, finished_at = ?, locked_until = NULL
+         WHERE id = ? AND status = 'running' AND attempts = ? RETURNING id`,
       ),
       get: db.prepare(`SELECT ${cols} FROM ${table} WHERE id = ?`),
       list: db.prepare(`SELECT ${cols} FROM ${table} WHERE ?1 IS NULL OR status = ?1 ORDER BY run_at, rowid LIMIT ?2`),
@@ -107,13 +110,13 @@ export function sqliteQueueDriver(opts: SqliteQueueOptions = {}): QueueDriver {
       const s = await ready;
       return one(s.claim.get(now, now + lockMs));
     },
-    async complete(id, now) {
-      (await ready).complete.run(now, id);
+    async complete(id, now, attempt) {
+      return (await ready).complete.get(now, id, attempt) !== undefined;
     },
-    async fail(id, error, nextRunAt, now) {
+    async fail(id, error, nextRunAt, now, attempt) {
       const s = await ready;
-      if (nextRunAt === null) s.failed.run(error, now, id);
-      else s.retryLater.run(error, nextRunAt, id);
+      const row = nextRunAt === null ? s.failed.get(error, now, id, attempt) : s.retryLater.get(error, nextRunAt, id, attempt);
+      return row !== undefined;
     },
     async get(id) {
       return one((await ready).get.get(id));
