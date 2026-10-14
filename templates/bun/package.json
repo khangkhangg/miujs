@@ -1,0 +1,20 @@
+{
+  "name": "{{name}}",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/app.ts",
+    "start": "bun src/app.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "routes": "miu routes src/app.ts"
+  },
+  "dependencies": {
+    "miujs": "^{{version}}"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}
