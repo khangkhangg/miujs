@@ -25,3 +25,7 @@ export { memoryQueueDriver } from "./batteries/queue/memory.ts";
 // AI: llms.txt
 export { llms, generateLlmsTxt, generateLlmsFullTxt } from "./ai/llms.ts";
 export type { LlmsOptions, LlmsMiddlewareOptions, LlmsSection, LlmsLink } from "./ai/llms.ts";
+
+// DevTools (portable; dev-only features are off in production)
+export { isDev, isProduction, readEnv, timing, getTiming, formatServerTiming, sanitizeMetricName, devErrors, inspector, isLoopback, routeTable, devLogger, parseStack, errorInfo, redactHeaders, redactUrl } from "./devtools/index.ts";
+export type { EnvSource, Timing, TimingEntry, TimingOptions, DevErrorsOptions, EditorLink, InspectorOptions, InspectedRequest, RouteRow, DevLoggerOptions, StackFrame, ErrorInfo } from "./devtools/index.ts";

@@ -69,7 +69,8 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "dev": "bun --watch examples/basic.ts",
+    "dev": "MIU_ENV=development bun --watch examples/basic.ts",
+    "devtools": "MIU_ENV=development bun --inspect examples/devtools.ts",
     "bench": "cd bench && bun run.ts",
     "bench:micro": "cd bench && bun micro.ts",
     "build": "bun scripts/build.ts",

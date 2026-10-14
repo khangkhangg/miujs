@@ -9,6 +9,7 @@ test("root entry exports the portable batteries", () => {
     "hashPassword", "verifyPassword", "signJwt", "verifyJwt", "createApiKey", "verifyApiKey",
     "cors", "secureHeaders", "requestId", "logger", "rateLimit", "cache", "remember",
     "createQueue", "memoryQueueDriver", "llms", "generateLlmsTxt",
+    "timing", "getTiming", "devErrors", "inspector", "devLogger", "isDev", "isProduction",
   ]) {
     expect(typeof (root as Record<string, unknown>)[name]).toBe("function");
   }
