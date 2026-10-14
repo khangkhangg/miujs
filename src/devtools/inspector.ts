@@ -138,7 +138,7 @@ export function inspector(opts: InspectorOptions = {}): Middleware {
       responseHeaders: res ? redactHeaders(res.headers, opts.redact) : {},
       timing: [...((c.get("timing") as Timing | undefined)?.entries ?? [])].map((e) => ({ ...e })),
     };
-    const route = matchRoute(c.app, req.method, c.url.pathname);
+    const route = c.route?.path ?? matchRoute(c.app, req.method, c.url.pathname);
     if (route) entry.route = route;
     if (len !== undefined) entry.requestSize = len;
     const resLen = res ? numberHeader(res.headers, "content-length") : undefined;

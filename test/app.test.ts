@@ -270,3 +270,26 @@ describe("type inference", () => {
     );
   });
 });
+
+describe("context hooks for tooling", () => {
+  test("middleware sees the matched route and a thrown error after next()", async () => {
+    const seen: { route?: string; error?: string; status?: number }[] = [];
+    const app = new Miu({ logger: false })
+      .use(async (c, next) => {
+        await next();
+        seen.push({ route: c.route?.path, error: (c.error as Error | undefined)?.message, status: c.res.status });
+      })
+      .get("/items/:id", () => {
+        throw new Error("kaput");
+      })
+      .get("/ok", () => "fine");
+    await app.request("/items/9");
+    await app.request("/ok");
+    await app.request("/missing");
+    expect(seen).toEqual([
+      { route: "/items/:id", error: "kaput", status: 500 },
+      { route: "/ok", error: undefined, status: 200 },
+      { route: undefined, error: undefined, status: 404 },
+    ]);
+  });
+});

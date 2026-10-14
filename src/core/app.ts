@@ -291,14 +291,18 @@ export class Miu<E extends Env = Env, R extends RouteSchema = {}> {
       let final: Middleware;
       if (match) {
         c.params = match.params as any;
+        c.route = match.handler.route;
         if (match.handler.middleware.length) (chain ??= []).push(...match.handler.middleware);
         const route = match.handler.route;
         const needsInput = match.handler.needsInput;
         if (!chain && !route.ws) {
           // Fast path: no middleware. Skip the compose machinery entirely.
           if (needsInput) await prepareInput(c, route.meta);
-          const out = route.handler(c);
-          c.res = c.respond(out instanceof Promise ? await out : out);
+          const ret = route.handler(c);
+          const out = ret instanceof Promise ? await ret : ret;
+          // Behind a real server nothing in-process observes this response, so a bare string body can use the
+          // runtime's native text/plain default (much cheaper than a headers init; same bytes on the wire).
+          c.res = server && typeof out === "string" && c.pristine ? new Response(out) : c.respond(out);
           return method === "HEAD" ? headOnly(c.res) : c.res;
         }
         final = async (ctx) => {
@@ -343,6 +347,7 @@ export class Miu<E extends Env = Env, R extends RouteSchema = {}> {
   }
 
   private async handleError(err: unknown, c: Context<E>): Promise<Response> {
+    c.error = err;
     if (this.errorHandler) {
       try {
         return await this.errorHandler(err, c);

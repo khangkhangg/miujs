@@ -10,8 +10,9 @@ export function rememberError(c: Context<any, any>, err: unknown): void {
   c.set(ERROR_KEY, err);
 }
 
+/** The error behind the current response: core records it on `c.error`; devErrors() also stashes it. */
 export function recalledError(c: Context<any, any>): unknown {
-  return c.get(ERROR_KEY);
+  return c.error ?? c.get(ERROR_KEY);
 }
 
 // ----- redaction -----
