@@ -1,6 +1,6 @@
 import type { Context } from "../core/context.ts";
 import type { Middleware } from "../core/app.ts";
-import type { Store } from "./store/index.ts";
+import type { Store } from "./store/types.ts";
 
 export interface CacheOptions {
   store: Store;

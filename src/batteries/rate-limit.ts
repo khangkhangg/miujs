@@ -1,7 +1,7 @@
 import type { Context } from "../core/context.ts";
 import type { Middleware } from "../core/app.ts";
 import { problem } from "../core/errors.ts";
-import type { Store } from "./store/index.ts";
+import type { Store } from "./store/types.ts";
 import { resHeaders } from "./internal.ts";
 
 export interface RateLimitOptions {

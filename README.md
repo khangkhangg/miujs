@@ -10,9 +10,9 @@ humans *and* AI agents use. Declare a route with a schema once, and you get:
 - an **OpenAPI 3.1** operation
 - consistent **RFC 9457 problem+json** errors
 
-> Status: **v0.1 — core MVP.** Router, schemas, context, middleware, errors, OpenAPI, MCP and the Node adapter are
-> done and tested. Auth, sessions, cache, queues, Cloudflare bindings and the migration kit are next — see
-> [docs/ROADMAP.md](docs/ROADMAP.md).
+> Status: **v0.2 — core + batteries.** Router, schemas, middleware, errors, OpenAPI, MCP, Node adapter, stores,
+> sessions, auth, HTTP middleware, rate limiting, caching and job queues are done and tested. Cloudflare bindings,
+> realtime and the migration kit are next — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Quick start
 
@@ -133,11 +133,70 @@ Tool names default to `get_todos_by_id`-style operation ids. Input schemas merge
 request through `app.fetch`, so middleware, auth and validation apply. HTTP errors come back as tool errors
 (`isError: true`) the model can read and recover from.
 
+## Batteries
+
+Everything below runs on Bun, Node and Workers. SQLite drivers come from `miujs/sqlite` (kept out of the root
+entry so edge bundles never see `bun:sqlite` / `node:sqlite`).
+
+```ts
+import { Miu, t, HttpError, sessions, auth, login, logout, requireAuth, currentUser, verifyPassword,
+         verifyApiKey, cors, secureHeaders, requestId, logger, rateLimit, cache, createQueue } from "miujs";
+import { sqliteStore, sqliteQueueDriver } from "miujs/sqlite";
+
+const store = sqliteStore({ path: "app.sqlite" }); // or memoryStore() in tests
+
+const app = new Miu()
+  .use(requestId())
+  .use(logger())
+  .use(secureHeaders())
+  .use(cors({ origin: ["https://app.example.com"], credentials: true }))
+  .use(sessions({ store, secret: process.env.SESSION_SECRET! }))   // ≥ 32 chars; pass an array to rotate
+  .use(auth({
+    loadUser: (id) => db.users.find(id),                             // session-based (browsers)
+    bearer: async (token) => {                                       // API keys / tokens (agents)
+      const key = await verifyApiKey(store, token);
+      return key && db.users.find(key.userId);
+    },
+  }))
+  .use("/api/*", rateLimit({ store, limit: 100, window: 60 }))
+  .post("/login", { body: t.object({ email: t.string(), password: t.string() }) }, async (c) => {
+    const user = await db.users.byEmail(c.body.email);
+    if (!user || !(await verifyPassword(c.body.password, user.passwordHash))) throw new HttpError(401, "Bad credentials");
+    await login(c, user); // regenerates the session id
+    return { ok: true };
+  })
+  .get("/me", { use: [requireAuth()] }, (c) => currentUser(c))
+  .get("/stats", { use: [cache({ store, ttl: 30 })] }, () => expensiveStats());
+```
+
+| Feature | API | Notes |
+| --- | --- | --- |
+| Stores | `memoryStore()`, `sqliteStore()` | `get/set/delete/has/incr/ttl/prefix`; TTL in seconds |
+| Sessions | `sessions()`, `session(c)` | HMAC-signed cookie, lazy load, save-on-change, `flash()`, `regenerate()`, `destroy()` |
+| Passwords | `hashPassword`, `verifyPassword`, `needsRehash` | PBKDF2-SHA256, **Django-compatible** hashes — migrated users keep their passwords |
+| Auth | `auth()`, `login`, `logout`, `requireAuth()`, `currentUser` | 401 problem+json for agents, optional redirect for browsers |
+| API keys / JWT | `createApiKey`, `verifyApiKey`, `revokeApiKey`, `signJwt`, `verifyJwt` | keys stored as SHA-256 hashes; HS256 only |
+| HTTP | `cors`, `secureHeaders`, `requestId`, `logger` | |
+| Rate limit | `rateLimit({ store, limit, window })` | `RateLimit-*` headers; 429 detail tells agents when to retry |
+| Cache | `cache({ store, ttl })`, `remember(store, key, ttl, fn)` | skips `set-cookie`, `no-store`, `private`, authorized requests |
+| Queues | `createQueue({ driver })`, `define`, `dispatch`, `work`, `runOnce` | retries + backoff, timeouts, dedupe keys, `failed()`/`retry()` |
+
+```ts
+const queue = createQueue({ driver: sqliteQueueDriver({ path: "app.sqlite" }) });
+const welcome = queue.define("welcome-email", {
+  schema: t.object({ to: t.string({ format: "email" }) }),
+  handler: async ({ to }) => sendEmail(to, "Welcome!"),
+  retries: 5,
+});
+await welcome.dispatch({ to: "ann@example.com" }, { delay: 60, key: "welcome:ann" });
+queue.work({ concurrency: 4 }); // in a worker process
+```
+
 ## Development
 
 ```bash
 bun install
-bun test           # 62 tests
+bun test           # 199 tests
 bun run typecheck
 bun examples/basic.ts
 ```
