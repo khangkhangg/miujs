@@ -1,13 +1,14 @@
 import { expect, test } from "bun:test";
 import * as root from "../src/index.ts";
 import * as sqlite from "../src/sqlite.ts";
+import pkg from "../package.json";
 
 test("root entry exports the portable batteries", () => {
   for (const name of [
     "memoryStore", "sessions", "session", "auth", "login", "logout", "requireAuth", "currentUser",
     "hashPassword", "verifyPassword", "signJwt", "verifyJwt", "createApiKey", "verifyApiKey",
     "cors", "secureHeaders", "requestId", "logger", "rateLimit", "cache", "remember",
-    "createQueue", "memoryQueueDriver",
+    "createQueue", "memoryQueueDriver", "llms", "generateLlmsTxt",
   ]) {
     expect(typeof (root as Record<string, unknown>)[name]).toBe("function");
   }
@@ -33,4 +34,42 @@ test("SQLite drivers live in miujs/sqlite so Workers bundles never see bun:sqlit
   await walk(new URL("../src/index.ts", import.meta.url).pathname);
   const offenders = [...seen].filter((f) => /\/sqlite\.ts$/.test(f));
   expect(offenders).toEqual([]);
+});
+
+const walkGraph = async (entry: string) => {
+  const seen = new Set<string>();
+  const walk = async (file: string) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    const src = await Bun.file(file).text();
+    for (const m of src.matchAll(/^(?:import|export)(?!\s+type)[^;]*?from\s+"(\.[^"]+)"/gm)) {
+      await walk(new URL(m[1]!, `file://${file}`).pathname);
+    }
+  };
+  await walk(new URL(`../${entry}`, import.meta.url).pathname);
+  return [...seen];
+};
+
+test("package exports every public entry point and each resolves", async () => {
+  const exportsMap = pkg.exports as Record<string, string>;
+  expect(Object.keys(exportsMap).sort()).toEqual(
+    [".", "./client", "./cloudflare", "./migrate", "./node", "./realtime", "./sqlite"].sort(),
+  );
+  for (const target of Object.values(exportsMap)) {
+    const mod = await import(new URL(`../${target}`, import.meta.url).pathname);
+    expect(Object.keys(mod).length).toBeGreaterThan(0);
+  }
+  expect((pkg as { bin?: Record<string, string> }).bin).toEqual({ miu: "./bin/miu.ts" });
+  expect(pkg.files).toEqual(expect.arrayContaining(["src", "bin", "templates"]));
+});
+
+test("edge entry points never pull in native SQLite or Node built-ins", async () => {
+  for (const entry of ["src/index.ts", "src/adapters/cloudflare/index.ts", "src/realtime/index.ts", "src/migrate/index.ts", "src/client/index.ts"]) {
+    const files = await walkGraph(entry);
+    expect({ entry, offenders: files.filter((f) => /\/(batteries\/sqlite|store\/sqlite|queue\/sqlite|adapters\/node)\.ts$/.test(f)) }).toEqual({ entry, offenders: [] });
+    for (const f of files) {
+      const src = await Bun.file(f).text();
+      expect({ f, native: /from\s+"(node:|bun:|bun")/.test(src) }).toEqual({ f, native: false });
+    }
+  }
 });

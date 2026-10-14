@@ -21,3 +21,7 @@ export * from "./batteries/http.ts";
 export type * from "./batteries/queue/types.ts";
 export * from "./batteries/queue/queue.ts";
 export { memoryQueueDriver } from "./batteries/queue/memory.ts";
+
+// AI: llms.txt
+export { llms, generateLlmsTxt, generateLlmsFullTxt } from "./ai/llms.ts";
+export type { LlmsOptions, LlmsMiddlewareOptions, LlmsSection, LlmsLink } from "./ai/llms.ts";

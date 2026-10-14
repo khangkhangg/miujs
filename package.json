@@ -1,6 +1,6 @@
 {
   "name": "miujs",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "About as fast as Elysia, runs anywhere like Hono, and every route is automatically an agent tool.",
   "type": "module",
   "license": "AGPL-3.0-or-later",
@@ -11,20 +11,31 @@
   },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "bin": {
+    "miu": "./bin/miu.ts"
+  },
   "exports": {
     ".": "./src/index.ts",
-    "./sqlite": "./src/sqlite.ts",
-    "./node": "./src/adapters/node.ts"
+    "./client": "./src/client/index.ts",
+    "./cloudflare": "./src/adapters/cloudflare/index.ts",
+    "./migrate": "./src/migrate/index.ts",
+    "./node": "./src/adapters/node.ts",
+    "./realtime": "./src/realtime/index.ts",
+    "./sqlite": "./src/sqlite.ts"
   },
   "files": [
     "src",
+    "bin",
+    "templates",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "dev": "bun --watch examples/basic.ts"
+    "dev": "bun --watch examples/basic.ts",
+    "bench": "cd bench && bun run.ts",
+    "bench:micro": "cd bench && bun micro.ts"
   },
   "keywords": [
     "framework",
