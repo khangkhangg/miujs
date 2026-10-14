@@ -2,6 +2,9 @@ import { Router } from "./router.ts";
 import { Context, type Env, type ExecutionContext } from "./context.ts";
 import { HttpError, ValidationError, problem } from "./errors.ts";
 import { validate, type AnySchema, type Infer, type Issue } from "./schema.ts";
+import { isBunServer, isUpgradeRequest, upgradeRequired, upgradeWebSocket } from "../realtime/upgrade.ts";
+import { bunWebSocket, type BunServerLike } from "../realtime/bun.ts";
+import type { WsForward, WsHandlers } from "../realtime/types.ts";
 
 export type Next = () => Promise<void>;
 export type Middleware<E extends Env = any> = (c: Context<E, any>, next: Next) => unknown | Promise<unknown>;
@@ -9,7 +12,8 @@ export type Handler<E extends Env, I extends object> = (c: Context<E, I>) => unk
 export type ErrorHandler<E extends Env> = (err: unknown, c: Context<E, any>) => Response | Promise<Response>;
 
 export const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] as const;
-export type Method = (typeof METHODS)[number] | "ALL";
+/** `WS` marks WebSocket routes registered with `app.ws()`. */
+export type Method = (typeof METHODS)[number] | "ALL" | "WS";
 
 export interface ToolOptions {
   name?: string;
@@ -55,6 +59,23 @@ export interface Route {
   path: string;
   meta: RouteMeta;
   handler: Handler<any, any>;
+  /** WebSocket handlers (or an upgrade-forwarding function) for `WS` routes. */
+  ws?: WsHandlers<any> | WsForward;
+}
+
+/** Meta for `app.ws()`: params/query/headers validation, middleware, and the `upgrade` hook. */
+export interface WsMeta<
+  E extends Env = any,
+  P extends AnySchema | undefined = AnySchema | undefined,
+  Q extends AnySchema | undefined = AnySchema | undefined,
+  H extends AnySchema | undefined = AnySchema | undefined,
+  D = unknown,
+> extends Pick<RouteMeta<P, Q, undefined, H>, "params" | "query" | "headers" | "summary" | "description" | "tags" | "use"> {
+  /**
+   * Runs after middleware and validation, before the upgrade. Its return value
+   * becomes `ws.data`; return or throw a Response/HttpError to reject.
+   */
+  upgrade?: (c: Context<E, RouteInput<P, Q, undefined, H>>) => D | Response | Promise<D | Response>;
 }
 
 interface MountedMiddleware {
@@ -91,6 +112,7 @@ export class Miu<E extends Env = Env> {
   readonly routes: Route[] = [];
   private middleware: MountedMiddleware[] = [];
   private router = new Router<Compiled>();
+  private wsRouter = new Router<Compiled>();
   private errorHandler?: ErrorHandler<E>;
   private notFoundHandler?: (c: Context<E>) => Response | Promise<Response>;
 
@@ -105,6 +127,30 @@ export class Miu<E extends Env = Env> {
   delete: RouteFn<E, this> = (path: string, a: any, b?: any) => this.on("DELETE", path, a, b);
   options: RouteFn<E, this> = (path: string, a: any, b?: any) => this.on("OPTIONS", path, a, b);
   all: RouteFn<E, this> = (path: string, a: any, b?: any) => this.on("ALL", path, a, b);
+
+  /**
+   * Register a WebSocket route. Middleware and validation run before the
+   * upgrade; plain requests get 426. Never exposed via OpenAPI or MCP.
+   */
+  ws<P extends AnySchema | undefined = undefined, Q extends AnySchema | undefined = undefined, H extends AnySchema | undefined = undefined, D = undefined>(
+    path: string,
+    meta: WsMeta<E, P, Q, H, D>,
+    handlers: WsHandlers<Exclude<Awaited<D>, Response>> | WsForward,
+  ): this;
+  ws(path: string, handlers: WsHandlers<undefined> | WsForward): this;
+  ws(path: string, a: any, b?: any): this {
+    const handlers = b ?? a;
+    const meta: RouteMeta = { ...(b ? a : {}), tool: false, hidden: true };
+    const route: Route = { method: "WS", path: normalize(path), meta, handler: upgradeRequired, ws: handlers };
+    this.routes.push(route);
+    this.wsRouter.add("WS", route.path, { route, middleware: meta.use ?? [] });
+    return this;
+  }
+
+  /** Bun `websocket` handler, so `export default app` serves WebSockets too. */
+  get websocket(): typeof bunWebSocket {
+    return bunWebSocket;
+  }
 
   on(method: Method, path: string, metaOrHandler: RouteMeta | Handler<E, any>, maybeHandler?: Handler<E, any>): this {
     const meta = typeof metaOrHandler === "function" ? {} : metaOrHandler;
@@ -133,7 +179,10 @@ export class Miu<E extends Env = Env> {
       const pattern = join(m.pattern ?? "/*");
       this.middleware.push({ match: compilePattern(pattern), pattern, fn: m.fn });
     }
-    for (const r of sub.routes) this.on(r.method, join(r.path), r.meta, r.handler);
+    for (const r of sub.routes) {
+      if (r.ws) this.ws(join(r.path), r.meta as WsMeta, r.ws as WsHandlers);
+      else this.on(r.method, join(r.path), r.meta, r.handler);
+    }
     return this;
   }
 
@@ -149,12 +198,18 @@ export class Miu<E extends Env = Env> {
 
   /** Web-standard entry point. Works as a Bun, Deno, Cloudflare Workers or Vercel handler. */
   fetch = async (req: Request, env?: E["Bindings"], executionCtx?: ExecutionContext): Promise<Response> => {
+    // Bun calls fetch(req, server): keep the server for WebSocket upgrades, not as env.
+    let server: BunServerLike | undefined;
+    if (isBunServer(env)) {
+      server = env;
+      env = undefined;
+    }
     const c = new Context<E>(req, env as any, executionCtx);
     c.app = this;
     const path = pathOf(req.url);
     const method = req.method;
     try {
-      const match = this.router.find(method, path);
+      const match = (isUpgradeRequest(req) && this.wsRouter.find("WS", path)) || this.router.find(method, path);
       const chain: Middleware[] = [];
       for (const m of this.middleware) if (!m.match || m.match(path)) chain.push(m.fn);
       let final: Middleware;
@@ -164,8 +219,11 @@ export class Miu<E extends Env = Env> {
         const route = match.handler.route;
         final = async (ctx) => {
           await prepareInput(ctx, route.meta);
+          if (route.ws) return upgradeWebSocket(ctx, route.meta, route.ws, server);
           return ctx.respond(await route.handler(ctx));
         };
+      } else if (this.wsRouter.find("WS", path)) {
+        final = () => upgradeRequired();
       } else {
         final = (ctx) => this.handleNotFound(ctx, path);
       }
@@ -189,7 +247,7 @@ export class Miu<E extends Env = Env> {
   listen(port = 3000, hostname?: string) {
     const B = (globalThis as { Bun?: { serve: (o: object) => unknown } }).Bun;
     if (!B) throw new Error("app.listen() requires Bun. On Node, use `import { serve } from 'miujs/node'`.");
-    return B.serve({ port, hostname, fetch: this.fetch }) as { port: number; stop: (force?: boolean) => void };
+    return B.serve({ port, hostname, fetch: this.fetch, websocket: this.websocket }) as { port: number; stop: (force?: boolean) => void };
   }
 
   private async handleNotFound(c: Context<E>, path: string): Promise<Response> {
