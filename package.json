@@ -1,7 +1,7 @@
 {
   "name": "miujs",
   "version": "0.3.0",
-  "description": "About as fast as Elysia, runs anywhere like Hono, and every route is automatically an agent tool.",
+  "description": "Fast, secure, runs anywhere (Bun, Node, Cloudflare Workers), and every route is automatically an agent tool.",
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "author": "khangkhangg",

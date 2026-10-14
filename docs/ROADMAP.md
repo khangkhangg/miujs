@@ -39,7 +39,8 @@ PHP/Python apps, MiuJS can be the easiest path from a legacy app to an AI-ready 
 | 4. Realtime | WebSockets + rooms (Bun native & Durable Objects) for games / Kahoot-style apps | **Done (v0.3)** |
 | 5. Migration kit | Reverse proxy, shared PHP/Python sessions, contract tests, DB introspection | **Done (v0.3)** |
 | 6. DX & launch | CLI, templates, `llms.txt`, client, benchmarks, guides | **Mostly done (v0.3)** — 1.0 items open |
-| 7. Toward 1.0 | Compiled JS build, typed client, Node WebSockets, perf parity with Elysia, CI | Next |
+| 7. Toward 1.0 | Compiled build, typed client, Node WebSockets, Elysia-level perf, security/scale drivers, DevTools debugging, CI | In progress |
+| 8. App kits | Schema-driven admin back-office; virtual-tour kit (panoramas, hotspots, uploads, viewer) | Planned |
 
 ## 4. File structure
 
@@ -163,6 +164,14 @@ miujs/
 - [ ] OAuth 2.1 resource metadata for MCP auth; EdDSA/RS256 JWT
 - [ ] Laravel encrypted session decoding (APP_KEY); SQLite datetime coercion in generated CRUD
 - [ ] GitHub Actions CI: test, typecheck, Node smoke, Workers bundle check
+- [ ] DevTools debugging: `Server-Timing`, source maps in `dist/`, dev error pages, request inspector, `--inspect` guide
+
+### Phase 8 — App kits
+- [ ] `miujs/admin`: back-office generated from `t` schemas (list/search/create/edit/delete, uploads, auth, roles)
+- [ ] Virtual-tour kit: scenes (equirectangular panoramas), hotspots linking scenes, info points, tour publishing
+- [ ] Image pipeline: uploads to local disk or R2, thumbnails/tiles, signed URLs
+- [ ] Tour viewer (vanilla JS/WebGL, no build step) + editor for placing hotspots by clicking the panorama
+- [ ] `miu create --template tour` and `--template admin`
 
 ## 6. Prompts per feature
 
