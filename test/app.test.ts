@@ -134,6 +134,26 @@ describe("Miu app", () => {
     expect(await res.text()).not.toContain("hunter2");
   });
 
+  test("errors become responses inside the chain so outer middleware still sees them", async () => {
+    const app = new Miu({ logger: false })
+      .use(async (c, next) => {
+        await next();
+        c.res.headers.set("access-control-allow-origin", "*");
+      })
+      .get("/x", () => {
+        throw new HttpError(409, "Conflict here");
+      })
+      .get("/boom", () => {
+        throw new Error("boom");
+      });
+    const res = await app.request("/x");
+    expect(res.status).toBe(409);
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    const boom = await app.request("/boom");
+    expect(boom.status).toBe(500);
+    expect(boom.headers.get("access-control-allow-origin")).toBe("*");
+  });
+
   test("custom onError handler", async () => {
     const app = new Miu()
       .get("/x", () => {

@@ -34,7 +34,7 @@ PHP/Python apps, MiuJS can be the easiest path from a legacy app to an AI-ready 
 | Phase | Goal | Status |
 | --- | --- | --- |
 | 1. Core | Router, schemas, context, middleware, errors, OpenAPI, MCP, Node adapter | **Done (v0.1)** |
-| 2. Batteries | Auth, sessions, cache, rate limit, CORS, logger, queues — SQLite default | Next |
+| 2. Batteries | Auth, sessions, cache, rate limit, CORS, logger, queues — SQLite default | **Done (v0.2)** |
 | 3. Cloudflare | D1/KV/R2/Queues/Durable Objects/Workflows/Hyperdrive adapters, realtime rooms | Planned |
 | 4. Realtime | WebSockets + rooms (Bun native & Durable Objects) for games / Kahoot-style apps | Planned |
 | 5. Migration kit | Reverse proxy, shared PHP/Python sessions, contract tests, DB introspection | Planned |
@@ -60,12 +60,15 @@ miujs/
 │   ├── adapters/
 │   │   ├── node.ts           # node:http adapter                                           ✅
 │   │   └── cloudflare/       # D1, KV, R2, Queues, DO bindings                             ⏳
+│   ├── sqlite.ts             # "miujs/sqlite" entry (native SQLite drivers)                ✅
 │   ├── batteries/
-│   │   ├── store/            # KV store interface: memory, sqlite, redis, cloudflare-kv    ⏳
-│   │   ├── sessions.ts       ⏳   ├── auth/ (password, jwt, api-keys, oauth)               ⏳
-│   │   ├── cache.ts          ⏳   ├── queue/ (sqlite, cloudflare-queues, redis)            ⏳
-│   │   ├── cors.ts           ⏳   ├── rate-limit.ts                                         ⏳
-│   │   └── logger.ts         ⏳
+│   │   ├── store/            # Store interface, memory + sqlite drivers                    ✅
+│   │   ├── session.ts        # signed-cookie sessions                                      ✅
+│   │   ├── auth/             # password, jwt, api-keys, auth middleware                    ✅
+│   │   ├── queue/            # jobs: memory + sqlite drivers, worker                       ✅
+│   │   ├── cors.ts, secure-headers.ts, request-id.ts, logger.ts                            ✅
+│   │   ├── rate-limit.ts, cache.ts                                                         ✅
+│   │   └── sqlite.ts         # shared bun:sqlite / node:sqlite opener                      ✅
 │   ├── realtime/             # websocket rooms, presence, broadcast                        ⏳
 │   └── migrate/              # proxy, php/python session bridges, contract tests           ⏳
 ├── test/                     # bun test suites (one per module)
@@ -92,16 +95,26 @@ miujs/
 - [x] Bun `listen()`, Workers `fetch(req, env, ctx)` signature
 - [x] Source runs on Node 22 with type stripping (`erasableSyntaxOnly`)
 
-### Phase 2 — Batteries
-- [ ] `Store` interface (get/set/delete/ttl/incr) + memory and SQLite (`bun:sqlite` / `node:sqlite`) drivers
-- [ ] Sessions: signed cookie id, store-backed, rotation, flash messages
-- [ ] Auth: password hashing (argon2/scrypt), login/logout helpers, `requireAuth()` middleware
-- [ ] API keys + bearer JWT (HS256/RS256/EdDSA) for agents
+### Phase 2 — Batteries ✅
+- [x] `Store` interface (get/set/delete/has/incr/ttl/prefix) + memory and SQLite (`bun:sqlite` / `node:sqlite`) drivers
+- [x] Sessions: signed session id cookie, key rotation, store-backed, lazy load, save-on-change, flash, regenerate, destroy
+- [x] Passwords: PBKDF2-SHA256, Django-compatible hash format, `needsRehash`
+- [x] Auth: `auth()`, `login`/`logout`, `requireAuth()` (401 problem+json for agents, redirect for HTML)
+- [x] API keys (hashed at rest) + HS256 JWT sign/verify, WebCrypto only
+- [x] CORS, security headers, request id, structured logger
+- [x] Rate limiter (fixed window) on any Store with `RateLimit-*` headers
+- [x] Cache: `cache()` middleware + `remember(store, key, ttl, fn)` with in-flight coalescing
+- [x] Queue: `define`/`dispatch`, retries with backoff, timeouts, dedupe keys, memory + SQLite drivers, worker loop
+- [x] Errors resolve inside the middleware chain so CORS/request-id/logging apply to error responses
+- [x] `miujs/sqlite` entry point keeps native SQLite out of edge bundles
+
+**Follow-ups (from Phase 2 review)**
+- [ ] Verify bcrypt (`$2y$`) hashes from PHP apps; EdDSA/RS256 JWT
 - [ ] OAuth 2.1 resource-server metadata for MCP auth
-- [ ] CORS, security headers, request id, structured logger
-- [ ] Rate limiter (fixed window + token bucket) on any Store
-- [ ] Cache: `cache()` middleware + `c.cache.remember(key, ttl, fn)`
-- [ ] Queue: `defineJob`, retries with backoff, SQLite driver, worker loop
+- [ ] Token-bucket / sliding-window rate limit option
+- [ ] Queue: fence `complete`/`fail` with a lock token so a reclaimed long job can't be double-completed
+- [ ] Queue: cap `runOnce()` iterations (zero-backoff unlimited retries loop today); dedupe across running jobs
+- [ ] Redis store + queue drivers
 
 ### Phase 3 — Cloudflare
 - [ ] Store drivers: Workers KV, D1, Durable Object

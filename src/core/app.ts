@@ -169,7 +169,7 @@ export class Miu<E extends Env = Env> {
       } else {
         final = (ctx) => this.handleNotFound(ctx, path);
       }
-      await compose(c, chain, final);
+      await compose(c, chain, final, (err, ctx) => this.handleError(err, ctx));
     } catch (err) {
       c.res = await this.handleError(err, c);
     }
@@ -216,16 +216,32 @@ export class Miu<E extends Env = Env> {
   }
 }
 
-async function compose(c: Context<any, any>, chain: Middleware[], final: Middleware): Promise<void> {
+/**
+ * Run middleware in onion order. A thrown error becomes a response at the
+ * level it was thrown, so outer middleware still runs its post-`next()` code
+ * (CORS, request ids, logging) on error responses.
+ */
+async function compose(
+  c: Context<any, any>,
+  chain: Middleware[],
+  final: Middleware,
+  onError: (err: unknown, c: Context<any, any>) => Promise<Response>,
+): Promise<void> {
   const dispatch = async (i: number): Promise<void> => {
     const fn = i < chain.length ? chain[i]! : i === chain.length ? final : null;
     if (!fn) return;
     let nextCalled = false;
-    const out = await fn(c, () => {
-      if (nextCalled) throw new Error("next() called multiple times");
-      nextCalled = true;
-      return dispatch(i + 1);
-    });
+    let out: unknown;
+    try {
+      out = await fn(c, () => {
+        if (nextCalled) throw new Error("next() called multiple times");
+        nextCalled = true;
+        return dispatch(i + 1);
+      });
+    } catch (err) {
+      c.res = await onError(err, c);
+      return;
+    }
     if (out instanceof Response) c.res = out;
     else if (!nextCalled && !c.res && fn !== final) {
       throw new Error("Middleware must call next() or return a Response");
