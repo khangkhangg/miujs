@@ -1,6 +1,6 @@
 import { ValidationError } from "../../core/errors.ts";
 import { validate, type AnySchema, type Infer } from "../../core/schema.ts";
-import type { Job, JobStatus, QueueDriver } from "./types.ts";
+import type { DedupeMode, Job, JobStatus, QueueDriver } from "./types.ts";
 
 /** The job record passed to a handler, plus a signal that aborts when the job times out. */
 export type JobContext<P = unknown> = Job<P> & { signal: AbortSignal };
@@ -20,6 +20,11 @@ export interface DispatchOptions {
   delay?: number;
   /** Dedupe key: while a job with this key is pending, dispatching returns its id instead of adding another. */
   key?: string;
+  /**
+   * What the dedupe `key` matches. `"pending"` (default): only jobs waiting to run, so dispatching while a
+   * job runs queues one follow-up run. `"active"`: pending or running jobs (at most one at a time).
+   */
+  dedupe?: DedupeMode;
 }
 
 export interface JobType<P> {
@@ -135,7 +140,7 @@ export function createQueue(opts: QueueOptions): Queue {
       createdAt: t,
     };
     if (o.key !== undefined) job.key = o.key;
-    return (await driver.push(job)).id;
+    return (await driver.push(job, o.dedupe && o.dedupe !== "pending" ? { dedupe: o.dedupe } : undefined)).id;
   };
 
   const invoke = async (def: AnyDefinition, job: Job) => {
@@ -153,7 +158,7 @@ export function createQueue(opts: QueueOptions): Queue {
     try {
       await Promise.race([run, timedOut]);
     } finally {
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
     }
   };
 

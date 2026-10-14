@@ -29,3 +29,13 @@ export type { LlmsOptions, LlmsMiddlewareOptions, LlmsSection, LlmsLink } from "
 // DevTools (portable; dev-only features are off in production)
 export { isDev, isProduction, readEnv, timing, getTiming, formatServerTiming, sanitizeMetricName, devErrors, inspector, isLoopback, routeTable, devLogger, parseStack, errorInfo, redactHeaders, redactUrl } from "./devtools/index.ts";
 export type { EnvSource, Timing, TimingEntry, TimingOptions, DevErrorsOptions, EditorLink, InspectorOptions, InspectedRequest, RouteRow, DevLoggerOptions, StackFrame, ErrorInfo } from "./devtools/index.ts";
+
+// MCP authorization (OAuth 2.1 protected resource)
+export { mcpAuth, mcpJwtVerifier } from "./ai/mcp-auth.ts";
+export type { McpAuthOptions, McpAuthInfo, McpJwtVerifierOptions } from "./ai/mcp-auth.ts";
+
+// Redis drivers (scale-out; injected client, no native imports)
+export { redisStore, toRedisLike, fromIoredis, fromNodeRedis, redisScript } from "./batteries/store/redis.ts";
+export type { RedisLike, IoredisLike, NodeRedisLike, AnyRedisClient, RedisScript, RedisStoreOptions } from "./batteries/store/redis.ts";
+export { redisQueueDriver } from "./batteries/queue/redis.ts";
+export type { RedisQueueOptions } from "./batteries/queue/redis.ts";

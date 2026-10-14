@@ -12,14 +12,15 @@ export function memoryQueueDriver(): QueueDriver {
   };
   const byRunAt = () => [...jobs.values()].sort((a, b) => a.runAt - b.runAt);
 
-  const findPendingByKey = (key: string) => {
-    for (const j of jobs.values()) if (j.status === "pending" && j.key === key) return j;
+  const findByKey = (key: string, active = false) => {
+    for (const j of jobs.values()) if (j.key === key && (j.status === "pending" || (active && j.status === "running"))) return j;
     return undefined;
   };
+  const findPendingByKey = (key: string) => findByKey(key);
 
   return {
-    async push(job) {
-      const existing = job.key === undefined ? undefined : findPendingByKey(job.key);
+    async push(job, o) {
+      const existing = job.key === undefined ? undefined : findByKey(job.key, o?.dedupe === "active");
       if (existing) return copy(existing);
       const stored = copy(job);
       jobs.set(job.id, stored);

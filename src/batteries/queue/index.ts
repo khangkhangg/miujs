@@ -1,4 +1,4 @@
-export type { Job, JobStatus, QueueDriver } from "./types.ts";
+export type { DedupeMode, Job, JobStatus, PushOptions, QueueDriver } from "./types.ts";
 export {
   createQueue,
   type DispatchOptions,

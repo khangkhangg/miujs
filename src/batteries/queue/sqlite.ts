@@ -58,10 +58,10 @@ export function sqliteQueueDriver(opts: SqliteQueueOptions = {}): QueueDriver {
     db.exec(`CREATE INDEX IF NOT EXISTS ${table}_key ON ${table}(key) WHERE key IS NOT NULL`);
     return {
       db,
-      // Insert only if no pending job has the same key; one statement, so atomic across processes.
+      // Insert only if no pending (or, with ?11 = 1, running) job has the same key; one statement, so atomic.
       push: db.prepare(
         `INSERT INTO ${table} (${cols}) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
-         WHERE ?8 IS NULL OR NOT EXISTS (SELECT 1 FROM ${table} WHERE key = ?8 AND status = 'pending')
+         WHERE ?8 IS NULL OR NOT EXISTS (SELECT 1 FROM ${table} WHERE key = ?8 AND (status = 'pending' OR (?11 = 1 AND status = 'running')))
          RETURNING ${cols}`,
       ),
       claim: db.prepare(
@@ -86,6 +86,7 @@ export function sqliteQueueDriver(opts: SqliteQueueOptions = {}): QueueDriver {
       get: db.prepare(`SELECT ${cols} FROM ${table} WHERE id = ?`),
       list: db.prepare(`SELECT ${cols} FROM ${table} WHERE ?1 IS NULL OR status = ?1 ORDER BY run_at, rowid LIMIT ?2`),
       byKey: db.prepare(`SELECT ${cols} FROM ${table} WHERE key = ? AND status = 'pending' LIMIT 1`),
+      byKeyActive: db.prepare(`SELECT ${cols} FROM ${table} WHERE key = ? AND status IN ('pending', 'running') LIMIT 1`),
       retry: db.prepare(
         `UPDATE ${table} SET status = 'pending', attempts = 0, run_at = ?, finished_at = NULL
          WHERE id = ? AND status = 'failed' RETURNING id`,
@@ -97,14 +98,16 @@ export function sqliteQueueDriver(opts: SqliteQueueOptions = {}): QueueDriver {
   const one = (row: unknown) => (row === undefined ? undefined : toJob(row as Row));
 
   const driver: QueueDriver = {
-    async push(job) {
+    async push(job, o) {
       const s = await ready;
+      const active = o?.dedupe === "active";
       const row = s.push.get(
         job.id, job.name, JSON.stringify(job.payload ?? null), job.status, job.attempts, job.runAt,
-        job.lastError ?? null, job.key ?? null, job.createdAt, job.finishedAt ?? null,
+        job.lastError ?? null, job.key ?? null, job.createdAt, job.finishedAt ?? null, active ? 1 : 0,
       );
       if (row !== undefined) return toJob(row as Row);
-      return one(s.byKey.get(job.key)) ?? (await driver.push(job));
+      // The matching job may have finished in between: then try again.
+      return one((active ? s.byKeyActive : s.byKey).get(job.key)) ?? (await driver.push(job, o));
     },
     async claim(now, lockMs) {
       const s = await ready;

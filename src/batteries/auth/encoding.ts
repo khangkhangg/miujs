@@ -1,7 +1,7 @@
 const enc = new TextEncoder();
 
 export function utf8(s: string): Uint8Array<ArrayBuffer> {
-  return enc.encode(s);
+  return enc.encode(s) as Uint8Array<ArrayBuffer>;
 }
 
 export function toBase64(bytes: Uint8Array): string {
@@ -45,7 +45,7 @@ export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
   return diff === 0;
 }
 
-export function hmacKey(secret: string, usage: KeyUsage[] = ["sign", "verify"]): Promise<CryptoKey> {
+export function hmacKey(secret: string, usage: ("sign" | "verify")[] = ["sign", "verify"]): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", utf8(secret), { name: "HMAC", hash: "SHA-256" }, false, usage);
 }
 
