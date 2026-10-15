@@ -7,7 +7,7 @@ import type { CloudflareNeeds, McpTool, Plugin } from "./plugin.ts";
 import { isRoute, type AuthRequirement, type RouteDef } from "./route.ts";
 import { Router, normalizePath, pathParams } from "./router.ts";
 import { detectRuntime, processEnv, type Runtime } from "./runtime.ts";
-import type { Issue, Schema } from "./schema.ts";
+import { isPlainStringObject, type Issue, type Schema } from "./schema.ts";
 import { bunWebSocket } from "./websocket.ts";
 
 export type RouteSource = RouteDef | readonly RouteSource[] | Record<string, unknown>;
@@ -211,6 +211,8 @@ const TEXT_TYPE = "text/plain; charset=utf-8";
 const JSON_HEADERS = new Headers({ "content-type": JSON_TYPE });
 const TEXT_HEADERS = new Headers({ "content-type": TEXT_TYPE });
 const TEXT_INIT: ResponseInit = { headers: TEXT_HEADERS };
+/** Longest text served from a route's cached Response (see responder); longer ones are built. */
+const TEMPLATE_MAX = 1024;
 
 /** Bun's own server object (`[object HTTPServer]`, `DebugHTTPServer`, `HTTPSServer`, ...), not a look-alike. */
 function isBunServer(s: unknown): boolean {
@@ -250,6 +252,8 @@ export class App {
 
   private options: MiuOptions;
   private routers = new Map<string, Router<Compiled>>();
+  /** `routers.get("GET")`, kept in a field: most requests are GETs and skip the Map lookup. */
+  private getRouter: Router<Compiled> | undefined = undefined;
   private compiled: Compiled[] = [];
   private pending: RouteDef[] = [];
   private isReady = false;
@@ -265,6 +269,8 @@ export class App {
   private workers: { queue: WorkersHandler[]; scheduled: WorkersHandler[] } = { queue: [], scheduled: [] };
   private staticEnv: Record<string, unknown>;
   private logRequests: boolean;
+  /** No onResponse hooks and no request logging (set in init): responses need no finishing. */
+  private plainAfter = false;
   private basePlatform: PlatformInfo;
   private serverPlatform: PlatformInfo | null = null;
   /**
@@ -274,6 +280,9 @@ export class App {
    * `text/plain;charset=utf-8` itself, saving ~110–130 ns per text response.
    */
   private wirePlatform: PlatformInfo | null = null;
+  /** The Bun server `fetch` saw last and the platform it maps to (wirePlatform or serverPlatform). */
+  private lastServer: unknown = undefined;
+  private lastServerPlatform: PlatformInfo | null = null;
   private toolCache: { routeTools: ReturnType<typeof buildRouteTool>[]; pluginTools: McpTool[] } | null = null;
 
   constructor(options: MiuOptions = {}) {
@@ -339,6 +348,7 @@ export class App {
       if (p.onResponse) this.responseHooks.push(p.onResponse.bind(p));
       if (p.onError) this.errorHooks.push(p.onError.bind(p));
     }
+    this.plainAfter = this.responseHooks.length === 0 && !this.logRequests;
     const names = new Set<string>();
     for (const def of this.pending) {
       const c = this.compile(def);
@@ -368,6 +378,7 @@ export class App {
   private register(c: Compiled): void {
     let r = this.routers.get(c.method);
     if (!r) this.routers.set(c.method, (r = new Router()));
+    if (c.method === "GET") this.getRouter = r;
     r.add(c.path, c);
     if (c.def && !c.def.config.internal) this.compiled.push(c);
   }
@@ -407,17 +418,40 @@ export class App {
     const status = cfg.status ?? 200;
     const handler = cfg.handler as (ctx: any) => unknown;
 
+    const respond = this.responder(status, R);
     // Stays synchronous unless the body must be read or the handler returns a promise:
     // every avoided `await` is a microtask saved on the hot path.
     const callHandler = (ctx: RequestContext): Response | Promise<Response> => {
       const result = handler(ctx) as any;
       if (result !== null && typeof result === "object" && typeof result.then === "function") {
-        return result.then((r: unknown) => this.toResponse(r, ctx, status, R));
+        return result.then((r: unknown) => respond(r, ctx));
       }
-      return this.toResponse(result, ctx, status, R);
+      return respond(result, ctx);
     };
     const permission = cfg.permission;
     const bodyLimit = cfg.maxBodySize ?? this.maxBodySize;
+
+    // Specialization by closure selection (no code generation, which Workers forbid): a route
+    // with no auth, permission, query or body runs only the steps it has. Router params checked
+    // by a plain `t.object({ k: t.string() })` need no check at all: the router yields one string
+    // per declared key (compile() verified the keys match the path), so parsing would return an
+    // equal object. Skipped only when no onRequest hook can replace ctx.params first, and only
+    // when the schema's key order is the router's (it writes the deepest param first), so
+    // `Object.keys(params)` is unchanged.
+    const skipParams =
+      P !== undefined && this.requestHooks.length === 0 && isPlainStringObject(P) && Object.keys(P.json.properties as object).join("/") === pathParams(path).reverse().join("/");
+    if (!needsUser && permission === undefined && !Q && !B) {
+      const fast: Compiled["run"] =
+        P === undefined || skipParams
+          ? callHandler
+          : (ctx) => {
+              ctx.params = check(P, ctx.params, "params", true);
+              return callHandler(ctx);
+            };
+      const info: RouteInfo = { name, method: def.method, path, auth, tags: cfg.tags ?? [], config: cfg };
+      return { name, method: def.method, path, def, info, run: fast };
+    }
+
     const validated = (ctx: RequestContext): Response | Promise<Response> => {
       if (P) ctx.params = check(P, ctx.params, "params", true);
       if (Q) ctx.query = check(Q, ctx.query, "query", true);
@@ -455,6 +489,31 @@ export class App {
 
     const info: RouteInfo = { name, method: def.method, path, auth, tags: cfg.tags ?? [], config: cfg };
     return { name, method: def.method, path, def, info, run };
+  }
+
+  /**
+   * A route's result → Response function. Text results with no `ctx.set` take a per-route fast
+   * path: straight to Bun's server they skip `content-type` (see toResponse); otherwise a text
+   * equal to the previous one is served as a `clone()` of a cached Response, which on Bun costs
+   * ~60 ns less than building a Response with a headers init. A clone has its own headers and
+   * body, so callers can read and change it freely. Long texts skip the cache (cloning them costs
+   * more than building them).
+   */
+  private responder(status: number, R: Schema | undefined): (result: unknown, ctx: RequestContext) => Response {
+    const init: ResponseInit = status === 200 ? TEXT_INIT : { status, headers: TEXT_HEADERS };
+    let lastText: string | undefined;
+    let template: Response | null = null;
+    return (result, ctx) => {
+      if (typeof result !== "string" || ctx._hasSet) return this.toResponse(result, ctx, status, R);
+      if (ctx._platform === this.wirePlatform && this.responseHooks.length === 0 && ctx.method !== "HEAD") {
+        return status === 200 ? new Response(result) : new Response(result, { status });
+      }
+      if (result.length > TEMPLATE_MAX) return new Response(result, init);
+      if (result === lastText) return (template ??= new Response(result, init)).clone();
+      lastText = result;
+      template = null;
+      return new Response(result, init);
+    };
   }
 
   private toResponse(result: unknown, ctx: RequestContext, status: number, R: Schema | undefined): Response {
@@ -540,7 +599,9 @@ export class App {
       return this.dispatch(req, envOrServer ?? {}, { runtime: this.runtime, executionContext });
     }
     // Off Workers the platform object only varies with Bun's server, so it is reused, not
-    // allocated per request.
+    // allocated per request. The same server as last time skips the checks below.
+    if (envOrServer === undefined) return this.dispatchCore(req, this.staticEnv, this.basePlatform);
+    if (envOrServer === this.lastServer) return this.dispatchCore(req, this.staticEnv, this.lastServerPlatform!);
     let platform = this.basePlatform;
     if (envOrServer && typeof envOrServer.upgrade === "function") {
       let sp = this.serverPlatform;
@@ -549,6 +610,8 @@ export class App {
         this.wirePlatform = this.runtime === "bun" && isBunServer(envOrServer) ? { ...sp } : null;
       }
       platform = this.wirePlatform ?? sp;
+      this.lastServer = envOrServer;
+      this.lastServerPlatform = platform;
     } else if (envOrServer && envOrServer.remoteAddr && typeof envOrServer.remoteAddr.hostname === "string") {
       // Deno.serve info, or the Node adapter: the client address for ctx.ip.
       platform = { runtime: this.runtime, pending: this.background, remoteAddr: envOrServer.remoteAddr, trustProxy: this.options.trustProxy };
@@ -567,10 +630,21 @@ export class App {
   private dispatchCore(req: Request, env: unknown, platform: PlatformInfo): Response | Promise<Response> {
     if (!this.isReady) return this.ready().then(() => this.dispatchCore(req, env, platform));
     const start = this.logRequests ? performance.now() : 0;
-    const ctx = new RequestContext(req, pathOf(req.url), env, platform, this.log);
+    const method = req.method;
+    const path = pathOf(req.url);
+    // `lookup` writes path params straight into this object, which becomes `ctx.params`.
+    const params: Record<string, string> = {};
+    let match = (method === "GET" ? this.getRouter : this.routers.get(method))?.lookup(path, params);
+    let head = false;
+    if (match === undefined && method === "HEAD") {
+      match = this.getRouter?.lookup(path, params);
+      head = match !== undefined;
+    }
+    const ctx = new RequestContext(req, method, path, params, match === undefined ? null : match.info, env, platform, this.log);
     let out: Response | Promise<Response>;
     try {
-      out = this.route(ctx);
+      // runMatch inlined for the common case (no hooks, matched, not HEAD).
+      out = this.requestHooks.length !== 0 || head || match === undefined ? (this.requestHooks.length ? this.routeWithHooks(ctx, match, head) : this.runMatch(ctx, match, head)) : match.run(ctx);
     } catch (err) {
       out = this.errorResponse(err, ctx);
     }
@@ -580,6 +654,7 @@ export class App {
         (err) => this.after(ctx, this.errorResponse(err, ctx), start),
       );
     }
+    if (ctx._setCookies === null && this.plainAfter && !ctx._upgraded) return out;
     return this.after(ctx, out, start);
   }
 
@@ -592,20 +667,6 @@ export class App {
       }
       return final;
     });
-  }
-
-  private route(ctx: RequestContext): Response | Promise<Response> {
-    const method = ctx.method;
-    // `lookup` writes path params straight into `ctx.params` (a fresh `{}` per request).
-    let match = this.routers.get(method)?.lookup(ctx.path, ctx.params);
-    let head = false;
-    if (match === undefined && method === "HEAD") {
-      match = this.routers.get("GET")?.lookup(ctx.path, ctx.params);
-      head = match !== undefined;
-    }
-    if (match !== undefined) ctx.route = match.info;
-    if (this.requestHooks.length) return this.routeWithHooks(ctx, match, head);
-    return this.runMatch(ctx, match, head);
   }
 
   private async routeWithHooks(ctx: RequestContext, match: Compiled | undefined, head: boolean): Promise<Response> {

@@ -4,6 +4,8 @@
 //
 // Run: bun bench/run.ts   (then a memory table and a cold-start row)
 //      BENCH_HTTP=1 bun bench/run.ts   (adds GET / over real HTTP via Bun.serve)
+//      bun bench/run.ts --json out.json   (also writes the results as JSON, for bench/compare.ts)
+//      BENCH_ROUNDS=5 BENCH_MS=1000 bun bench/run.ts   (rounds per framework and scenario; ms per round)
 
 import { Elysia, t as et } from "elysia";
 import { Hono } from "hono";
@@ -81,7 +83,10 @@ async function measure(f: Fetch, make: () => Request, ms: number): Promise<numbe
 }
 
 const DURATION = Number(process.env.BENCH_MS ?? 2000);
-const ROUNDS = 3;
+const ROUNDS = Number(process.env.BENCH_ROUNDS ?? 3);
+const jsonFlag = process.argv.indexOf("--json");
+const JSON_OUT = jsonFlag === -1 ? undefined : process.argv[jsonFlag + 1];
+if (jsonFlag !== -1 && !JSON_OUT) throw new Error("--json needs a file path");
 console.log(`Bun ${Bun.version} · in-process fetch() · ${ROUNDS} rounds × ${DURATION} ms, best round kept\n`);
 
 // Frameworks are interleaved within each round (and the order rotates), so CPU frequency
@@ -233,7 +238,7 @@ for (const [sname, row] of Object.entries(mem)) {
 }
 
 // ---- cold start: fresh process → first response (bench/cold.ts) ----
-const COLD_RUNS = 7;
+const COLD_RUNS = Number(process.env.BENCH_COLD_RUNS ?? 7);
 const cold: Record<string, number[]> = Object.fromEntries(names.map((n) => [n, []]));
 for (let r = 0; r < COLD_RUNS; r++) {
   for (const aname of names.map((_, i) => names[(i + r) % names.length])) {
@@ -247,3 +252,23 @@ const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.len
 console.log(`\nCold start (process start → first response, median of ${COLD_RUNS}, ms)`);
 console.log(`${"".padEnd(38)}${names.map((a) => a.padStart(11)).join("")}`);
 console.log(`${"cold start".padEnd(38)}${names.map((a) => median(cold[a]).toFixed(1).padStart(11)).join("")}`);
+
+// ---- JSON output for bench/compare.ts (the CI regression gate) ----
+if (JSON_OUT) {
+  const out = {
+    version: 1,
+    bun: Bun.version,
+    platform: `${process.platform}-${process.arch}`,
+    date: new Date().toISOString(),
+    rounds: ROUNDS,
+    durationMs: DURATION,
+    /** req/s per framework, best round (higher is better). */
+    throughput: { ...results, "GET / (text), server arg": argRow },
+    /** Bytes per 10k requests, best of the memory rounds (retained after GC / peak above baseline). */
+    memory: mem,
+    /** Median ms, process start → first response (lower is better). */
+    coldStartMs: Object.fromEntries(names.map((a) => [a, median(cold[a])])),
+  };
+  await Bun.write(JSON_OUT, JSON.stringify(out, null, 2) + "\n");
+  console.log(`\nWrote ${JSON_OUT}`);
+}

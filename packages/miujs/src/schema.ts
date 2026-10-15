@@ -80,6 +80,25 @@ export interface StringOptions extends Common {
   format?: "uuid" | "email" | "url" | "date" | "date-time";
 }
 
+/** The parser of every unconstrained `t.string()`; `isPlainStringObject` recognizes it by identity. */
+function parsePlainString(v: unknown, path: string, issues: Issue[]): string {
+  if (typeof v !== "string") issues.push({ path, message: `expected string, got ${typeName(v)}` });
+  return v as string;
+}
+
+/** Object schemas built by `t.object` whose fields are all required, unconstrained `t.string()`s, with no `rest`. */
+const plainStringObjects = new WeakSet<object>();
+
+/**
+ * @internal True when `s` is a `t.object({ ... })` of required, unconstrained `t.string()` fields
+ * and no `rest`, as built by `t.object` itself (a spread copy or a custom `parse` is never
+ * recognized). Parsing router params, which are all strings, with such a schema returns an equal
+ * object, so the app may skip it.
+ */
+export function isPlainStringObject(s: Schema): boolean {
+  return plainStringObjects.has(s);
+}
+
 function string(opts: StringOptions = {}): Schema<string> {
   const json: JsonSchema = { type: "string" };
   if (opts.minLength !== undefined) json.minLength = opts.minLength;
@@ -89,6 +108,7 @@ function string(opts: StringOptions = {}): Schema<string> {
   if (opts.format) json.format = opts.format;
   const format = opts.format ? FORMATS[opts.format] : undefined;
   const { minLength, maxLength } = opts;
+  if (minLength === undefined && maxLength === undefined && !pattern && !format) return schema("string", json, parsePlainString, opts);
   return schema("string", json, (v, path, issues) => {
     if (typeof v !== "string") {
       issues.push({ path, message: `expected string, got ${typeName(v)}` });
@@ -254,7 +274,9 @@ function object<P extends Shape, R extends Schema<any> | undefined = undefined>(
     }
     return out as ObjectOf<P>;
   }, opts);
-  return { ...base, shape } as unknown as ObjectSchema<P, WithRest<P, R>>;
+  const out = { ...base, shape };
+  if (!rest && keys.every((k) => shape[k].parse === parsePlainString && !shape[k].isOptional)) plainStringObjects.add(out);
+  return out as unknown as ObjectSchema<P, WithRest<P, R>>;
 }
 
 function record<S extends Schema<any>>(value: S, opts: Common = {}): Schema<Record<string, Infer<S>>> {

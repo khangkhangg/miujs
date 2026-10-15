@@ -54,8 +54,14 @@ function decode(s: string): string {
 
 export class Router<T> {
   private statics = new Map<string, T>();
-  /** `staticLens[n]` is 1 when some static path has length n (n > MAX_LEN shares the last slot). */
+  /**
+   * `staticLens[n]`: how many static paths have length n, capped at 2 (n > MAX_LEN shares the
+   * last slot). With exactly one, `soloPaths[n]`/`soloValues[n]` hold it, and a lookup is one
+   * string comparison instead of hashing the path for the Map.
+   */
   private staticLens = new Uint8Array(MAX_LEN + 2);
+  private soloPaths: (string | undefined)[] = new Array(MAX_LEN + 2).fill(undefined);
+  private soloValues: (T | undefined)[] = new Array(MAX_LEN + 2).fill(undefined);
   private root: Node<T> = node();
   private patterns: string[] = [];
 
@@ -65,7 +71,11 @@ export class Router<T> {
     if (!path.includes(":") && !path.includes("*")) {
       if (this.statics.has(path)) throw errors.config("MIU_E_ROUTE_DUPLICATE", `Route ${path} is defined twice`, "Remove or rename one of the routes.");
       this.statics.set(path, value);
-      this.staticLens[Math.min(path.length, MAX_LEN + 1)] = 1;
+      const slot = Math.min(path.length, MAX_LEN + 1);
+      const n = (this.staticLens[slot] = Math.min(this.staticLens[slot] + 1, 2));
+      // The overflow slot mixes lengths, so it always uses the Map.
+      this.soloPaths[slot] = n === 1 && slot <= MAX_LEN ? path : undefined;
+      this.soloValues[slot] = n === 1 && slot <= MAX_LEN ? value : undefined;
       return;
     }
     const segs = path.split("/").slice(1);
@@ -114,20 +124,22 @@ export class Router<T> {
    * path allocates no match object. Params are written only on a match.
    */
   lookup(path: string, params: Record<string, string>): T | undefined {
-    const lens = this.staticLens;
     const len = path.length;
-    if (lens[len > MAX_LEN ? MAX_LEN + 1 : len] === 1) {
-      const s = this.statics.get(path);
-      if (s !== undefined) return s;
-    }
+    const s = this.matchStatic(path, len > MAX_LEN ? MAX_LEN + 1 : len);
+    if (s !== undefined) return s;
     if (len > 1 && path.charCodeAt(len - 1) === 47 /* / */) {
       path = path.slice(0, -1);
-      if (lens[len - 1 > MAX_LEN ? MAX_LEN + 1 : len - 1] === 1) {
-        const t = this.statics.get(path);
-        if (t !== undefined) return t;
-      }
+      const t = this.matchStatic(path, len - 1 > MAX_LEN ? MAX_LEN + 1 : len - 1);
+      if (t !== undefined) return t;
     }
     return this.walk(this.root, path, 1, params);
+  }
+
+  private matchStatic(path: string, slot: number): T | undefined {
+    const n = this.staticLens[slot];
+    if (n === 0) return undefined;
+    if (n === 1 && slot <= MAX_LEN) return this.soloPaths[slot] === path ? this.soloValues[slot] : undefined;
+    return this.statics.get(path);
   }
 
   // Walks the path string by index instead of splitting it: `split("/")` allocated an array per

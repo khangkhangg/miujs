@@ -37,6 +37,79 @@ shutdown), see [`scripts/soak/REPORT.md`](../scripts/soak/REPORT.md).
 - **Cold start**: `bench/cold.ts` in a fresh `bun` process: runtime boot, importing the framework,
   building the same 3-route app and reading one response. Median of 7 interleaved runs.
 
+## CI regression gate
+
+```bash
+bun bench/run.ts --json bench-1.json          # also write the results as JSON
+bun bench/compare.ts bench-1.json [more.json] # compare with bench/baseline.json; exit 1 on a regression
+bun bench/compare.ts --update a.json b.json c.json   # write a new baseline (per-metric median run)
+```
+
+The `bench` job in `.github/workflows/ci.yml` fails a PR when MiuJS regresses any benchmark by
+more than 5%. Absolute req/s depend on the runner, so every metric is a **ratio measured in the
+same run**: MiuJS req/s ÷ the best of Elysia and Hono for each throughput row (`GET /`,
+`GET /users/:id`, `POST /json`, `GET /` with the server argument), and best other cold start ÷
+MiuJS cold start. A metric fails when it drops below 95% of the baseline ratio. Noise handling:
+each run keeps the best of 5 interleaved rounds (`BENCH_ROUNDS=5 BENCH_MS=1000`, cold start median
+of 15 with `BENCH_COLD_RUNS=15`); when the gate fails, CI runs the benchmark again (up to 3 runs)
+and each metric keeps its best ratio, so a single noisy run cannot fail a PR but a real regression
+fails all three. Retained heap is ~0 for every framework, so a ratio would be noise: instead it
+must stay under 64 KB per 10k requests (a leak grows linearly). The logic is unit-tested in
+`bench/compare.test.ts`.
+
+On this laptop single runs of the same code move up to ±5% per ratio (three runs: `GET /users/:id`
+95.4% / 101.6% / 100.5%), which is why one run alone is not trusted. **`bench/baseline.json` was
+recorded on Windows** (the per-metric median of three runs). Linux ratios may differ; if the first
+CI run on `ubuntu-latest` fails only because of that, refresh the baseline from the uploaded
+`bench-results` artifact (`bun bench/compare.ts --update bench-*.json`).
+
+## Fast paths without code generation (2026-10-15, latest)
+
+Goal: close the gap to Elysia on the trivial routes without `new Function`. Same laptop (Bun
+1.4.3, Windows 11). "Before" is the previous code, "after" this change; each pair ran back to
+back, interleaved, ratios vs the best other framework (Elysia in every trivial row):
+
+| Row | Before (6 runs) | After (6 runs + 3 baseline runs) |
+| --- | --- | --- |
+| `GET /` text, `fetch(req)` | 79 / 77 / 73 / 74 / 74 / 74% | 86 / 90 / 87 / 87 / 89 / 81%; 85 / 91 / 86% |
+| `GET /` text, `fetch(req, bunServer)` | 90 / 91 / 86 / 91 / 91 / 87% | 83 / 98 / 88 / 100 / 98 / 92%; 93 / 98 / 101% |
+| `GET /users/:id` | 84 / 84 / 86 / 85 / 90 / 87% | 103 / 103 / 98 / 100 / 95 / 100%; 95 / 102 / 101% |
+| `POST /json` | 114 / 88 / 104 / 103 / 98 / 104% | 105 / 94 / 106 / 110 / 104 / 104%; 105 / 111 / 105% |
+
+(Runs 1–3 of each column are full `bench/run.ts` runs at 2 s × 3 rounds; runs 4–6 the throughput
+part only; the baseline runs used 1 s × 5 rounds. The first three "after" runs predate the router
+change below.) Memory and cold start did not change: retained heap −1.4 to 1.3 KB per 10k requests
+for every row, cold start 11.1–12.4 ms vs Elysia 50.5–61.0 ms and Hono 12.9–15.4 ms.
+
+What changed, each kept only if it measured (`Bun.nanoseconds()` microbenchmarks, best of 5 × 300k
+requests, plus `bun --cpu-prof-md`):
+
+- **Per-route specialization by closure selection** (`compile()`). A route with no auth,
+  permission, query or body gets a `run` that is just "call the handler, convert the result"; with
+  a params schema it adds only the params check. The generic `run → validated → callHandler` chain
+  stays for everything else.
+- **Params copy skipped when it cannot change anything.** A `t.object` whose fields are all plain,
+  required `t.string()` (recognized by identity of the parser `t.string()` uses without
+  constraints, and by a WeakSet of objects `t.object` itself built; a spread copy or custom `parse`
+  never qualifies), with the router writing keys in the same order, and no `onRequest` hook that
+  could replace `ctx.params` first. The router always yields one string per declared key, so the
+  check would return an equal object.
+- **Text responses from a per-route cached Response.** When a route returns the same string as
+  last time, it returns `template.clone()` instead of `new Response(text, { headers })`: ~60–85 ns
+  less on Bun, and the clone keeps its `content-type` after the body is read and has its own,
+  mutable headers. Texts over 1 KB are built (cloning costs more from ~1–4 KB).
+- **Route before context.** The router runs before the context exists, so `ctx.route` and
+  `ctx.params` are constructor fields (one object shape from the start, no transition), `runtime`
+  is a prototype getter, and the no-hook, matched, non-HEAD case calls `match.run` directly.
+- **Cheaper `fetch`/`after`.** `fetch(req)` goes straight to dispatch; the same Bun server as last
+  time skips the platform checks; "no response hooks and no request logging" is computed once.
+- **`GET` router in a field**, not a Map lookup per request.
+- **Static paths with a unique length** match with one string comparison instead of hashing the
+  path for the Map (`/` lookup 13 → 4 ns).
+- **`pathOf`** uses native `indexOf`s and skips the scheme scan for `http://`/`https://` (10–20 ns).
+
+Tried and dropped: not allocating `ctx.params` for static routes (no measurable change).
+
 ## Text responses on Bun.serve (2026-10-15, late night)
 
 MiuJS now leaves `content-type` off a string Response when it goes straight to Bun's server and
@@ -221,7 +294,9 @@ Framework dispatch alone (handler returns a prebuilt `Response`): MiuJS ~150–1
    the Node/Workers adapters see it. With that header removed as an experiment, `GET /` went from
    ~73% to **87%** of Elysia. Cheaper ways to get the header don't hold up: a shared `Blob` body is
    as fast as a bare string, but Bun derives its `content-type` lazily, so the header disappears
-   once the body is read, which breaks `app.call()`. `clone()` of a template Response saves only ~25 ns.
+   once the body is read, which breaks `app.call()`. (A later measurement put `clone()` of a cached
+   template Response at ~60–85 ns cheaper than building one with headers, not ~25 ns; it is now used, see
+   "Fast paths without code generation".)
 2. **Dispatch overhead (~50–80 ns more than Elysia).** It is spread across many small pieces, each
    10–30 ns (context object, path extraction, the validated-params copy, hook and promise checks),
    with no single hotspot left in the profile. Elysia generates one specialized function per route
@@ -230,3 +305,30 @@ Framework dispatch alone (handler returns a prebuilt `Response`): MiuJS ~150–1
 
 Item 1 is now resolved for Bun.serve, as described above. The `fetch(req)` table still pays for the
 header by design, since tests and adapters use that path.
+
+**Remaining gap after the fast paths (2026-10-15, latest).** Per request, from microbenchmarks
+(`new Request` + handler + `await res.text()`; "floor" is a function returning `new Response("Hi")`):
+
+| `GET /` | ns | over floor |
+| --- | ---: | ---: |
+| floor | 426–462 | — |
+| Elysia | 498–540 | ~55–95 |
+| MiuJS `fetch(req, bunServer)` | 527–560 | ~90–120 |
+| MiuJS `fetch(req)` | 619–676 | ~180–230 |
+| MiuJS `fetch(req)` with the header dropped (experiment only) | 574 | ~150 |
+
+- **`fetch(req)` text, ~81–91% of Elysia: the header is the cap.** Keeping `content-type` on the
+  Response object costs ~60–85 ns even with the cached-template `clone()`; dropping it as an
+  experiment moved the microbenchmark ratio from 0.83 to 0.91. 95% is not reachable here without
+  removing a header that `app.fetch`/`app.call` users, plugins and the Node/Workers adapters can see,
+  so it stays.
+- **Dispatch, ~30–50 ns more than Elysia.** Elysia's generated `map(r)` is one straight-line
+  function: a string `switch` on the path, an inline method `switch`, a plain object literal as
+  context, and the handler called directly. MiuJS without codegen makes 4 calls instead (`fetch` →
+  `dispatchCore` → the route's closure → the result converter), builds a class instance, and its
+  `pathOf` handles `#` and every URL scheme (Elysia's `indexOf('/', 11)` misreads hosts shorter
+  than four characters). No piece is over ~10 ns in the profile now. For fairness: Elysia's
+  `handle()` is `async`, so it also pays one promise per request in this benchmark, which MiuJS
+  (synchronous for sync handlers) does not.
+- With Bun's server as the argument (no header), `GET /` is at 92–101% in most runs and
+  `GET /users/:id` at 95–103%; the spread is the machine's run-to-run noise (±5%).

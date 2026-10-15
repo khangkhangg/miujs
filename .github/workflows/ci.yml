@@ -98,3 +98,50 @@ jobs:
 
       - name: Smoke test
         run: ${{ matrix.run }}
+
+  bench:
+    name: Benchmark regression gate
+    runs-on: ubuntu-latest
+    env:
+      BENCH_ROUNDS: "5"
+      BENCH_MS: "1000"
+      BENCH_COLD_RUNS: "15"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Cache Bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # MiuJS is measured as ratios against Elysia and Hono in the same run, so the runner's speed
+      # cancels out. Each run keeps the best of 5 interleaved rounds. If the gate fails, the
+      # benchmark runs again (up to 3 runs in all) and each metric keeps its best ratio, so one
+      # noisy run cannot fail the PR but a real >5% regression still does.
+      - name: Benchmark and compare with bench/baseline.json (fails on a >5% regression)
+        run: |
+          files=""
+          for i in 1 2 3; do
+            bun bench/run.ts --json bench-$i.json
+            files="$files bench-$i.json"
+            if bun bench/compare.ts $files; then exit 0; fi
+            echo "::warning::Possible benchmark regression after run $i; re-running to rule out noise."
+          done
+          exit 1
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench-*.json
+          if-no-files-found: ignore
