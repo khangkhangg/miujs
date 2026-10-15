@@ -85,6 +85,9 @@
     "devtools": "MIU_ENV=development bun --inspect examples/devtools.ts",
     "bench": "cd bench && bun run.ts",
     "bench:micro": "cd bench && bun micro.ts",
+    "bench:app": "bun bench/app.ts",
+    "e2e": "bun test test/e2e",
+    "e2e:browser": "bun test test/e2e/tour-studio/browser.test.ts",
     "build": "bun scripts/build.ts",
     "typecheck:cf": "tsc -p tsconfig.cf.json",
     "prepublishOnly": "bun run build"
