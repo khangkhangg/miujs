@@ -24,6 +24,24 @@ export interface FakeRedis {
 
 const wrongType = () => new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
 
+/** Redis glob (`*`, `?`, `[...]`, backslash escapes) as a RegExp. */
+function globToRegExp(glob: string): RegExp {
+  const lit = (c: string) => c.replace(/[.*+?^${}()|[\]\\\/-]/g, "\\$&");
+  let out = "";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === "\\" && i + 1 < glob.length) out += lit(glob[++i]);
+    else if (c === "*") out += "[\\s\\S]*";
+    else if (c === "?") out += "[\\s\\S]";
+    else if (c === "[") {
+      const close = glob.indexOf("]", i + 1);
+      if (close < 0) out += lit(c);
+      else (out += `[${glob.slice(i + 1, close).replace(/\\/g, "\\\\")}]`), (i = close);
+    } else out += lit(c);
+  }
+  return new RegExp(`^${out}$`);
+}
+
 function parseScore(s: string): number {
   if (s === "-inf") return -Infinity;
   if (s === "+inf" || s === "inf") return Infinity;
@@ -35,6 +53,15 @@ function parseScore(s: string): number {
 export function fakeRedis(opts: { now?: () => number } = {}): FakeRedis {
   const now = opts.now ?? Date.now;
   const data = new Map<string, Entry>();
+  // SCAN walks keys in creation order; a cursor is a position in it, so deleting keys while
+  // scanning skips none of the others (the guarantee real Redis gives).
+  const order: string[] = [];
+  const known = new Set<string>();
+  const rawSet = data.set.bind(data);
+  data.set = (k: string, v: Entry) => {
+    if (!known.has(k)) (known.add(k), order.push(k));
+    return rawSet(k, v);
+  };
   const log: string[][] = [];
   let failures = 0;
   let failing = new Set<string>();
@@ -193,6 +220,22 @@ export function fakeRedis(opts: { now?: () => number } = {}): FakeRedis {
       }
       case "LLEN":
         return list(a[0], false)?.length ?? 0;
+      case "SCAN": {
+        const start = Number(a[0]);
+        let match = "*";
+        let count = 10;
+        for (let i = 1; i < a.length; i += 2) {
+          const o = a[i].toUpperCase();
+          if (o === "MATCH") match = a[i + 1];
+          else if (o === "COUNT") count = Number(a[i + 1]);
+          else throw new Error(`ERR syntax error (${o})`);
+        }
+        if (!Number.isInteger(start) || start < 0) throw new Error("ERR invalid cursor");
+        const re = globToRegExp(match);
+        const end = Math.min(order.length, start + Math.max(1, count));
+        const keys = order.slice(start, end).filter((k) => live(k) && re.test(k));
+        return [end >= order.length ? "0" : String(end), keys];
+      }
       default:
         throw new Error(`ERR unknown command '${cmd}' (not in the fake)`);
     }

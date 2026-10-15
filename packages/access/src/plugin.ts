@@ -19,6 +19,12 @@ export interface AccessOptions {
   /** Where orgs and memberships live. Default: `ctx.db` from `@miujs/db`. */
   database?: DatabaseSource;
   /**
+   * Your own `AccessStore` (or one per request), instead of the built-in SQL store on `database`.
+   * `counts`, `pageOrgs` and `pageMembers` are optional: without them `manage()` omits the views
+   * that need them.
+   */
+  store?: AccessStore | ((ctx: Context) => AccessStore);
+  /**
    * Where the active org id comes from. A route with `:orgId` in its path always uses that.
    * Otherwise: `"header"` (default, `x-org-id`), `"session"` (session key `orgId`), `"path"`
    * (only the path), or a function.
@@ -78,6 +84,8 @@ export function databaseFor(opts: AccessOptions, ctx: Context): Database {
 }
 
 export function storeFor(opts: AccessOptions, ctx: Context): AccessStore {
+  const s = opts.store;
+  if (s) return typeof s === "function" ? s(ctx) : s;
   return accessStore(databaseFor(opts, ctx));
 }
 
@@ -162,7 +170,7 @@ export function accessPlugin(opts: AccessOptions, routes: RouteDef[], state: { d
         policies: policies.map((p) => ({ resource: p.resource, actions: Object.keys(p.rules) })),
         orgFrom: typeof from === "function" ? "function" : from,
         ownerRole,
-        database: opts.database ? describeDatabase(opts.database) : "ctx.db",
+        database: opts.store ? "custom store" : opts.database ? describeDatabase(opts.database) : "ctx.db",
         invites: { mailer: !!opts.mailer, ttlDays: opts.inviteTtlDays ?? 7, allowAnyEmail: !!opts.allowAnyEmail },
       };
     },

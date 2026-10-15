@@ -115,7 +115,7 @@ await client.connect();
 const store = redisStore(redisFromCommand((cmd, args) => client.sendCommand([cmd, ...args])));
 ```
 
-`RedisLike` avoids MULTI and EVAL, so Valkey, Dragonfly, KeyDB and Upstash work. The same client also serves `redisQueue` from `@miujs/queue`.
+`RedisLike` avoids MULTI and EVAL, so Valkey, Dragonfly, KeyDB and Upstash work. The same client also serves `redisQueue` from `@miujs/queue`. Its `scan` method is optional: without it the cache works the same but the admin cannot list or purge keys by prefix.
 
 ### Custom stores
 
@@ -154,8 +154,8 @@ A `CacheStore` moves strings: `name`, `get(key)`, `set(key, value, { ttl })`, `d
 With `@miujs/admin`, the plugin shows a **Cache** section:
 
 - **Status**: store name, entries and total size (memory store; `null` with a hint on KV and Redis, which cannot count cheaply), hits, misses and hit rate counted by this instance since it started.
-- **Keys** list (paged, search = key prefix, values are never shown): memory store, and KV when the binding has `list()` (real Cloudflare bindings do). Redis cannot list keys (no `SCAN` in `RedisLike`), so the list explains that instead. Row action: delete.
-- **Actions**: `deleteKey`, `invalidateTag`, `purgePrefix` (danger) and `purgeAll` (danger). Purges need a store that can list keys and delete at most 1000 keys per run; the result says when more remain. `purgeAll` on the memory store clears it at once.
+- **Keys** list (paged, search = key prefix, values are never shown): memory store, KV when the binding has `list()` (real Cloudflare bindings do), and Redis when the client has `scan` (`bunRedis()` and `redisFromCommand()` do). On Redis the list walks `SCAN cursor MATCH <prefix>* COUNT 250` over the store's own prefix only (glob characters in the search are matched literally); size and expiry show as empty. With a `RedisLike` that lacks the optional `scan`, the list explains that it cannot list keys. Row action: delete.
+- **Actions**: `deleteKey`, `invalidateTag`, `purgePrefix` (danger) and `purgeAll` (danger). Purges need a store that can list keys and delete at most 1000 keys per run; the result says when more remain. `purgeAll` on the memory store clears it at once; on Redis it deletes the keys under the store's prefix, never other keys in the database.
 
 Custom stores can opt in by implementing `scan({ prefix, cursor, limit })`, `clear()` and `bytes()`.
 

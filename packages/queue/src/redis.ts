@@ -29,7 +29,7 @@ export interface RedisQueueOptions extends DurableQueueOptions {
   prefix?: string;
 }
 
-/** Dead letters searched for an id by retry/delete from the admin (newest first). */
+/** Dead letters searched for an id by retry/delete when it has no index entry (newest first). */
 const DEAD_SCAN = 10_000;
 
 function parseDead(s: string): DeadLetter | undefined {
@@ -51,6 +51,8 @@ const FIX = "Check that Redis is running and reachable at REDIS_URL (or the url 
  *   reap:<id>   lock (PX)                    one reaper per expired lease
  *   delayed     sorted set id -> run-at ms   delays and retry backoff
  *   dead        list of DeadLetter JSON      newest at the head
+ *   deadid:<id> the exact JSON in dead       index for retry/delete by id; letters written
+ *                                            before it existed are found by scanning dead
  *   once:<key>  lock (PX)                    one schedule firing per minute
  * No MULTI or EVAL: every hand-off is a single atomic command (RPOPLPUSH, ZREM, SET NX), and
  * writes are ordered so a crash can duplicate a message but never lose one.
@@ -64,6 +66,7 @@ function redisBackend(client: QueueRedisLike, prefix: string): DurableBackend {
     processing: `${prefix}processing`,
     delayed: `${prefix}delayed`,
     dead: `${prefix}dead`,
+    deadId: (id: string) => `${prefix}deadid:${id}`,
     once: (key: string) => `${prefix}once:${key}`,
   };
   const g =
@@ -131,7 +134,10 @@ function redisBackend(client: QueueRedisLike, prefix: string): DurableBackend {
       await release(c.msg.id);
     }),
     dead: g("dead-letter", async (c: Claimed, letter: DeadLetter) => {
-      await client.lpush(k.dead, JSON.stringify(letter));
+      const raw = JSON.stringify(letter);
+      // Index first: an index entry without its letter (a crash in between) reads as not found.
+      await client.set(k.deadId(letter.id), raw);
+      await client.lpush(k.dead, raw);
       await client.del(k.job(c.msg.id));
       await release(c.msg.id);
     }),
@@ -193,9 +199,18 @@ function redisBackend(client: QueueRedisLike, prefix: string): DurableBackend {
       return out;
     }),
     deadPage: g("dead-letters", async (offset: number, limit: number) => (await client.lrange(k.dead, offset, offset + limit - 1)).map(parseDead).filter((d): d is DeadLetter => d !== undefined)),
-    // The dead list has no index by id: look through the newest DEAD_SCAN entries. LREM decides
+    // By id: the deadid:<id> index holds the letter's exact JSON, so LREM removes it wherever it
+    // is in the list. Letters without an index entry (written by an older version, or whose entry
+    // a concurrent take removed) are looked for among the newest DEAD_SCAN entries. LREM decides
     // which caller removed it.
     takeDead: g("dead-letter", async (id: string) => {
+      const indexed = await client.get(k.deadId(id));
+      if (indexed !== null) {
+        const removed = (await client.lrem(k.dead, indexed)) > 0;
+        await client.del(k.deadId(id));
+        const d = removed ? parseDead(indexed) : undefined;
+        if (d) return d;
+      }
       for (let start = 0; start < DEAD_SCAN; start += 100) {
         const page = await client.lrange(k.dead, start, start + 99);
         for (const raw of page) {

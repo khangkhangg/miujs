@@ -5,10 +5,11 @@
 // finished rooms now. On Cloudflare each queue is one Durable Object, so queue numbers, the list
 // and the knobs are read from / sent to those objects; game rooms cannot be enumerated there.
 //
-// Leaderboard: the current period, entry count and top score; entries in rank order (remove
-// one); reset a period. Tickets, signing secrets and client-submit secrets are never shown.
+// Leaderboard: the current and previous period, entry count and top score; entries of the current
+// and of the previous period in rank order (remove one); reset a period. Tickets, signing secrets
+// and client-submit secrets are never shown.
 
-import { errors, t, type Context, type Env, type ManageAction, type ManageSection, type ManageSettings, type ManageStat, type ManageValue, type Schema } from "miujs";
+import { errors, t, type Context, type Env, type ManageAction, type ManageList, type ManageSection, type ManageSettings, type ManageStat, type ManageValue, type Schema } from "miujs";
 import type { Database } from "@miujs/db";
 import type { Clock } from "@miujs/realtime";
 import { durableAdmin, type MatchHost, type NamespaceLike } from "./cloudflare.ts";
@@ -258,6 +259,8 @@ export interface LeaderboardManageDeps {
   db(env?: Env): Promise<Database>;
   /** The current period key. */
   period(): string;
+  /** The period before the current one, or null when the board never resets. */
+  previousPeriod?(): string | null;
 }
 
 const PERIOD = /^(all|\d{4}-\d{2}(-\d{2})?|\d{4}-W\d{2})$/;
@@ -271,6 +274,63 @@ export function leaderboardManage(d: LeaderboardManageDeps): ManageSection[] {
     return r?.meta?.changes ?? 0;
   }
 
+  /** Entries of the period `period()` names when the list is read (periods roll over). */
+  function entries(name: string, title: string, which: string, period: () => string): ManageList {
+    return {
+      name,
+      title,
+      idKey: "playerId",
+      searchable: true,
+      columns: [
+        { key: "rank", label: "Rank", type: "number" },
+        { key: "playerId", label: "Player", type: "code" },
+        { key: "name", label: "Name" },
+        { key: "score", label: "Score", type: "number" },
+        { key: "submissions", label: "Submissions", type: "number" },
+        { key: "updatedAt", label: "Updated", type: "date" },
+      ],
+      async list(q, ctx) {
+        const db = await d.db(ctx.env);
+        const limit = pageSize(q.limit);
+        const offset = /^\d+$/.test(q.cursor ?? "") ? Number(q.cursor) : 0;
+        const search = q.search?.trim();
+        const where = search ? " AND l.player_id LIKE ? ESCAPE '\\'" : "";
+        const args: unknown[] = [d.id, period()];
+        if (search) args.push(`%${search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+        const { results } = await db
+          .prepare(
+            `SELECT l.player_id AS playerId, l.score AS score, l.submissions AS submissions, l.updated_at AS updatedAt, p.display_name AS name,
+               (SELECT COUNT(*) FROM leaderboard_scores x WHERE x.board = l.board AND x.period = l.period AND x.score ${better} l.score) + 1 AS rank
+             FROM leaderboard_scores l LEFT JOIN players p ON p.id = l.player_id
+             WHERE l.board = ? AND l.period = ?${where}
+             ORDER BY l.score ${dir}, l.updated_at ASC, l.player_id ASC LIMIT ? OFFSET ?`,
+          )
+          .bind(...args, limit + 1, offset)
+          .all<{ playerId: string; score: number; submissions: number; updatedAt: number; name: string | null; rank: number }>();
+        const rows = results.slice(0, limit).map((r) => ({ rank: r.rank, playerId: r.playerId, name: r.name ?? null, score: r.score, submissions: r.submissions, updatedAt: r.updatedAt }));
+        return results.length > limit ? { rows, next: String(offset + limit) } : { rows };
+      },
+      rowActions: [
+        {
+          name: "remove",
+          title: "Remove entry",
+          description: `Delete this player's score for the ${which} period.`,
+          danger: true,
+          async run(input: { id?: unknown }, ctx) {
+            const player = String(input?.id ?? "");
+            const p = period();
+            const n = await changes(await d.db(ctx.env), "DELETE FROM leaderboard_scores WHERE board = ? AND period = ? AND player_id = ?", d.id, p, player);
+            return n ? `Removed "${player}" from ${d.id} (${p}).` : `"${player}" has no entry in ${d.id} (${p}); nothing to do.`;
+          },
+        },
+      ],
+    };
+  }
+
+  const previous = d.previousPeriod && d.previousPeriod() !== null ? (d.previousPeriod as () => string) : null;
+  const lists = [entries("entries", "Entries (current period)", "current", d.period)];
+  if (previous) lists.push(entries("previous", "Entries (previous period)", "previous", previous));
+
   return [
     {
       id: "leaderboard",
@@ -283,65 +343,15 @@ export function leaderboardManage(d: LeaderboardManageDeps): ManageSection[] {
           .prepare(`SELECT COUNT(*) AS n, ${d.sort === "desc" ? "MAX" : "MIN"}(score) AS top FROM leaderboard_scores WHERE board = ? AND period = ?`)
           .bind(d.id, period)
           .first<{ n: number; top: number | null }>();
-        return {
-          stats: [
-            { label: "Current period", value: period, hint: `Resets ${d.resets}.` },
-            { label: "Entries this period", value: row?.n ?? 0 },
-            { label: "Top score", value: row?.top ?? null },
-          ],
-        };
+        const stats: ManageStat[] = [
+          { label: "Current period", value: period, hint: `Resets ${d.resets}.` },
+          { label: "Entries this period", value: row?.n ?? 0 },
+          { label: "Top score", value: row?.top ?? null },
+        ];
+        if (previous) stats.push({ label: "Previous period", value: previous(), hint: "Its entries are in the previous-period list." });
+        return { stats };
       },
-      lists: [
-        {
-          name: "entries",
-          title: "Entries (current period)",
-          idKey: "playerId",
-          searchable: true,
-          columns: [
-            { key: "rank", label: "Rank", type: "number" },
-            { key: "playerId", label: "Player", type: "code" },
-            { key: "name", label: "Name" },
-            { key: "score", label: "Score", type: "number" },
-            { key: "submissions", label: "Submissions", type: "number" },
-            { key: "updatedAt", label: "Updated", type: "date" },
-          ],
-          async list(q, ctx) {
-            const db = await d.db(ctx.env);
-            const limit = pageSize(q.limit);
-            const offset = /^\d+$/.test(q.cursor ?? "") ? Number(q.cursor) : 0;
-            const search = q.search?.trim();
-            const where = search ? " AND l.player_id LIKE ? ESCAPE '\\'" : "";
-            const args: unknown[] = [d.id, d.period()];
-            if (search) args.push(`%${search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
-            const { results } = await db
-              .prepare(
-                `SELECT l.player_id AS playerId, l.score AS score, l.submissions AS submissions, l.updated_at AS updatedAt, p.display_name AS name,
-                   (SELECT COUNT(*) FROM leaderboard_scores x WHERE x.board = l.board AND x.period = l.period AND x.score ${better} l.score) + 1 AS rank
-                 FROM leaderboard_scores l LEFT JOIN players p ON p.id = l.player_id
-                 WHERE l.board = ? AND l.period = ?${where}
-                 ORDER BY l.score ${dir}, l.updated_at ASC, l.player_id ASC LIMIT ? OFFSET ?`,
-              )
-              .bind(...args, limit + 1, offset)
-              .all<{ playerId: string; score: number; submissions: number; updatedAt: number; name: string | null; rank: number }>();
-            const rows = results.slice(0, limit).map((r) => ({ rank: r.rank, playerId: r.playerId, name: r.name ?? null, score: r.score, submissions: r.submissions, updatedAt: r.updatedAt }));
-            return results.length > limit ? { rows, next: String(offset + limit) } : { rows };
-          },
-          rowActions: [
-            {
-              name: "remove",
-              title: "Remove entry",
-              description: "Delete this player's score for the current period.",
-              danger: true,
-              async run(input: { id?: unknown }, ctx) {
-                const player = String(input?.id ?? "");
-                const period = d.period();
-                const n = await changes(await d.db(ctx.env), "DELETE FROM leaderboard_scores WHERE board = ? AND period = ? AND player_id = ?", d.id, period, player);
-                return n ? `Removed "${player}" from ${d.id} (${period}).` : `"${player}" has no entry in ${d.id} (${period}); nothing to do.`;
-              },
-            },
-          ],
-        },
-      ],
+      lists,
       actions: [
         {
           name: "reset",

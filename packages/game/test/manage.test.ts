@@ -288,3 +288,43 @@ test("leaderboard action reset clears a period (current by default) and validate
   expect(await lb.top(10)).toEqual([]);
   expect(String(await reset.run({}, local))).toContain("Removed 0");
 });
+
+test("leaderboard previous-period list: entries of the period before the current one, in rank order", async () => {
+  const { lb, section, clock } = lbSetup();
+  await lb.submit("a", 50);
+  clock.advance(1);
+  await lb.submit("b", 70);
+  clock.advance(7 * 86_400_000); // next week: W43
+  await lb.submit("c", 10);
+  const st = await section.status!(local);
+  expect(st.stats!.find((x) => x.label === "Current period")!.value).toBe("2026-W43");
+  expect(st.stats!.find((x) => x.label === "Previous period")!.value).toBe("2026-W42");
+  const prev = section.lists!.find((l) => l.name === "previous")!;
+  expect(prev.title).toContain("previous");
+  expect(prev.idKey).toBe("playerId");
+  const p1 = await prev.list({ limit: 1 }, local);
+  expect(p1.rows.map((r) => [r.rank, r.playerId, r.score])).toEqual([[1, "b", 70]]);
+  expect((await prev.list({ limit: 1, cursor: p1.next }, local)).rows.map((r) => r.playerId)).toEqual(["a"]);
+  expect((await prev.list({ limit: 10, search: "a" }, local)).rows.map((r) => r.playerId)).toEqual(["a"]);
+  const current = section.lists!.find((l) => l.name === "entries")!;
+  expect((await current.list({ limit: 10 }, local)).rows.map((r) => r.playerId)).toEqual(["c"]);
+});
+
+test("leaderboard previous-period remove deletes from the previous period only", async () => {
+  const { lb, section, clock } = lbSetup();
+  await lb.submit("a", 50);
+  clock.advance(7 * 86_400_000);
+  await lb.submit("a", 20);
+  const remove = action(section.lists!.find((l) => l.name === "previous")!.rowActions, "remove");
+  expect(remove.danger).toBe(true);
+  expect(String(await remove.run({ id: "a" }, local))).toContain("2026-W42");
+  expect(await lb.top(10, { period: "2026-W42" })).toEqual([]);
+  expect(await lb.rank("a")).toMatchObject({ score: 20 });
+  expect(String(await remove.run({ id: "a" }, local))).toContain("no entry");
+});
+
+test("a leaderboard that never resets has no previous-period list", () => {
+  const lb = leaderboard({ id: "all-time", sort: "desc", resets: "never", database: sqlite(":memory:"), clock: new FakeClock(0) });
+  const [section] = lb.manage() as ManageSection[];
+  expect(section.lists!.map((l) => l.name)).toEqual(["entries"]);
+});

@@ -358,6 +358,42 @@ export class Engine {
     return { ...run, ...patch };
   }
 
+  /**
+   * Wake a sleeping or waiting run now instead of at its wake-up time.
+   *
+   * - `step.sleep` / `step.sleepUntil`: the sleep ends now and the run continues.
+   * - `step.waitForEvent`: the wait times out now, so it returns `null` exactly as on a timeout
+   *   (with or without a `timeout` option). An event that arrives before the run resumes still
+   *   wins and is returned instead.
+   * - `step.waitForApproval` is refused (409): decide the approval instead.
+   *
+   * Durable on every store: the step's journaled wake-up time is moved to now and the run gets a
+   * new resume token, so the original wake-up message is a no-op when it fires. Idempotent: a run
+   * that is not sleeping or waiting (e.g. already woken) is left alone and `woke` is false.
+   */
+  async wakeNow(id: string, env: Env): Promise<{ runId: string; woke: boolean; status: RunStatus }> {
+    const store = this.store(env);
+    const run = await store.getRun(id);
+    if (!run) throw workflowErrors.runNotFound(id);
+    if (run.status !== "sleeping" && run.status !== "waiting") return { runId: id, woke: false, status: run.status };
+    const parked = (await store.getSteps(id)).filter((s) => s.status === run.status);
+    if (parked.some((s) => s.kind === "approval")) {
+      throw errors.conflict(`Run ${id} waits for an approval`, "Approve or reject it (POST /workflows/approvals/:runId/:step, or decide() on the plugin) instead of waking it.");
+    }
+    if (parked.length === 0) return { runId: id, woke: false, status: run.status };
+    const now = this.now();
+    const token = newToken();
+    // The new token makes the pending wake-up message stale; the lease check keeps a running
+    // invocation in charge.
+    if (!(await store.casRun(id, { token: run.token, leaseFreeAt: now }, { status: "running", token, wakeAt: null, updatedAt: now }))) {
+      return { runId: id, woke: false, status: (await store.getRun(id))?.status ?? run.status };
+    }
+    // Only our message can resume the run now, so the journal is ours to change until we send it.
+    for (const s of parked) await store.saveStep({ ...s, wakeAt: now, updatedAt: now });
+    await this.schedule(id, token, 0, env);
+    return { runId: id, woke: true, status: "running" };
+  }
+
   // -------------------------------------------------------------------------------------------
   // resume: claim, replay, persist the outcome
 

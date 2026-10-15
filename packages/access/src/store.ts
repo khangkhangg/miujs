@@ -93,13 +93,14 @@ export interface AccessStore {
   /** Removes unused invites for an email in an org (a new invite replaces older ones). */
   revokePendingInvites(orgId: string, email: string): Promise<number>;
 
-  // For operators (access().manage()).
+  // Optional, for operators (access().manage()). A store without them still works; the admin
+  // then omits the counts and the lists it cannot fill.
   /** Counts for a status page: orgs, memberships and unexpired unused invites. */
-  counts(now?: number): Promise<{ orgs: number; members: number; pendingInvites: number }>;
+  counts?(now?: number): Promise<{ orgs: number; members: number; pendingInvites: number }>;
   /** Orgs by id, with member counts. `search` is a case-insensitive substring of the name. */
-  pageOrgs(q: { cursor?: string; limit: number; search?: string }): Promise<{ orgs: (Org & { members: number })[]; next?: string }>;
+  pageOrgs?(q: { cursor?: string; limit: number; search?: string }): Promise<{ orgs: (Org & { members: number })[]; next?: string }>;
   /** Memberships across orgs, by (org id, user id). `search` matches email or user id (substring), or an exact org id. */
-  pageMembers(q: { cursor?: string; limit: number; search?: string; role?: string; orgId?: string }): Promise<{ members: (Member & { orgId: string; orgName: string })[]; next?: string }>;
+  pageMembers?(q: { cursor?: string; limit: number; search?: string; role?: string; orgId?: string }): Promise<{ members: (Member & { orgId: string; orgName: string })[]; next?: string }>;
 }
 
 const MAX_PAGE = 100;
@@ -107,7 +108,10 @@ const pageSize = (n: number) => Math.max(1, Math.min(MAX_PAGE, Math.floor(Number
 /** `%needle%` for LIKE … ESCAPE '!', with the needle's own wildcards made literal. */
 const likeContains = (s: string) => `%${s.replace(/[!%_]/g, (c) => `!${c}`)}%`;
 
-const stores = new WeakMap<Database, AccessStore>();
+/** The built-in SQL store: an `AccessStore` with every optional admin method. */
+export type SqlAccessStore = AccessStore & Required<Pick<AccessStore, "counts" | "pageOrgs" | "pageMembers">>;
+
+const stores = new WeakMap<Database, SqlAccessStore>();
 
 const orgRow = (r: any): Org => ({ id: r.id, name: r.name, createdBy: r.created_by, createdAt: r.created_at });
 const inviteRow = (r: any): Invite => ({
@@ -124,13 +128,13 @@ const inviteRow = (r: any): Invite => ({
 });
 
 /** Orgs, memberships and invites on a D1-compatible database. One instance per database. */
-export function accessStore(database: Database): AccessStore {
+export function accessStore(database: Database): SqlAccessStore {
   const cached = stores.get(database);
   if (cached) return cached;
   const ready = async () => void (await migrateOnce(database, accessMigrations));
   const q = (sql: string, ...values: unknown[]) => database.prepare(sql).bind(...values);
 
-  const store: AccessStore = {
+  const store: SqlAccessStore = {
     database,
     ready,
     async createOrg({ name, ownerId, ownerEmail = null, ownerRole = "owner", id = crypto.randomUUID() }) {

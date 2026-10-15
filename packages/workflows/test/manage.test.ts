@@ -2,7 +2,8 @@
 // or emitting an event by hand, and disabling workflows at run time.
 import { describe, expect, test } from "bun:test";
 import { t, validate, type Context, type ManageAction, type ManageList, type ManageSection } from "miujs";
-import { cron, defineWorkflow, manual, NonRetryableError, on, webhook } from "../src/index.ts";
+import { sqlite } from "@miujs/db";
+import { cron, dbRunStore, defineWorkflow, manual, NonRetryableError, on, webhook, type WorkflowsOptions } from "../src/index.ts";
 import { setup, T0 } from "./helpers.ts";
 
 const ctx = (user?: { id: string }) => ({ env: {}, user }) as unknown as Context;
@@ -213,4 +214,136 @@ describe("workflows manage: settings (disable workflows)", () => {
     expect((await wf.start("greet", { name: "y" })).status).toBe("queued");
     wf.stop();
   });
+});
+
+describe("workflows manage: wake a run now", () => {
+  const DAY = 86_400_000;
+  const stores: [string, () => Partial<WorkflowsOptions>][] = [
+    ["memory store", () => ({})],
+    ["db store (sqlite)", () => ({ store: dbRunStore(sqlite()) })],
+  ];
+  for (const [label, over] of stores) {
+    describe(label, () => {
+      test("a sleeping run continues now; the old wake-up message is a no-op", async () => {
+        const after: number[] = [];
+        const nap = defineWorkflow("nap", {
+          trigger: manual(),
+          run: async ({ step }) => {
+            await step.sleep("long-nap", "1d");
+            after.push(await step.now("woke"));
+            return "rested";
+          },
+        });
+        const s = setup([nap], over());
+        await s.ready();
+        const m = section(s.wf);
+        const wake = action(list(m, "runs").rowActions, "wakeNow");
+        expect(wake.danger).toBeFalsy();
+        expect(validate(wake.input!, { id: "x" }).ok).toBe(true);
+        const { id } = await s.wf.start("nap", {});
+        await s.settle();
+        expect((await s.wf.getRun(id)).status).toBe("sleeping");
+        expect(String(await wake.run({ id }, ctx()))).toMatch(/woke/i);
+        await s.settle(); // no clock movement
+        const run = await s.wf.getRun(id);
+        expect(run).toMatchObject({ status: "completed", output: "rested" });
+        expect(run.steps.find((x) => x.name === "long-nap")).toMatchObject({ status: "completed", wakeAt: null });
+        expect(after).toEqual([T0]);
+        await s.mq.drain(); // the original message fires a day later
+        expect(after).toEqual([T0]);
+        s.wf.stop();
+      });
+
+      test("waking twice wakes once (idempotent); a finished run is left alone", async () => {
+        let runs = 0;
+        const nap = defineWorkflow("nap2", {
+          trigger: manual(),
+          run: async ({ step }) => {
+            await step.sleep("zz", "2h");
+            await step.run("after", () => ++runs);
+          },
+        });
+        const s = setup([nap], over());
+        await s.ready();
+        const wake = action(list(section(s.wf), "runs").rowActions, "wakeNow");
+        const { id } = await s.wf.start("nap2", {});
+        await s.settle();
+        expect(String(await wake.run({ id }, ctx()))).toMatch(/woke/i);
+        expect(String(await wake.run({ id }, ctx()))).toMatch(/nothing to do/i);
+        await s.settle();
+        expect(String(await wake.run({ id }, ctx()))).toMatch(/completed; nothing to do/i);
+        await s.mq.drain();
+        expect(runs).toBe(1);
+        expect((await s.wf.getRun(id)).status).toBe("completed");
+        await expect(attempt(() => wake.run({ id: "missing" }, ctx()))).rejects.toMatchObject({ code: "MIU_E_WORKFLOW_RUN_NOT_FOUND" });
+        s.wf.stop();
+      });
+
+      test("a run waiting for an event resumes with timeout semantics (null); a later event finds no waiter", async () => {
+        const w = defineWorkflow("w", {
+          trigger: manual(),
+          run: async ({ step }) => {
+            const a = await step.waitForEvent("go", { event: "go.now", timeout: "1d" });
+            const b = await step.waitForEvent("forever", { event: "never.comes" });
+            return { a, b };
+          },
+        });
+        const s = setup([w], over());
+        await s.ready();
+        const wake = action(list(section(s.wf), "runs").rowActions, "wakeNow");
+        const { id } = await s.wf.start("w", {});
+        await s.settle();
+        expect((await s.wf.getRun(id)).status).toBe("waiting");
+        expect(String(await wake.run({ id }, ctx()))).toMatch(/woke/i);
+        await s.settle();
+        let run = await s.wf.getRun(id);
+        expect(run.steps.find((x) => x.name === "go")).toMatchObject({ status: "completed", output: null });
+        expect((await s.wf.emit("go.now", {})).resumed).toEqual([]);
+        // A wait without a timeout can be woken too.
+        expect(run.status).toBe("waiting");
+        expect(String(await wake.run({ id }, ctx()))).toMatch(/woke/i);
+        await s.settle();
+        run = await s.wf.getRun(id);
+        expect(run).toMatchObject({ status: "completed", output: { a: null, b: null } });
+        s.clock.advance(2 * DAY);
+        await s.mq.drain();
+        expect((await s.wf.getRun(id)).status).toBe("completed");
+        s.wf.stop();
+      });
+
+      test("an event that arrives before the woken run resumes still wins", async () => {
+        const w = defineWorkflow("race", {
+          trigger: manual(),
+          run: async ({ step }) => await step.waitForEvent("go", { event: "go.now" }),
+        });
+        const s = setup([w], over());
+        await s.ready();
+        const wake = action(list(section(s.wf), "runs").rowActions, "wakeNow");
+        const { id } = await s.wf.start("race", {});
+        await s.settle();
+        s.mq.pause!(); // hold the resume message
+        expect(String(await wake.run({ id }, ctx()))).toMatch(/woke/i);
+        await s.wf.emit("go.now", { n: 1 });
+        s.mq.resume!();
+        await s.settle();
+        expect((await s.wf.getRun(id)).output).toMatchObject({ name: "go.now", data: { n: 1 } });
+        s.wf.stop();
+      });
+
+      test("an approval wait is not woken: decide it instead", async () => {
+        const w = defineWorkflow("appr", {
+          trigger: manual(),
+          run: async ({ step }) => await step.waitForApproval("ok", { approvers: { role: ["manager"] } }),
+        });
+        const s = setup([w], over());
+        await s.ready();
+        const wake = action(list(section(s.wf), "runs").rowActions, "wakeNow");
+        const { id } = await s.wf.start("appr", {});
+        await s.settle();
+        await expect(attempt(() => wake.run({ id }, ctx()))).rejects.toMatchObject({ status: 409, fix: expect.stringContaining("approv") });
+        expect((await s.wf.getRun(id)).status).toBe("waiting");
+        s.wf.stop();
+      });
+    });
+  }
 });

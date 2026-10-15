@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { miu, route, validate, type Context, type ManageAction, type ManageList } from "miujs";
 import { sqlite } from "@miujs/db";
-import { access, accessStore, defineRoles, policy } from "../src/index.ts";
+import { access, accessStore, defineRoles, policy, type AccessOptions, type AccessStore } from "../src/index.ts";
 import { USERS, testAuth } from "./helpers.ts";
 
 const roles = defineRoles({
@@ -146,5 +146,101 @@ describe("access manage()", () => {
     expect(validate(a.input!, { permission: "not a permission!" }).ok).toBe(false);
     await expect(Promise.resolve().then(() => run(s, a, { permission: "contacts:read" }))).rejects.toMatchObject({ code: "MIU_E_BAD_REQUEST" });
     await expect(Promise.resolve().then(() => run(s, a, { permission: "contacts:read", role: "ghost" }))).rejects.toMatchObject({ code: "MIU_E_ACCESS_ROLE_UNKNOWN" });
+  });
+});
+
+// A store written before the admin existed: no counts(), pageOrgs() or pageMembers().
+function minimalStore(database: ReturnType<typeof sqlite>): AccessStore {
+  const b = accessStore(database);
+  return {
+    database: b.database,
+    ready: b.ready,
+    createOrg: b.createOrg,
+    getOrg: b.getOrg,
+    getMembership: b.getMembership,
+    listOrgs: b.listOrgs,
+    listMembers: b.listMembers,
+    addMember: b.addMember,
+    setRole: b.setRole,
+    removeMember: b.removeMember,
+    createInvite: b.createInvite,
+    findInviteByHash: b.findInviteByHash,
+    consumeInvite: b.consumeInvite,
+    revokePendingInvites: b.revokePendingInvites,
+  };
+}
+
+async function setupCustom(store: (database: ReturnType<typeof sqlite>) => AccessOptions["store"]) {
+  const database = sqlite();
+  const base = accessStore(database);
+  await base.createOrg({ name: "Acme", ownerId: "alice", id: "org-a" });
+  await base.addMember("org-a", "carol", "member");
+  const plugin = access({ roles, database, store: store(database) });
+  let grabbed: Context | undefined;
+  const app = miu({ logLevel: "silent", plugins: [testAuth(USERS), plugin], routes: [route.get("/__ctx", { handler: (c) => void (grabbed = c as unknown as Context) })] });
+  await app.fetch(new Request("http://localhost/__ctx"));
+  const section = plugin.manage!().find((x) => x.id === "access")!;
+  return { app, base, section, ctx: grabbed! };
+}
+
+describe("access manage() with a custom store lacking the admin methods", () => {
+  test("the custom store is used by the plugin and its routes", async () => {
+    const calls: string[] = [];
+    const { app } = await setupCustom((db) => {
+      const st = minimalStore(db);
+      return { ...st, listOrgs: (u: string) => (calls.push(u), st.listOrgs(u)) };
+    });
+    const res = await app.fetch(new Request("http://localhost/orgs", { headers: { "x-user": "alice" } }));
+    expect(res.status).toBe(200);
+    expect(calls).toEqual(["alice"]);
+  });
+
+  test("status keeps roles and policies, omits counts and says why", async () => {
+    const s = await setupCustom((db) => minimalStore(db));
+    const st = await s.section.status!(s.ctx);
+    const labels = st.stats!.map((x) => x.label);
+    expect(labels).toContain("Roles");
+    expect(labels).toContain("Policies");
+    expect(labels).not.toContain("Organizations");
+    expect(labels).not.toContain("Memberships");
+    expect(labels).not.toContain("Pending invites");
+    const note = st.stats!.find((x) => x.label === "Store")!;
+    expect(note.hint).toContain("counts()");
+    expect(st.tables!.find((x) => x.title === "Roles")!.rows).toHaveLength(3);
+  });
+
+  test("lists are omitted; change role and remove member stay available as actions", async () => {
+    const s = await setupCustom((db) => minimalStore(db));
+    expect(s.section.lists ?? []).toEqual([]);
+    const names = s.section.actions!.map((a) => a.name);
+    expect(names).toEqual(["checkPermission", "changeRole", "removeMember"]);
+    for (const n of names) expect(n).toMatch(/^[a-z][a-zA-Z0-9_]*$/);
+    const change = s.section.actions!.find((a) => a.name === "changeRole")!;
+    expect(change.danger).toBe(true);
+    const v = validate(change.input!, { orgId: "org-a", userId: "carol", role: "admin" });
+    expect(v.ok).toBe(true);
+    expect(String(await change.run((v as { value: unknown }).value, s.ctx))).toContain("admin");
+    expect(await s.base.getMembership("org-a", "carol")).toEqual({ role: "admin" });
+    const remove = s.section.actions!.find((a) => a.name === "removeMember")!;
+    expect(remove.danger).toBe(true);
+    const r = validate(remove.input!, { orgId: "org-a", userId: "carol" });
+    expect(String(await remove.run((r as { value: unknown }).value, s.ctx))).toContain("Removed");
+    expect(String(await remove.run((r as { value: unknown }).value, s.ctx))).toContain("not a member");
+    await expect(Promise.resolve().then(() => remove.run({ orgId: "org-a", userId: "alice" }, s.ctx))).rejects.toMatchObject({ code: "MIU_E_ACCESS_LAST_OWNER" });
+  });
+
+  test("a store with only some admin methods gets only those views", async () => {
+    const s = await setupCustom((db) => ({ ...minimalStore(db), pageOrgs: accessStore(db).pageOrgs }));
+    expect(s.section.lists!.map((l) => l.name)).toEqual(["orgs"]);
+    expect((await s.section.lists![0].list({ limit: 10 }, s.ctx)).rows.map((r) => r.id)).toEqual(["org-a"]);
+    expect(s.section.actions!.map((a) => a.name)).toEqual(["checkPermission", "changeRole", "removeMember"]);
+  });
+
+  test("a per-request store: lists stay, but say how to enable them when the store lacks the method", async () => {
+    const s = await setupCustom((db) => () => minimalStore(db));
+    const members = s.section.lists!.find((l) => l.name === "members")!;
+    await expect(Promise.resolve().then(() => members.list({ limit: 10 }, s.ctx))).rejects.toMatchObject({ code: "MIU_E_BAD_REQUEST", fix: expect.stringContaining("pageMembers") });
+    const st = await s.section.status!(s.ctx);
+    expect(st.stats!.map((x) => x.label)).not.toContain("Organizations");
   });
 });

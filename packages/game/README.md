@@ -253,8 +253,9 @@ without a join code (`createRoom(type, { code: false })`). To kick a player, use
 
 **Leaderboard** section (one per board):
 
-- **Status**: current period, entries this period, top score.
+- **Status**: current period, entries this period, top score, and the previous period's key (boards that reset).
 - **List** `entries`: current period in rank order (ties share a rank), search by player id. Row action `remove` (danger) deletes one entry.
+- **List** `previous` (boards that reset daily, weekly or monthly): the period before the current one (`2026-W41` during `2026-W42`), same columns, search and paging. Its `remove` (danger) deletes the entry from that previous period only. Both periods are computed when the list is read, so they roll over without a restart. Older periods: `GET /leaderboards/:id/top?period=...`, or the `reset` action.
 - **Action** `reset` (danger, `{ period? }`): deletes every score of a period, the current one by default.
 
 ## Errors

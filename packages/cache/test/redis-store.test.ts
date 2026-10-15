@@ -195,3 +195,78 @@ describe("bunRedis", () => {
     }
   });
 });
+
+describe("redisStore key listing (SCAN)", () => {
+  test("redisFromCommand sends SCAN cursor MATCH COUNT and returns [cursor, keys] as strings", async () => {
+    const sent: string[][] = [];
+    const r = redisFromCommand(async (cmd, args) => {
+      sent.push([cmd, ...args]);
+      return [17, ["a", "b"]];
+    });
+    expect(await r.scan!("0", { match: "p:*", count: 50 })).toEqual(["17", ["a", "b"]]);
+    expect(await r.scan!("17")).toEqual(["17", ["a", "b"]]);
+    expect(sent).toEqual([["SCAN", "0", "MATCH", "p:*", "COUNT", "50"], ["SCAN", "17"]]);
+  });
+
+  test("scan pages through this store's keys only, prefix stripped, each key exactly once", async () => {
+    const r = fakeRedis();
+    const store = redisStore(r.client, { prefix: "app:" });
+    await r.client.set("other:x", "1"); // another app's key in the same Redis
+    for (let i = 0; i < 25; i++) await store.set(`k${String(i).padStart(2, "0")}`, `"${i}"`);
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const page = await store.scan!({ limit: 4, cursor });
+      expect(page.keys.length).toBeLessThanOrEqual(4);
+      for (const k of page.keys) expect(k).toEqual({ key: k.key, bytes: null, expiresAt: null });
+      seen.push(...page.keys.map((k) => k.key));
+      cursor = page.next;
+    } while (cursor && ++pages < 100);
+    expect(seen.sort()).toEqual(Array.from({ length: 25 }, (_, i) => `k${String(i).padStart(2, "0")}`));
+    expect(r.log.some(([cmd, , m, match]) => cmd === "SCAN" && m === "MATCH" && match === "app:*")).toBe(true);
+  });
+
+  test("a prefix filter is matched literally (glob characters escaped)", async () => {
+    const r = fakeRedis();
+    const store = redisStore(r.client);
+    for (const k of ["a*b:1", "axb:1", "a?c", "abc", "a[b]", "ab"]) await store.set(k, "1");
+    const keys = async (prefix: string) => (await store.scan!({ prefix, limit: 100 })).keys.map((k) => k.key).sort();
+    expect(await keys("a*")).toEqual(["a*b:1"]);
+    expect(await keys("a?")).toEqual(["a?c"]);
+    expect(await keys("a[")).toEqual(["a[b]"]);
+    expect(await keys("ab")).toEqual(["ab", "abc"]);
+  });
+
+  test("deleting the listed keys while paging (a purge) skips none of the rest", async () => {
+    const r = fakeRedis();
+    const store = redisStore(r.client);
+    for (let i = 0; i < 300; i++) await store.set(`p:${i}`, "1");
+    await store.set("q:keep", "1");
+    let deleted = 0;
+    let cursor: string | undefined;
+    do {
+      const page = await store.scan!({ prefix: "p:", limit: 7, cursor });
+      for (const k of page.keys) await store.delete(k.key);
+      deleted += page.keys.length;
+      cursor = page.next;
+    } while (cursor);
+    expect(deleted).toBe(300);
+    expect(r.keys()).toEqual(["miu:cache:q:keep"]);
+  });
+
+  test("an unknown cursor is a 400 with a fix", async () => {
+    const store = redisStore(fakeRedis().client);
+    const err = await store.scan!({ limit: 5, cursor: "nonsense" }).catch((e) => e);
+    expect(err.code).toBe("MIU_E_BAD_REQUEST");
+    expect(err.fix).toBeTruthy();
+  });
+
+  test("a client without scan still works as a cache, but cannot list", async () => {
+    const { scan: _scan, ...client } = fakeRedis().client;
+    const store = redisStore(client);
+    await store.set("a", "1");
+    expect(await store.get("a")).toBe("1");
+    expect(store.scan).toBeUndefined();
+  });
+});

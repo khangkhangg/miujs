@@ -62,3 +62,66 @@ describe("redisQueue specifics", () => {
     expect(redisQueue(client).inspect!()).toMatchObject({ prefix: "miu:queue:", client: { url: "redis://u:***@h" }, concurrency: 1, visibilityTimeout: 30 });
   });
 });
+
+describe("redisQueue dead letters by id", () => {
+  const boom = defineJob("boom", {
+    input: t.object({ n: t.integer() }),
+    retries: 0,
+    run: () => {
+      throw new Error("down");
+    },
+  });
+  const letter = (id: string) => JSON.stringify({ id, job: "boom", input: { n: 0 }, attempts: 1, error: "old", failedAt: 1 });
+
+  async function deadOne() {
+    const r = fakeRedis();
+    const rq = redisQueue(r.client);
+    const q = queue({ jobs: [boom], adapter: rq });
+    const { id } = await q.dispatch(boom, { n: 1 });
+    await rq.drain();
+    return { r, rq, q, id };
+  }
+
+  test("retry and delete find a letter beyond the newest 10,000 through its index, without scanning", async () => {
+    const { r, rq, id } = await deadOne();
+    for (let i = 0; i < 10_050; i++) await r.client.lpush("miu:queue:dead", letter(`filler-${i}`));
+    r.log.length = 0;
+    expect(await rq.retryDead!(id, {})).toBe(true);
+    expect(r.log.filter(([cmd]) => cmd === "LRANGE")).toEqual([]);
+    expect(await r.client.get(`miu:queue:deadid:${id}`)).toBeNull();
+    await rq.drain(); // fails again: a new letter with a new index entry
+    expect(await r.client.get(`miu:queue:deadid:${id}`)).not.toBeNull();
+    r.log.length = 0;
+    expect(await rq.deleteDead!(id, {})).toBe(true);
+    expect(r.log.filter(([cmd]) => cmd === "LRANGE")).toEqual([]);
+    expect(await rq.deleteDead!(id, {})).toBe(false); // idempotent
+    expect(await r.client.llen("miu:queue:dead")).toBe(10_050);
+    expect(await r.client.get(`miu:queue:deadid:${id}`)).toBeNull();
+  });
+
+  test("letters written before the index (no deadid key) are still found by scanning", async () => {
+    const { r, rq } = await deadOne();
+    await r.client.lpush("miu:queue:dead", letter("legacy-1"));
+    await r.client.lpush("miu:queue:dead", letter("filler"));
+    expect(await rq.deleteDead!("legacy-1", {})).toBe(true);
+    expect((await rq.listDeadLetters()).map((d) => d.id)).not.toContain("legacy-1");
+    expect(await rq.deleteDead!("legacy-1", {})).toBe(false);
+  });
+
+  test("a stale index entry (letter already gone) is cleaned up and reports not found", async () => {
+    const { r, rq, id } = await deadOne();
+    await r.client.del("miu:queue:dead");
+    expect(await rq.deleteDead!(id, {})).toBe(false);
+    expect(await r.client.get(`miu:queue:deadid:${id}`)).toBeNull();
+  });
+
+  test("dead-letter index keys live under the prefix", async () => {
+    const r = fakeRedis();
+    const rq = redisQueue(r.client, { prefix: "app:q:" });
+    const q = queue({ jobs: [boom], adapter: rq });
+    const { id } = await q.dispatch(boom, { n: 1 });
+    await rq.drain();
+    expect(r.keys()).toContain(`app:q:deadid:${id}`);
+    expect(r.keys().every((k) => k.startsWith("app:q:"))).toBe(true);
+  });
+});

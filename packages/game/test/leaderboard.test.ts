@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { miu } from "miujs";
 import { sqlite } from "@miujs/db";
 import { FakeClock } from "@miujs/realtime";
-import { leaderboard, periodKey, signScoreProof, type LeaderboardOptions } from "../src/leaderboard.ts";
+import { leaderboard, periodKey, previousPeriodKey, signScoreProof, type LeaderboardOptions } from "../src/leaderboard.ts";
 import { GameStore } from "../src/store.ts";
 import { as, testAuth } from "./helpers.ts";
 
@@ -152,4 +152,23 @@ test("bad options fail fast", () => {
   expect(() => leaderboard({ id: "x", sort: "up" as any, resets: "never" })).toThrow(/sort/);
   expect(() => leaderboard({ id: "x", sort: "desc", resets: "hourly" as any })).toThrow(/resets/);
   expect(() => leaderboard({ id: "x", sort: "desc", resets: "daily", timezone: "Nowhere/Land" })).toThrow(/time zone/);
+});
+
+test("previousPeriodKey steps back one period, across month, year and ISO-year boundaries", () => {
+  expect(previousPeriodKey("daily", "2026-10-15")).toBe("2026-10-14");
+  expect(previousPeriodKey("daily", "2026-03-01")).toBe("2026-02-28");
+  expect(previousPeriodKey("daily", "2024-03-01")).toBe("2024-02-29");
+  expect(previousPeriodKey("daily", "2026-01-01")).toBe("2025-12-31");
+  expect(previousPeriodKey("monthly", "2026-10")).toBe("2026-09");
+  expect(previousPeriodKey("monthly", "2026-01")).toBe("2025-12");
+  expect(previousPeriodKey("weekly", "2026-W42")).toBe("2026-W41");
+  expect(previousPeriodKey("weekly", "2026-W10")).toBe("2026-W09");
+  expect(previousPeriodKey("weekly", "2021-W01")).toBe("2020-W53"); // 2020 had 53 ISO weeks
+  expect(previousPeriodKey("weekly", "2022-W01")).toBe("2021-W52");
+  expect(previousPeriodKey("never", "all")).toBeNull();
+  // Agrees with periodKey one period earlier, for every day of two years.
+  for (let at = Date.UTC(2025, 0, 1, 12); at < Date.UTC(2027, 0, 1); at += 86_400_000) {
+    expect(previousPeriodKey("daily", periodKey("daily", at))).toBe(periodKey("daily", at - 86_400_000));
+    expect(previousPeriodKey("weekly", periodKey("weekly", at))).toBe(periodKey("weekly", at - 7 * 86_400_000));
+  }
 });

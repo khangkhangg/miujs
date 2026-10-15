@@ -160,6 +160,7 @@ console.log(await store.getMembership(org.id, "carol")); // { role: "member" }
 | `roles` | `Roles` | required | Roles from `defineRoles()`. Must include `ownerRole`. |
 | `policies` | `Policy[]` | `[]` | Row-level rules from `policy()`. |
 | `database` | `DatabaseSource` | `ctx.db` from `db()` in `@miujs/db` | Where orgs, memberships and invites live. |
+| `store` | `AccessStore \| (ctx) => AccessStore` | `accessStore(database)` | Your own store for orgs, memberships and invites. `counts`, `pageOrgs` and `pageMembers` are optional (see [In @miujs/admin](#in-miujsadmin)). Its `database` must still hold `access_memberships`: inviting checks for an existing member there. |
 | `orgFrom` | `"header" \| "path" \| "session" \| (ctx) => string \| null \| undefined` | `"header"` (`x-org-id`) | Where the active org id comes from when the route has no `:orgId`. |
 | `ownerRole` | `string` | `"owner"` | Role that creates orgs and cannot be left empty. |
 | `routes` | `boolean` | `true` | Serve the org, member and invite routes. |
@@ -180,6 +181,8 @@ console.log(await store.getMembership(org.id, "carol")); // { role: "member" }
 - **Check a permission**: would this user (by their role in an org), or this role, be granted `resource:action`, and by which pattern. Record-level policies are not evaluated.
 
 Invite token hashes are never shown.
+
+With a custom `store` that lacks the optional admin methods, the section degrades instead of failing: without `counts()` the status leaves out the organization, membership and invite counts and shows a **Store** stat whose hint names the missing methods; without `pageOrgs()` the organizations list is left out; without `pageMembers()` the members list is left out and **Change role** / **Remove from organization** become section actions taking `{ orgId, userId }` (same rules: danger, last owner kept). A per-request store (`store: (ctx) => ...`) keeps both lists, which answer 400 with a fix when that request's store lacks the method.
 
 ## Errors
 

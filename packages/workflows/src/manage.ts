@@ -1,6 +1,6 @@
 // workflows().manage(): runtime operations for @miujs/admin. The admin's workflow builder pages
-// edit definitions; this section watches and drives runs: counts, the runs list with cancel and
-// retry, starting a workflow or emitting an event by hand, and disabling workflows.
+// edit definitions; this section watches and drives runs: counts, the runs list with cancel, retry
+// and wake now, starting a workflow or emitting an event by hand, and disabling workflows.
 import { errors, t, type Context, type ManageAction, type ManageSection, type ManageStat, type ManageValue } from "miujs";
 import { previewJson, type QueueAdapter } from "@miujs/queue";
 import type { Trigger, WorkflowDef } from "./define.ts";
@@ -163,6 +163,17 @@ export function workflowsManage(d: WorkflowsManageDeps): ManageSection[] {
     },
   };
 
+  const wakeNow: ManageAction<{ id: string }> = {
+    name: "wakeNow",
+    title: "Wake now",
+    description: "Continue a sleeping run now, or time out its waitForEvent now (the step returns null, as on a timeout). Approvals are decided, not woken.",
+    input: idInput,
+    async run(input, ctx) {
+      const r = await engine.wakeNow(input.id, ctx.env);
+      return r.woke ? `Woke run ${r.runId}.` : `Run ${r.runId} is ${r.status}; nothing to do.`;
+    },
+  };
+
   const actions: ManageAction[] = [
     {
       name: "start",
@@ -258,7 +269,7 @@ export function workflowsManage(d: WorkflowsManageDeps): ManageSection[] {
             if (cur && last === cur.ts) same += skip;
             return same > MAX_SKIP ? { rows } : { rows, next: `${last}.${same}` };
           },
-          rowActions: [cancel, retry],
+          rowActions: [cancel, retry, wakeNow],
         },
       ],
       settings: {

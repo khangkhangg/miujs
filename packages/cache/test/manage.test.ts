@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { validate } from "miujs";
-import { cache, createCache, kvStore, memoryStore } from "../src/index.ts";
+import { cache, createCache, kvStore, memoryStore, redisStore } from "../src/index.ts";
 import { PURGE_BATCH } from "../src/manage.ts";
 import { fakeKV } from "./fake-kv.ts";
+import { fakeRedis } from "./fake-redis.ts";
 import { actionOf, checkContract, listOf, manageCtx, run, section, stat } from "./manage-helpers.ts";
 
 
@@ -248,4 +249,43 @@ test("purgeAll clears a large memory store in one run", async () => {
   const ctx = await manageCtx(plugin);
   for (let i = 0; i < PURGE_BATCH + 5; i++) await store.set(`k${i}`, "1");
   expect(await run(actionOf(section(plugin, "cache"), "purgeAll"), {}, ctx)).toBe(`Deleted ${PURGE_BATCH + 5} keys.`);
+});
+
+describe("cache manage() on Redis", () => {
+  test("lists keys, purges by prefix and purges everything, leaving other prefixes alone", async () => {
+    const r = fakeRedis();
+    const store = redisStore(r.client, { prefix: "app:" });
+    await r.client.set("other:x", "1");
+    for (const k of ["user:1", "user:2", "post:1"]) await store.set(k, "1");
+    const plugin = cache({ store });
+    const ctx = await manageCtx(plugin);
+    const s = section(plugin, "cache");
+    const rows = (await listOf(s, "keys").list({ limit: 10, search: "user:" }, ctx)).rows;
+    expect(rows.map((x) => x.key).sort()).toEqual(["user:1", "user:2"]);
+    expect(await run(actionOf(s, "purgePrefix"), { prefix: "user:" }, ctx)).toBe('Deleted 2 keys starting with "user:".');
+    expect(r.keys().sort()).toEqual(["app:post:1", "other:x"]);
+    expect(await run(actionOf(s, "purgeAll"), {}, ctx)).toBe("Deleted 1 key.");
+    expect(r.keys()).toEqual(["other:x"]);
+  });
+
+  test("purgePrefix on Redis stops after PURGE_BATCH keys and finishes on the next run", async () => {
+    const r = fakeRedis();
+    const store = redisStore(r.client);
+    for (let i = 0; i < PURGE_BATCH + 5; i++) await store.set(`k${i}`, "1");
+    const plugin = cache({ store });
+    const ctx = await manageCtx(plugin);
+    const purge = actionOf(section(plugin, "cache"), "purgePrefix");
+    expect(await run(purge, { prefix: "k" }, ctx)).toBe(`Deleted ${PURGE_BATCH} keys starting with "k". More remain: run again.`);
+    expect(r.keys().length).toBe(5);
+    expect(await run(purge, { prefix: "k" }, ctx)).toBe('Deleted 5 keys starting with "k".');
+  });
+
+  test("a Redis client without scan: the keys list and purges say they cannot list", async () => {
+    const { scan: _scan, ...client } = fakeRedis().client;
+    const plugin = cache({ store: redisStore(client) });
+    const ctx = await manageCtx(plugin);
+    const s = section(plugin, "cache");
+    await expect(listOf(s, "keys").list({ limit: 10 }, ctx)).rejects.toThrow(/cannot list/);
+    await expect(Promise.resolve().then(() => run(actionOf(s, "purgePrefix"), { prefix: "a" }, ctx))).rejects.toThrow(/cannot list/);
+  });
 });

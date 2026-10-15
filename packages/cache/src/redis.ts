@@ -1,6 +1,6 @@
-import { detectRuntime, MiuError, processEnv } from "miujs";
+import { detectRuntime, errors, MiuError, processEnv } from "miujs";
 import { cacheErrors } from "./errors.ts";
-import type { CacheStore } from "./store.ts";
+import type { CacheKeyInfo, CacheScanQuery, CacheStore } from "./store.ts";
 
 export interface RedisSetOptions {
   /** Expire after this many seconds (SET ... EX). */
@@ -39,6 +39,12 @@ export interface RedisLike {
   lrem(key: string, value: string): Promise<number>;
   lrange(key: string, start: number, stop: number): Promise<string[]>;
   llen(key: string): Promise<number>;
+  /**
+   * One SCAN step: keys matching the glob `match`, about `count` per call. Returns the next
+   * cursor ("0" when done) and the keys (possibly with duplicates). Optional: without it the
+   * cache store cannot list or purge keys by prefix.
+   */
+  scan?(cursor: string, opts?: { match?: string; count?: number }): Promise<[cursor: string, keys: string[]]>;
   close?(): void;
   /** Shown in `miu inspect`. Never secrets. */
   inspect?(): Record<string, unknown>;
@@ -83,6 +89,13 @@ export function redisFromCommand(send: RedisCommand): RedisLike {
     lrem: async (key, value) => int(await send("LREM", [key, "0", value])),
     lrange: async (key, start, stop) => ((await send("LRANGE", [key, String(start), String(stop)])) as string[] | null) ?? [],
     llen: async (key) => int(await send("LLEN", [key])),
+    async scan(cursor, o) {
+      const args = [cursor];
+      if (o?.match !== undefined) args.push("MATCH", o.match);
+      if (o?.count !== undefined) args.push("COUNT", String(o.count));
+      const reply = ((await send("SCAN", args)) as [unknown, unknown] | null) ?? ["0", []];
+      return [String(reply[0] ?? "0"), Array.isArray(reply[1]) ? reply[1].map(String) : []];
+    },
   };
 }
 
@@ -144,6 +157,57 @@ export function bunRedis(url?: string, options?: BunRedisOptions): RedisLike {
 
 // ---------------------------------------------------------------------------------------------
 
+/** Keys Redis looks at per SCAN call (a hint, not a page size). */
+const SCAN_COUNT = 250;
+/** SCAN calls one page makes at most; a sparse match returns a short page with `next`. */
+const SCAN_ROUNDS = 40;
+
+/** Escapes Redis glob characters so `s` matches literally. */
+const globLiteral = (s: string) => s.replace(/[\\*?[\]]/g, (c) => `\\${c}`);
+
+/** A page cursor: `[redis cursor, last key returned from that SCAN batch or null]` as JSON. */
+function parseScanCursor(cursor: string | undefined): [cur: string, after: string | null] {
+  if (cursor !== undefined && cursor !== "") {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(cursor);
+    } catch {}
+    const ok = Array.isArray(parsed) && parsed.length === 2 && typeof parsed[0] === "string" && /^\d+$/.test(parsed[0]) && (parsed[1] === null || typeof parsed[1] === "string");
+    if (!ok) throw errors.badRequest(`Invalid cursor ${JSON.stringify(cursor.slice(0, 80))}`, "Pass the `next` value of the previous page, or no cursor for the first page.");
+    return parsed as [string, string | null];
+  }
+  return ["0", null];
+}
+
+/**
+ * A page of keys via SCAN. A SCAN batch can hold more keys than the page, so the next page
+ * repeats the same SCAN step and takes the keys after the last one returned (each batch is
+ * sorted). Keys are never skipped, even when the caller deletes the listed ones between pages (a
+ * purge), since SCAN returns every key that exists for the whole scan.
+ */
+async function scanKeys(client: RedisLike, prefix: string, q: CacheScanQuery): Promise<{ keys: CacheKeyInfo[]; next?: string }> {
+  let [cur, after] = parseScanCursor(q.cursor);
+  const limit = Math.max(1, Math.floor(q.limit) || 1);
+  const match = `${globLiteral(prefix + (q.prefix ?? ""))}*`;
+  const out: string[] = [];
+  const page = () => ({ keys: out.map((k): CacheKeyInfo => ({ key: k.slice(prefix.length), bytes: null, expiresAt: null })) });
+  for (let round = 0; round < SCAN_ROUNDS; round++) {
+    const [next, found] = await client.scan!(cur, { match, count: SCAN_COUNT });
+    const batch = [...new Set(found)].filter((k) => after === null || k > after).sort();
+    const room = limit - out.length;
+    if (batch.length > room) {
+      out.push(...batch.slice(0, room));
+      return { ...page(), next: JSON.stringify([cur, out[out.length - 1]]) };
+    }
+    out.push(...batch);
+    after = null;
+    if (next === "0") return page();
+    cur = next;
+    if (out.length === limit) break;
+  }
+  return { ...page(), next: JSON.stringify([cur, null]) };
+}
+
 export interface RedisStoreOptions {
   /** Prepended to every key. Default "miu:cache:". */
   prefix?: string;
@@ -179,6 +243,7 @@ export function redisStore(client: RedisLike, opts: RedisStoreOptions = {}): Cac
       call("DEL", key, async () => {
         await client.del(prefix + key);
       }),
+    ...(typeof client.scan === "function" ? { scan: async (q: CacheScanQuery) => (parseScanCursor(q.cursor), call("SCAN", q.prefix ?? "", () => scanKeys(client, prefix, q))) } : {}),
     inspect: () => ({ prefix, ...(client.inspect ? { client: client.inspect() } : {}) }),
   };
 }

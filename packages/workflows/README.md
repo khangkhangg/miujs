@@ -197,11 +197,17 @@ The memory store is bounded so a long-running process does not grow: it keeps th
 With `@miujs/admin`, the plugin shows a **Workflows** section next to the admin's workflow builder (which edits definitions; this section operates runs):
 
 - **Status**: registered and disabled workflows, runs queued, running, sleeping, waiting and failed (each counted up to 200, then shown as `200+`), the store and queue in use, a **Workflows** table (triggers, enabled) and the 5 most recent failures.
-- **Runs** list, newest first, filtered by workflow and status; search finds a run by id. Rows never include the resume token, and inputs hide secret-looking keys. Row actions: `cancel` (danger) and `retry` (failed runs, from the failed step). Both answer with a message instead of failing when there is nothing to do.
+- **Runs** list, newest first, filtered by workflow and status; search finds a run by id. Rows never include the resume token, and inputs hide secret-looking keys. Row actions: `cancel` (danger), `retry` (failed runs, from the failed step) and `wakeNow` (sleeping or waiting runs, see below). They answer with a message instead of failing when there is nothing to do.
 - **Actions**: `start` (start a workflow with JSON input as a manual run by the operator) and `emit` (send an event with optional data and idempotency key).
 - **Settings**: `disabled`, a list of workflow names that start no new runs from any trigger (event, cron, webhook, manual, admin). Runs already started go on; cancel them from the runs list. Starting a disabled workflow fails with `MIU_E_CONFLICT` (409); emit reports it under `skipped`; cron firings are skipped without retries.
 
-There is no "resume now" action for sleeping or waiting runs: they wake on their timer or event (use `emit`).
+`wakeNow` (not marked dangerous) wakes a run now instead of at its timer:
+
+- In `step.sleep` / `step.sleepUntil`: the sleep ends now and the run continues with the next step.
+- In `step.waitForEvent`: the wait times out now, so the step returns `null` exactly as on its `timeout` (also for waits without one). An event that arrives before the run resumes still wins.
+- In `step.waitForApproval`: refused with `MIU_E_CONFLICT` (409); approve or reject it instead.
+
+It works the same on every run store: the step's journaled wake-up time moves to now and the run gets a new resume token, so the original timer message does nothing when it fires. Waking twice wakes once; a run that is no longer sleeping or waiting is left alone ("nothing to do").
 
 ## Errors
 
@@ -221,15 +227,15 @@ See [all error codes](../../docs/errors.md), e.g. [`MIU_E_WORKFLOW_CONFIG`](../.
 
 ## Cloudflare Workers
 
-The default engine resumes runs through Cloudflare Queues (binding `WORKFLOWS_QUEUE`); cron triggers become Worker cron triggers. Store runs in D1 with `dbRunStore(d1("DB"))`. `miu deploy cloudflare` declares the queue and crons:
+The default engine resumes runs through Cloudflare Queues (binding `WORKFLOWS_QUEUE`); cron triggers become Worker cron triggers. Store runs in D1 with `dbRunStore(d1("DB"))`. `miu deploy cloudflare` declares the queue (named after the app, here `crm`) and crons:
 
 ```toml
 [[queues.producers]]
 binding = "WORKFLOWS_QUEUE"
-queue = "workflows-queue"
+queue = "crm-workflows-queue"
 
 [[queues.consumers]]
-queue = "workflows-queue"
+queue = "crm-workflows-queue"
 
 [triggers]
 crons = ["0 9 * * 1"]

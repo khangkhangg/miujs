@@ -98,6 +98,11 @@ describe("cache() plugin", () => {
   test("cloudflare() declares the KV binding when kvStore is configured by name", () => {
     expect(cache({ store: kvStore("MY_KV") }).cloudflare!()).toEqual({ kv: ["MY_KV"] });
     expect(cache({ store: memoryStore() }).cloudflare!()).toEqual({});
-    expect(cache().cloudflare!()).toEqual({});
+  });
+
+  test("cloudflare() declares the default CACHE namespace, so Workers don't fall back to per-isolate memory", () => {
+    // Regression (workerd harness): without it, `miu deploy cloudflare` wrote no KV binding and every
+    // isolate cached in its own memory: a delete on one isolate left stale entries on the others.
+    expect(cache().cloudflare!()).toEqual({ kv: ["CACHE"] });
   });
 });

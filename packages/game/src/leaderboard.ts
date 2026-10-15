@@ -96,12 +96,34 @@ export function periodKey(resets: Resets, at: number, timeZone = "UTC"): string 
   if (resets === "daily") return `${y}-${pad(m)}-${pad(d)}`;
   if (resets === "monthly") return `${y}-${pad(m)}`;
   // ISO 8601 week: the week with the year's first Thursday is week 1; weeks start on Monday.
-  const day = Date.UTC(y, m - 1, d);
+  const [isoYear, week] = isoWeek(Date.UTC(y, m - 1, d));
+  return `${isoYear}-W${pad(week)}`;
+}
+
+/** ISO week number of `day` (UTC midnight ms) and its ISO year. */
+function isoWeek(day: number): [year: number, week: number] {
   const dow = (new Date(day).getUTCDay() + 6) % 7; // Monday = 0
   const thursday = day + (3 - dow) * 86_400_000;
   const isoYear = new Date(thursday).getUTCFullYear();
-  const week = 1 + Math.floor((thursday - Date.UTC(isoYear, 0, 1)) / (7 * 86_400_000));
-  return `${isoYear}-W${pad(week)}`;
+  return [isoYear, 1 + Math.floor((thursday - Date.UTC(isoYear, 0, 1)) / (7 * 86_400_000))];
+}
+
+/**
+ * The period just before `key` (a key from `periodKey`): `2026-10-14` for `2026-10-15`,
+ * `2026-W41` for `2026-W42`, `2026-09` for `2026-10`. Null for `never` (there is only `all`).
+ * Calendar arithmetic on the key itself, so time zones and DST do not matter.
+ */
+export function previousPeriodKey(resets: Resets, key: string): string | null {
+  if (resets === "never") return null;
+  const n = key.split(/-W?/).map(Number);
+  if (resets === "daily") {
+    const d = new Date(Date.UTC(n[0], n[1] - 1, n[2] - 1));
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  }
+  if (resets === "monthly") return n[1] === 1 ? `${n[0] - 1}-12` : `${n[0]}-${pad(n[1] - 1)}`;
+  if (n[1] > 1) return `${n[0]}-W${pad(n[1] - 1)}`;
+  // Week 1 → the last ISO week of the previous year (the week holding 28 December).
+  return `${n[0] - 1}-W${pad(isoWeek(Date.UTC(n[0] - 1, 11, 28))[1])}`;
 }
 
 // ---- score proofs -----------------------------------------------------------------------------
@@ -335,8 +357,8 @@ export function leaderboard(opts: LeaderboardOptions) {
       warnings: opts.maxScore === undefined ? ["no maxScore: any finite score is accepted from rooms"] : [],
     }),
     cloudflare: (): CloudflareNeeds => (isD1Ref(source) ? { d1: [source.binding] } : {}),
-    /** Operator view for @miujs/admin: entries in rank order, remove one, reset a period. */
-    manage: () => leaderboardManage({ id, sort: opts.sort, resets: opts.resets, mode, db: dbFor, period: current }),
+    /** Operator view for @miujs/admin: entries (current and previous period) in rank order, remove one, reset a period. */
+    manage: () => leaderboardManage({ id, sort: opts.sort, resets: opts.resets, mode, db: dbFor, period: current, previousPeriod: () => previousPeriodKey(opts.resets, current()) }),
   });
   return Object.assign(plugin, board);
 }
