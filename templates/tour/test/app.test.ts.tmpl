@@ -1,0 +1,97 @@
+import { afterAll, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp } from "../src/app.ts";
+import { createUser, openData } from "../src/data.ts";
+import { makePanorama } from "../src/panorama.ts";
+import { seedSampleTour } from "../src/sample.ts";
+
+const dataDir = mkdtempSync(join(tmpdir(), "tour-test-"));
+afterAll(() => rmSync(dataDir, { recursive: true, force: true }));
+
+const data = await openData(dataDir);
+// {{#admin}}
+const ADMIN_PASSWORD = "correct horse battery staple";
+const app = await createApp({ dataDir, logs: false, adminEmail: "admin@example.com", adminPassword: ADMIN_PASSWORD }, data);
+// {{/admin}}
+// {{^admin}}
+const app = await createApp({ dataDir, logs: false }, data);
+// {{/admin}}
+
+const cookieOf = (res: Response) => res.headers.get("set-cookie")?.split(";")[0] ?? "";
+const form = (path: string, fields: Record<string, string>) =>
+  app.request(path, { method: "POST", body: new URLSearchParams(fields) });
+
+/** JSON calls to the creator API with a session cookie; `x-requested-with` is the editor's CSRF header. */
+const api = (cookie: string) => (method: string, path: string, body?: unknown) =>
+  app.request(path, {
+    method,
+    headers: { cookie, "x-requested-with": "fetch", ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+test("a creator signs up, builds a two-scene tour, links it and publishes it", async () => {
+  const signup = await form("/signup", { name: "Maya", email: "maya@example.com", password: "s3cret-pass" });
+  expect(signup.status).toBe(303);
+  expect(signup.headers.get("location")).toBe("/editor");
+  const call = api(cookieOf(signup));
+
+  const tour = (await (await call("POST", "/api/tours", { title: "Beach house" })).json()) as { id: string; slug: string };
+  expect(tour.slug).toBe("beach-house");
+
+  // Panoramas must be 2:1 equirectangular images; the editor uploads files, agents send base64.
+  const scene = async (label: string, color: [number, number, number]) => {
+    const png = await makePanorama({ label, color, width: 1024 });
+    const res = await call("POST", `/api/tours/${tour.id}/scenes/import`, { title: label, panoramaBase64: Buffer.from(png).toString("base64") });
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { id: string }).id;
+  };
+  const deck = await scene("Deck", [60, 120, 180]);
+  const living = await scene("Living room", [180, 140, 90]);
+  expect((await call("POST", `/api/scenes/${deck}/hotspots`, { kind: "link", yaw: 45, pitch: -5, targetSceneId: living, title: "Inside" })).status).toBe(201);
+
+  expect((await call("POST", `/api/tours/${tour.id}/publish`)).status).toBe(200);
+  const landing = await (await app.request("/")).text();
+  expect(landing).toContain("Beach house");
+  expect(landing).toContain(`/t/${tour.slug}`);
+  expect((await app.request(`/t/${tour.slug}`)).status).toBe(200);
+});
+
+test("a wrong password is refused and duplicate sign-ups are rejected", async () => {
+  expect((await form("/login", { email: "maya@example.com", password: "nope" })).status).toBe(401);
+  expect((await form("/signup", { name: "Maya", email: "maya@example.com", password: "another-pass" })).status).toBe(422);
+  const ok = await form("/login", { email: "maya@example.com", password: "s3cret-pass" });
+  expect(ok.status).toBe(303);
+});
+
+test("drafts and other people's tours stay private", async () => {
+  const signup = await form("/signup", { name: "Sam", email: "sam@example.com", password: "s3cret-pass" });
+  const call = api(cookieOf(signup));
+  const draft = (await (await call("POST", "/api/tours", { title: "Secret draft" })).json()) as { slug: string };
+  expect(await (await app.request("/")).text()).not.toContain("Secret draft");
+  expect((await app.request(`/t/${draft.slug}`)).status).toBe(404);
+  expect((await app.request("/api/tours")).status).toBe(401);
+});
+
+test("the seed script's sample tour is published with linked scenes", async () => {
+  const owner = await createUser(data, { email: "demo@example.com", name: "Demo", password: "demo-password" });
+  const tour = await seedSampleTour(data, owner.id, { width: 1024 });
+  const bundle = (await (await app.request(`/api/public/tours/${tour.slug}`)).json()) as { scenes: unknown[]; hotspots: unknown[] };
+  expect(bundle.scenes.length).toBe(3);
+  expect(bundle.hotspots.length).toBe(5);
+  expect((await seedSampleTour(data, owner.id)).id).toBe(tour.id); // idempotent
+});
+// {{#admin}}
+
+test("admins get the back-office; creators do not", async () => {
+  const admin = await form("/login", { email: "admin@example.com", password: ADMIN_PASSWORD });
+  expect(admin.status).toBe(303);
+  const list = await app.request("/admin/api/tours", { headers: { cookie: cookieOf(admin) } });
+  expect(list.status).toBe(200);
+  expect(((await list.json()) as { total: number }).total).toBeGreaterThan(0);
+
+  const creator = await form("/login", { email: "maya@example.com", password: "s3cret-pass" });
+  expect((await app.request("/admin/api/tours", { headers: { cookie: cookieOf(creator) } })).status).toBe(403);
+});
+// {{/admin}}

@@ -10,10 +10,10 @@ humans *and* AI agents use. Declare a route with a schema once, and you get:
 - an **OpenAPI 3.1** operation
 - consistent **RFC 9457 problem+json** errors
 
-> Status: **v0.4 — 1.0 candidate.** Core, batteries, Cloudflare, realtime (Bun/Node/Workers), migration kit, CLI,
-> typed client, DevTools debugging, Redis drivers and MCP OAuth are done and tested (641 tests, CI on every push).
-> Next: app kits — a generated admin back-office and a virtual-tour kit ([docs/ROADMAP.md](docs/ROADMAP.md)).
-> Guides: [docs/guide.md](docs/guide.md), [docs/deploy.md](docs/deploy.md), [docs/debugging.md](docs/debugging.md).
+> Status: **v0.5 — app kits.** Core, batteries, Cloudflare, realtime, migration kit, CLI, typed client, DevTools,
+> plus a schema-generated admin back-office and a virtual-tour kit, validated by a reference app with end-to-end,
+> browser and load tests (915 tests). See [docs/ROADMAP.md](docs/ROADMAP.md),
+> [docs/guide.md](docs/guide.md), [docs/deploy.md](docs/deploy.md) and [docs/debugging.md](docs/debugging.md).
 
 ## Quick start
 
@@ -297,6 +297,9 @@ Chain route registrations so the type records them; handlers returning `c.json(.
 - **Redis:** `redisStore(client)` and `redisQueueDriver(client)` work with `Bun.RedisClient`, ioredis or node-redis —
   swap them in for SQLite when you run more than one instance.
 - **Laravel:** `laravelSessionBridge({ appKey, read })` in `miujs/migrate` reads encrypted Laravel sessions.
+- **Client IPs:** `c.ip` is the socket address (Bun, Node). `rateLimit()` ignores forwarding headers unless you
+  set `trustProxy: true` (behind your proxy) or `"cloudflare"` — headers alone can't reset a rate limit.
+- **CSRF:** `app.use(csrf())` protects cookie-authenticated HTML forms and APIs (fetch metadata + Origin).
 
 ## Debugging in browser DevTools
 
@@ -314,13 +317,65 @@ requires a token printed to the console. Run `MIU_ENV=development bun --inspect 
 
 Measured on the same machine against Hono and Elysia ([bench/results.md](bench/results.md)): over the network Miu is
 level with Hono on plain text, ~15% ahead of Hono on JSON params and validated POSTs, ~90% of Elysia on simple
-GETs, and level with Elysia on validated POSTs.
+GETs, and level with Elysia on validated POSTs. Under a realistic mixed load (the Tour Studio app: public
+bundles, panoramas with 304/206, creator reads and writes, MCP) it serves ~3.5k req/s on Bun and ~1.6k on Node
+with zero errors on 4 shared cores ([bench/results-tour-studio.md](bench/results-tour-studio.md)).
+
+## App kits
+
+### Admin back-office (`miujs/admin`)
+
+```ts
+import { admin } from "miujs/admin";
+import { sqliteRepository } from "miujs/sqlite";
+import { diskBlobStore } from "miujs/node";
+
+const posts = sqliteRepository<Post>({ path: "app.sqlite", table: "posts", searchFields: ["title"] });
+app.route("/admin", admin({
+  resources: {
+    posts: {
+      schema: Post, repo: posts, files: diskBlobStore({ root: "./uploads" }),
+      fields: { cover: { widget: "image" }, body: { widget: "markdown" } },
+    },
+  },
+}));
+```
+
+A CRUD API and a no-build UI (search, sort, pagination, generated forms, uploads, relations, dark mode) from your
+`t` schemas. Every route requires a user with the `admin` role by default (roles or predicates per action),
+cookie writes need a same-origin request plus a session-bound CSRF token, pages ship a nonce CSP, changes are
+audited, and admin actions are MCP tools for agents. `miu create my-admin --template admin` scaffolds one.
+
+### Virtual tours (`miujs/tour`)
+
+```ts
+import { tourKit } from "miujs/tour";
+import { diskBlobStore } from "miujs/node";
+
+app.route("/", tourKit({ tours, scenes, hotspots, files: diskBlobStore({ root: "./panoramas" }) }));
+// /editor — creators upload 2:1 panoramas, click to place hotspots, link scenes, publish
+// /t/:slug — public WebGL viewer; /api/public/tours/:slug — cached bundle with ETag
+```
+
+Uploads are validated from the image bytes (real type, 2:1 equirectangular, size), publishing checks the scene
+graph, panoramas of drafts are private, and every JSON route is an MCP tool — an agent can build and publish a
+tour. `miu create my-tours --template tour --with-admin` scaffolds a site. A full reference app lives in
+[`apps/tour-studio`](apps/tour-studio) (`bun run e2e`, `bun run bench:app`).
+
+### Files and data
+
+`Repository` (memory, `sqliteRepository`, `d1Repository`) and `BlobStore` (memory, `diskBlobStore`, `r2BlobStore`)
+are shared building blocks: `uploadFiles()` sniffs real types from bytes, `serveBlob()` handles ETag/Range and
+sandboxes active content, `signBlobUrl()` makes expiring links, and `create(…, { unique: ["slug"] })` enforces
+uniqueness atomically on every driver.
 
 ## Development
 
 ```bash
 bun install
-bun test           # 641 tests
+bun test           # 915 tests
+bun run e2e        # reference-app journeys (functional, browser, Node, load)
+bun run bench:app  # realistic mixed load on Bun and Node
 bun run build      # dist/ with source maps
 bun run typecheck:cf  # Cloudflare binding types
 bun run bench:micro  # in-process framework benchmark

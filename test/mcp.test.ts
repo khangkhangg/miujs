@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Miu, t, HttpError } from "../src/index.ts";
+import { Miu, t, HttpError, requestId } from "../src/index.ts";
 import { mcp, listTools } from "../src/ai/mcp.ts";
 
 const makeApp = () =>
@@ -109,5 +109,75 @@ describe("MCP", () => {
 
   test("ping", async () => {
     expect((await rpc(makeApp().use(mcp()), "ping")).body.result).toEqual({});
+  });
+});
+
+describe("MCP CSRF protection", () => {
+  const victimApp = () =>
+    new Miu({ logger: false })
+      .use(async (c, next) => {
+        if (c.cookie("sid") === "victim") c.set("user", "victim");
+        await next();
+      })
+      .post("/transfer", (c) => ({ by: c.get("user") ?? null }))
+      .use(mcp());
+  const call = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "post_transfer", arguments: {} } });
+
+  test("a cross-site text/plain form post cannot run tools (415)", async () => {
+    const res = await victimApp().request("/mcp", {
+      method: "POST",
+      headers: { "content-type": "text/plain", cookie: "sid=victim", "sec-fetch-site": "cross-site" },
+      body: call,
+    });
+    expect(res.status).toBe(415);
+  });
+
+  test("a cross-site browser request riding on cookies is refused even with a JSON type (403)", async () => {
+    const res = await victimApp().request("/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: "sid=victim", "sec-fetch-site": "cross-site" },
+      body: call,
+    });
+    expect(res.status).toBe(403);
+  });
+
+  test("bearer-authenticated and same-origin clients still work", async () => {
+    const bearer = await victimApp().request("/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer t", "sec-fetch-site": "cross-site" },
+      body: call,
+    });
+    expect(bearer.status).toBe(200);
+    const same = await victimApp().request("/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json; charset=utf-8", cookie: "sid=victim", "sec-fetch-site": "same-origin" },
+      body: call,
+    });
+    expect(((await same.json()) as any).result.structuredContent).toEqual({ by: "victim" });
+  });
+});
+
+describe("MCP tool calls keep the caller's identity for tracing and limits", () => {
+  test("inner tool requests carry the outer request id and the agent's IP", async () => {
+    const seen: { id?: string; ip?: string }[] = [];
+    const app = new Miu({ logger: false })
+      .use(requestId())
+      .post("/thing", (c) => {
+        seen.push({ id: c.get("requestId") as string, ip: c.ip });
+        return { ok: true };
+      })
+      .use(mcp());
+    const server = Bun.serve(app.serveOptions({ port: 0, hostname: "127.0.0.1" }));
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-request-id": "outer-123", authorization: "Bearer t" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "post_thing", arguments: {} } }),
+      });
+      expect(((await res.json()) as any).result.isError).toBe(false);
+      expect(seen).toEqual([{ id: "outer-123", ip: "127.0.0.1" }]);
+    } finally {
+      server.stop(true);
+    }
   });
 });

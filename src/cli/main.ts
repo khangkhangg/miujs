@@ -9,12 +9,15 @@ import { listTools } from "../ai/mcp.ts";
 import { generateOpenAPI } from "../ai/openapi.ts";
 import { operationId } from "../ai/shared.ts";
 import { list, parseArgs, str, type ParsedArgs } from "./args.ts";
-import { createProject, TEMPLATES } from "./scaffold.ts";
+import { createProject, FEATURES, TEMPLATE_INFO, TEMPLATES } from "./scaffold.ts";
 import { generateWranglerToml } from "./wrangler.ts";
 
 /** The `miu` command line. Runs on Bun and on Node 22 (`--experimental-strip-types`). */
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
+
+const TEMPLATE_LIST = TEMPLATES.join("|");
+const TEMPLATE_HELP = TEMPLATES.map((t) => `        ${t.padEnd(28)}${TEMPLATE_INFO[t]}`).join("\n");
 
 const HELP = `miu — MiuJS command line
 
@@ -23,7 +26,9 @@ Usage
 
 Commands
   create <dir>          Scaffold a new app
-      --template bun|node|workers   (default bun)
+      --template <name>             (default bun) one of:
+${TEMPLATE_HELP}
+      --with-admin                  tour: also mount the admin back-office
       --name <pkg>                  package name (default: directory name)
       --force                       allow a non-empty directory
   routes [entry]        Print the route table (METHOD PATH TOOL SUMMARY)
@@ -43,7 +48,8 @@ Options
   -v, --version         Show the version
 `;
 
-const BOOLEAN = ["help", "version", "force", "full", "nodejs-compat"];
+const FEATURE_FLAGS = [...new Set(Object.values(FEATURES).flat())].map((f) => `with-${f}`);
+const BOOLEAN = ["help", "version", "force", "full", "nodejs-compat", ...FEATURE_FLAGS];
 
 /** Output sink; tests and the bin entry use the process streams. */
 export interface Io {
@@ -159,18 +165,23 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
     }
     switch (cmd) {
       case "create": {
-        if (!entry) throw new CliError("Usage: miu create <dir> [--template bun|node|workers] [--name pkg] [--force]");
+        if (!entry) throw new CliError(`Usage: miu create <dir> [--template ${TEMPLATE_LIST}] [--with-admin] [--name pkg] [--force]`);
         const template = str(f, "template") ?? "bun";
+        const features = FEATURE_FLAGS.filter((flag) => f[flag] === true).map((flag) => flag.slice(5));
         const files = await createProject(resolve(io.cwd, entry), {
           template,
           name: str(f, "name"),
           force: f.force === true,
           version: await version(),
           templatesDir: resolve(ROOT, "templates"),
+          features,
         });
-        const install = template === "bun" ? "bun install" : "npm install";
-        const dev = template === "bun" ? "bun run dev" : "npm run dev";
-        await io.out(`Created ${entry} (${template} template)\n${files.map((x) => `  ${x}`).join("\n")}\n\nNext:\n  cd ${entry}\n  ${install}\n  ${dev}\n`);
+        const npm = template === "node" || template === "workers";
+        const steps = [`cd ${entry}`, npm ? "npm install" : "bun install"];
+        if (template === "tour") steps.push("bun run seed      # optional: a sample tour from generated panoramas");
+        steps.push(npm ? "npm run dev" : "bun run dev");
+        const label = `${template} template${features.length ? `, with ${features.join(", ")}` : ""}`;
+        await io.out(`Created ${entry} (${label})\n${files.map((x) => `  ${x}`).join("\n")}\n\nNext:\n${steps.map((x) => `  ${x}`).join("\n")}\n`);
         return 0;
       }
       case "routes":

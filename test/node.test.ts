@@ -35,3 +35,14 @@ describe("Node adapter", () => {
     expect(res.headers.getSetCookie()).toEqual(["a=1", "b=2"]);
   });
 });
+
+test("c.ip is the socket address on the Node adapter", async () => {
+  const ipApp = new Miu().get("/ip", (c) => ({ ip: c.ip ?? null }));
+  const s = await serve(ipApp, { port: 0, hostname: "127.0.0.1" });
+  try {
+    const res = await fetch(`http://127.0.0.1:${s.port}/ip`, { headers: { "x-forwarded-for": "6.6.6.6" } });
+    expect(await res.json()).toEqual({ ip: "127.0.0.1" });
+  } finally {
+    await s.close();
+  }
+});

@@ -40,7 +40,7 @@ PHP/Python apps, MiuJS can be the easiest path from a legacy app to an AI-ready 
 | 5. Migration kit | Reverse proxy, shared PHP/Python sessions, contract tests, DB introspection | **Done (v0.3)** |
 | 6. DX & launch | CLI, templates, `llms.txt`, client, benchmarks, guides | **Mostly done (v0.3)** — 1.0 items open |
 | 7. Toward 1.0 | Compiled build, typed client, Node WebSockets, Elysia-level perf, security/scale drivers, DevTools debugging, CI | In progress |
-| 8. App kits | Schema-driven admin back-office; virtual-tour kit (panoramas, hotspots, uploads, viewer) | Planned |
+| 8. App kits | Schema-driven admin back-office; virtual-tour kit (panoramas, hotspots, uploads, viewer) | **Done (v0.5)** |
 
 ## 4. File structure
 
@@ -169,12 +169,20 @@ miujs/
 - [x] `c.route` and `c.error` for logging and tooling
 - [ ] Remaining: per-route compiled handlers for the last ~10% vs Elysia; Workers tests in workerd/Miniflare; Cloudflare Queues dedupe; SQLite datetime coercion in generated CRUD; typed `c.json()` output; PS256/ES384 JWT
 
-### Phase 8 — App kits
-- [ ] `miujs/admin`: back-office generated from `t` schemas (list/search/create/edit/delete, uploads, auth, roles)
-- [ ] Virtual-tour kit: scenes (equirectangular panoramas), hotspots linking scenes, info points, tour publishing
-- [ ] Image pipeline: uploads to local disk or R2, thumbnails/tiles, signed URLs
-- [ ] Tour viewer (vanilla JS/WebGL, no build step) + editor for placing hotspots by clicking the panorama
-- [ ] `miu create --template tour` and `--template admin`
+### Phase 8 — App kits ✅ (v0.5)
+- [x] Shared `Repository` (memory, SQLite, D1; atomic `unique`, `count: false`) and `BlobStore` (memory, disk, R2) with contract suites
+- [x] Files: `imageInfo` from magic bytes, sniffed uploads, `serveBlob` (ETag/Range/sandboxed active content), signed URLs
+- [x] `miujs/admin`: back-office generated from `t` schemas — CRUD API + no-build UI, uploads, relations, roles, CSRF, CSP, audit, MCP tools
+- [x] `miujs/tour`: tours/scenes/hotspots, creator API (ownership, upload validation, publish checks), public bundles (cached, ETag), media access control
+- [x] Tour viewer (WebGL, no build) and editor (click to place, drag, link scenes, publish); every route an MCP tool
+- [x] `miu create --template admin` and `--template tour [--with-admin]`
+- [x] Reference app `apps/tour-studio` with e2e (visitor, creator, security, agent, admin), Chromium, Node-parity and load tests
+- [x] Scenario load runner (`bench/scenario.ts`) with p50/p95/p99; app benchmark on Bun and Node (`bun run bench:app`)
+- [x] Bugs found by the reference app fixed: disk-blob GC crash, missing Content-Length, 304 body opens, spoofable rate limits (`c.ip`, `trustProxy`), slug races, admin no-op audits, favicon 404, slow SQLite default; MCP CSRF hole
+- [x] `csrf()` battery; API key listing/revocation by id; MCP tool calls keep request id and client IP
+- [ ] Image derivatives (thumbnails, multi-resolution tiles for very large panoramas); WebXR/gyroscope in the viewer
+- [ ] Admin: cascade hooks for tour deletion, 422 instead of silently dropping read-only fields
+- [ ] Faster media on Node (Web-stream bridge in `writeResponse`), buffered access log, sidecar metadata cache
 
 ## 6. Prompts per feature
 

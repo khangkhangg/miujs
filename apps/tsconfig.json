@@ -1,0 +1,6 @@
+{
+  // Type-check the reference apps and their benchmark: bunx tsc --noEmit -p apps/tsconfig.json
+  // (the e2e tests live under test/, which the root tsconfig already covers).
+  "extends": "../tsconfig.json",
+  "include": [".", "../bench/app.ts", "../bench/scenarios", "../bench/lib"]
+}

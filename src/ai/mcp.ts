@@ -1,5 +1,5 @@
 import type { Middleware, Route } from "../core/app.ts";
-import type { AppLike, Context } from "../core/context.ts";
+import { setClientIp, type AppLike, type Context } from "../core/context.ts";
 import { toJSONSchema, type JSONSchema } from "../core/schema.ts";
 import { objectParts, operationId, pathParamNames } from "./shared.ts";
 
@@ -120,18 +120,28 @@ class RpcError extends Error {
 export function mcp(opts: McpOptions = {}): Middleware {
   const path = opts.path ?? "/mcp";
   const forward = (opts.forwardHeaders ?? ["authorization", "cookie", "x-api-key"]).map((h) => h.toLowerCase());
-  let cache: { app: AppLike; count: number; tools: ToolBinding[] } | undefined;
-  const getTools = (app: AppLike) => {
+  let cache: { app: AppLike; count: number; tools: ToolBinding[]; listJson?: string } | undefined;
+  const getCache = (app: AppLike) => {
     if (!cache || cache.app !== app || cache.count !== app.routes.length) {
       cache = { app, count: app.routes.length, tools: bindings(app) };
     }
-    return cache.tools;
+    return cache;
   };
 
   return async (c, next) => {
     if (c.url.pathname !== path) return next();
     if (c.method !== "POST") {
       return c.newResponse(null, 405, { allow: "POST" });
+    }
+    // CSRF: tool calls replay the caller's cookies, so a hostile page must not be able to post here.
+    // MCP clients always send JSON (which browsers only allow cross-site after a CORS preflight), and
+    // a cross-site browser request may only proceed with explicit bearer credentials.
+    const type = (c.req.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+    if (type !== "application/json") {
+      return c.json(rpcError(null, -32600, "MCP requests must use Content-Type: application/json"), 415);
+    }
+    if (c.req.headers.get("sec-fetch-site") === "cross-site" && !c.req.headers.has("authorization")) {
+      return c.json(rpcError(null, -32600, "Cross-site MCP requests require an Authorization header"), 403);
     }
     let msg: JsonRpcRequest;
     try {
@@ -144,8 +154,16 @@ export function mcp(opts: McpOptions = {}): Middleware {
     }
     if (msg.id === undefined) return c.newResponse(null, 202); // notification
 
+    const cached = getCache(c.app);
+    if (msg.method === "tools/list") {
+      // The tool list only changes when routes do: serialize it once, not on every call.
+      cached.listJson ??= JSON.stringify({ tools: cached.tools.map((b) => b.tool) });
+      return c.newResponse(`{"jsonrpc":"2.0","id":${JSON.stringify(msg.id)},"result":${cached.listJson}}`, 200, {
+        "content-type": "application/json; charset=utf-8",
+      });
+    }
     try {
-      const result = await dispatch(c, msg, getTools(c.app), forward, opts);
+      const result = await dispatch(c, msg, cached.tools, forward, opts);
       return c.json({ jsonrpc: "2.0", id: msg.id, result });
     } catch (e) {
       if (e instanceof RpcError) return c.json(rpcError(msg.id, e.code, e.message));
@@ -236,16 +254,17 @@ async function callTool(c: Context<any, any>, b: ToolBinding, args: Record<strin
     if (v) headers.set(h, v);
   }
   if (body !== undefined && sendBody) headers.set("content-type", "application/json");
+  // Trace tool calls under the agent's /mcp request (requestId() reuses an incoming id).
+  const rid = (c.get("requestId") as string | undefined) ?? c.req.headers.get("x-request-id");
+  if (rid) headers.set("x-request-id", rid);
 
-  const res = await c.app.fetch(
-    new Request(url, {
-      method: route.method,
-      headers,
-      body: body !== undefined && sendBody ? JSON.stringify(body) : undefined,
-    }),
-    c.env,
-    c.executionCtx,
-  );
+  const inner = new Request(url, {
+    method: route.method,
+    headers,
+    body: body !== undefined && sendBody ? JSON.stringify(body) : undefined,
+  });
+  setClientIp(inner, c.ip); // rate limits and logs see the agent, not "unknown"
+  const res = await c.app.fetch(inner, c.env, c.executionCtx);
 
   const text = res.status === 204 ? "" : await res.text();
   let structured: unknown;

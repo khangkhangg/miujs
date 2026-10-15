@@ -10,8 +10,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const HELP = `create-miu — scaffold a new MiuJS app
 
 Usage
-  npm create miu@latest [dir] -- [--template bun|node|workers] [--name pkg] [--force]
-  bun create miu [dir] [--template bun|node|workers] [--name pkg] [--force]
+  npm create miu@latest [dir] -- [--template bun|node|workers|admin|tour] [--with-admin] [--name pkg] [--force]
+  bun create miu [dir] [--template bun|node|workers|admin|tour] [--with-admin] [--name pkg] [--force]
 
   dir defaults to ./miu-app; template defaults to bun.
 `;

@@ -16,8 +16,17 @@ export interface SqliteDatabase {
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
 
+export interface OpenDatabaseOptions {
+  /**
+   * File databases use WAL with `synchronous = NORMAL` by default: durable across process crashes, and only
+   * an OS crash or power loss can drop the most recent commits — about 4x faster writes than `FULL`.
+   * Pass `"FULL"` (or `"EXTRA"`) when every commit must survive power loss.
+   */
+  synchronous?: "OFF" | "NORMAL" | "FULL" | "EXTRA";
+}
+
 /** Open a database file (or ":memory:") with whichever SQLite the runtime ships. */
-export async function openDatabase(path = ":memory:"): Promise<SqliteDatabase> {
+export async function openDatabase(path = ":memory:", opts: OpenDatabaseOptions = {}): Promise<SqliteDatabase> {
   let db: SqliteDatabase;
   if (isBun) {
     const { Database } = await import("bun:sqlite");
@@ -42,7 +51,10 @@ export async function openDatabase(path = ":memory:"): Promise<SqliteDatabase> {
     db = new mod.DatabaseSync(path);
   }
   if (path !== ":memory:") {
+    const sync = opts.synchronous ?? "NORMAL";
+    if (!["OFF", "NORMAL", "FULL", "EXTRA"].includes(sync)) throw new Error(`Invalid synchronous mode: ${sync}`);
     db.exec("PRAGMA journal_mode = WAL");
+    db.exec(`PRAGMA synchronous = ${sync}`);
     db.exec("PRAGMA busy_timeout = 5000");
   }
   return db;

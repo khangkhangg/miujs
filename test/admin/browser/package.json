@@ -1,0 +1,8 @@
+{
+  "name": "miujs-admin-browser-test",
+  "private": true,
+  "description": "Isolated dependency for the admin UI browser test (not part of the root workspace).",
+  "dependencies": {
+    "playwright-core": "1.56.1"
+  }
+}

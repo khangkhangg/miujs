@@ -16,4 +16,4 @@ export {
   type SignJwtOptions,
   type VerifyJwtOptions,
 } from "./jwt.ts";
-export { createApiKey, verifyApiKey, revokeApiKey, type ApiKeyRecord } from "./api-keys.ts";
+export { createApiKey, verifyApiKey, revokeApiKey, listApiKeys, revokeApiKeyById, type ApiKeyRecord } from "./api-keys.ts";

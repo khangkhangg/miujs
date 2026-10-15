@@ -7,7 +7,8 @@ const setup = (opts: Partial<Parameters<typeof rateLimit>[0]> = {}) => {
   let t = 1_000_000;
   const store = memoryStore({ now: () => t });
   const app = new Miu({ logger: false });
-  app.use(rateLimit({ store, limit: 3, window: 60, ...opts }));
+  // These tests model clients behind Cloudflare, which sets CF-Connecting-IP.
+  app.use(rateLimit({ store, limit: 3, window: 60, trustProxy: "cloudflare", ...opts }));
   app.get("/x", () => "ok");
   const hit = (ip = "1.1.1.1", headers: Record<string, string> = {}) =>
     app.request("/x", { headers: { "cf-connecting-ip": ip, ...headers } });
@@ -57,8 +58,8 @@ describe("rateLimit", () => {
     expect((await hit("2.2.2.2")).status).toBe(200);
   });
 
-  test("falls back to x-forwarded-for then x-real-ip", async () => {
-    const { app } = setup({ limit: 1 });
+  test("with trustProxy: true, uses the first x-forwarded-for hop, then x-real-ip", async () => {
+    const { app } = setup({ limit: 1, trustProxy: true });
     const xff = (v: string) => app.request("/x", { headers: { "x-forwarded-for": v } });
     expect((await xff("9.9.9.9, 10.0.0.1")).status).toBe(200);
     expect((await xff("9.9.9.9, 10.0.0.2")).status).toBe(429);
@@ -85,4 +86,32 @@ describe("rateLimit", () => {
     expect(skipped.status).toBe(200);
     expect(skipped.headers.get("ratelimit-limit")).toBeNull();
   });
+
+  test("by default, forwarding headers are ignored (no bucket reset by spoofing)", async () => {
+    const { app } = setup({ limit: 1, trustProxy: false });
+    const spoof = (ip: string) =>
+      app.request("/x", { headers: { "x-forwarded-for": ip, "cf-connecting-ip": ip, "x-real-ip": ip } });
+    expect((await spoof("1.1.1.1")).status).toBe(200);
+    expect((await spoof("2.2.2.2")).status).toBe(429);
+  });
+
+  test("behind a real Bun server, the default key is the socket address (c.ip)", async () => {
+    const seen: (string | undefined)[] = [];
+    const app = new Miu({ logger: false })
+      .use(rateLimit({ store: memoryStore(), limit: 1, window: 60 }))
+      .get("/x", (c) => {
+        seen.push(c.ip);
+        return "ok";
+      });
+    const server = Bun.serve(app.serveOptions({ port: 0, hostname: "127.0.0.1" }));
+    try {
+      const get = (ip: string) => fetch(`http://127.0.0.1:${server.port}/x`, { headers: { "x-forwarded-for": ip } });
+      expect((await get("1.1.1.1")).status).toBe(200);
+      expect((await get("2.2.2.2")).status).toBe(429);
+      expect(seen).toEqual(["127.0.0.1"]);
+    } finally {
+      server.stop(true);
+    }
+  });
 });
+

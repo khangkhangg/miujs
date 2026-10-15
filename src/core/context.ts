@@ -1,3 +1,14 @@
+/** Client IPs for in-process sub-requests (e.g. MCP tool calls), keyed by Request — never by header. */
+const innerClientIps = new WeakMap<Request, string>();
+
+/**
+ * Attribute an in-process sub-request to the original client, so `c.ip` (rate limits, logs) stays the
+ * caller's address. Framework-internal: only code that builds the Request can call it.
+ */
+export function setClientIp(req: Request, ip: string | undefined): void {
+  if (ip) innerClientIps.set(req, ip);
+}
+
 export interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException?(): void;
@@ -59,6 +70,18 @@ export class Context<E extends Env = Env, I extends Input = Input> {
   private _headers?: Headers;
   private _vars?: Map<string, unknown>;
   private _cookies?: Record<string, string>;
+
+  /** The serving runtime (Bun server / Node adapter); set by the app. Used for `ip`. */
+  peer?: { requestIP?(req: Request): { address: string } | null | undefined };
+
+  /**
+   * The client's socket address as seen by the server (Bun, Node adapter). Undefined for in-process
+   * requests and on Cloudflare Workers (use the trusted `cf-connecting-ip` header there). Never derived
+   * from client-controlled headers.
+   */
+  get ip(): string | undefined {
+    return this.peer?.requestIP?.(this.req)?.address || innerClientIps.get(this.req) || undefined;
+  }
 
   constructor(req: Request, env?: Bindings<E>, executionCtx?: ExecutionContext) {
     this.req = req;

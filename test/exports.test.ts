@@ -11,6 +11,7 @@ test("root entry exports the portable batteries", () => {
     "createQueue", "memoryQueueDriver", "llms", "generateLlmsTxt",
     "timing", "getTiming", "devErrors", "inspector", "devLogger", "isDev", "isProduction",
     "mcpAuth", "redisStore", "redisQueueDriver", "createRemoteJwks",
+    "memoryRepository", "memoryBlobStore", "csrf",
   ]) {
     expect(typeof (root as Record<string, unknown>)[name]).toBe("function");
   }
@@ -55,7 +56,7 @@ const walkGraph = async (entry: string) => {
 test("package exports every public entry point and each resolves", async () => {
   const exportsMap = pkg.exports as unknown as Record<string, Record<string, string>>;
   expect(Object.keys(exportsMap).sort()).toEqual(
-    [".", "./client", "./cloudflare", "./migrate", "./node", "./realtime", "./sqlite"].sort(),
+    [".", "./admin", "./client", "./cloudflare", "./migrate", "./node", "./realtime", "./sqlite", "./tour"].sort(),
   );
   for (const [key, target] of Object.entries(exportsMap)) {
     // "types" first; "bun" serves the TS source; import/default point at dist (covered by test/build).
@@ -68,7 +69,7 @@ test("package exports every public entry point and each resolves", async () => {
 });
 
 test("edge entry points never pull in native SQLite or Node built-ins", async () => {
-  for (const entry of ["src/index.ts", "src/adapters/cloudflare/index.ts", "src/realtime/index.ts", "src/migrate/index.ts", "src/client/index.ts"]) {
+  for (const entry of ["src/index.ts", "src/adapters/cloudflare/index.ts", "src/realtime/index.ts", "src/migrate/index.ts", "src/client/index.ts", "src/admin/index.ts", "src/tour/index.ts"]) {
     const files = await walkGraph(entry);
     expect({ entry, offenders: files.filter((f) => /\/(batteries\/sqlite|store\/sqlite|queue\/sqlite|adapters\/node|adapters\/node-ws)\.ts$/.test(f)) }).toEqual({ entry, offenders: [] });
     for (const f of files) {
@@ -76,4 +77,18 @@ test("edge entry points never pull in native SQLite or Node built-ins", async ()
       expect({ f, native: /from\s+"(node:|bun:|bun")/.test(src) }).toEqual({ f, native: false });
     }
   }
+});
+
+test("app kits and storage drivers are exported from their entry points", async () => {
+  const admin = await import("../src/admin/index.ts");
+  const tour = await import("../src/tour/index.ts");
+  const cf = await import("../src/adapters/cloudflare/index.ts");
+  const node = await import("../src/adapters/node.ts");
+  expect(typeof admin.admin).toBe("function");
+  for (const n of ["tourKit", "validateTourGraph", "slugify"]) expect(typeof (tour as Record<string, unknown>)[n]).toBe("function");
+  expect(typeof sqlite.sqliteRepository).toBe("function");
+  expect(typeof cf.d1Repository).toBe("function");
+  expect(typeof cf.r2BlobStore).toBe("function");
+  expect(typeof node.diskBlobStore).toBe("function");
+  for (const n of ["serveBlob", "uploadFiles", "signBlobUrl", "imageInfo"]) expect(typeof (root as Record<string, unknown>)[n]).toBe("function");
 });

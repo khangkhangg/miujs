@@ -66,7 +66,10 @@ export function serve(app: AppLike, opts: NodeServeOptions = {}): Promise<NodeSe
   const server = createServer(async (req, out) => {
     try {
       const host = req.headers.host ?? `${opts.hostname ?? "localhost"}`;
-      const res = await app.fetch(toRequest(req, `http://${host}`));
+      const request = toRequest(req, `http://${host}`);
+      if (req.socket.remoteAddress) wss.peers.set(request, req.socket.remoteAddress);
+      // Pass the server-like object (as Bun does) so `c.ip` and app.publish work for plain HTTP too.
+      const res = await app.fetch(request, wss);
       await writeResponse(res, out);
     } catch (err) {
       console.error("[miu] adapter error:", err);
@@ -87,6 +90,7 @@ export function serve(app: AppLike, opts: NodeServeOptions = {}): Promise<NodeSe
     } catch {
       return void socket.end("HTTP/1.1 400 Bad Request\r\nconnection: close\r\ncontent-length: 0\r\n\r\n");
     }
+    if (req.socket.remoteAddress) wss.peers.set(request, req.socket.remoteAddress);
     void wss.handle(request, socket, head, (r, s) => app.fetch(r, s));
   });
   return new Promise((resolve) => {
@@ -107,3 +111,4 @@ export function serve(app: AppLike, opts: NodeServeOptions = {}): Promise<NodeSe
     });
   });
 }
+export { diskBlobStore, type DiskBlobStoreOptions } from "./node-files.ts";
