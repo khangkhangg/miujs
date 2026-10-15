@@ -212,7 +212,7 @@ Over budget: 429 `MIU_E_RATE_LIMITED` with `Retry-After`.
 | `cacheClientStore()` | everything on the same backend | Uses `ctx.cache` from `@miujs/cache` (KV on Workers, Redis, memory). List `cache()` first. Long keys are hashed. |
 | `cacheApiStore()` | one Cloudflare data center | Workers Cache API (`caches.default`), no binding needed. |
 
-On Workers without `cache.store`, the plugin uses `ctx.cache` when `@miujs/cache` is listed first, else the Cache API, else memory. A store is `{ name, get(key, ctx), set(key, entry, ctx), delete?, size?, inspect?, cloudflare? }`.
+On Workers without `cache.store`, the plugin uses `ctx.cache` when `@miujs/cache` is listed first, else the Cache API, else memory. A store is `{ name, get(key, ctx), set(key, entry, ctx), delete?, size?, bytes?, purge?, inspect?, cloudflare? }`.
 
 ## Options
 
@@ -240,6 +240,15 @@ On Workers without `cache.store`, the plugin uses `ctx.cache` when `@miujs/cache
 | `timers` | `{ set(fn, ms), clear(handle) }` | `setTimeout` / `clearTimeout` | Timers for `waitMs`, for tests. |
 
 `miu inspect` shows the policy, cache settings and counters by kind, by action and for the cache (hit, stale, miss, coalesced, stored, skipped, waitTimeouts).
+
+## Admin (`manage()`)
+
+With `@miujs/admin`, `bots()` shows a **Bots** section:
+
+- **Status**: requests by kind and by decision, blocked and over-budget counts, and the bot cache: store, entries and size (memory store; other stores say they cannot count), hits, misses, hit rate, stale served, stored, not stored, errors and wait timeouts. Counters are per instance since it started.
+- **Settings**: `policy` per kind, `blockCountries`, `allowCountries` (empty = no restriction), `botScoreThreshold` (1–99) and `cacheTtl` (when the cache is on). They apply at once in this instance; the admin persists them and re-applies them on start.
+- **Recently blocked** list: the last 200 blocked visits in this instance (time, kind, agent, country, path without the query string, and the reason: policy, route policy, rule n, country blocked, country not allowed). Filter by kind; search agent, country or path.
+- **Actions**: `purgeCache` (danger; all or under a path prefix, memory store only), `purgeUrl` (one page on any store with `delete`; on KV or the Cache API, entries varied by country or `varyBy` cannot be found), and `classifyUserAgent` (what a User-Agent claims and the access its kind gets; nothing is verified without Cloudflare or `verify`).
 
 ## Errors
 

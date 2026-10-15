@@ -25,6 +25,10 @@ export interface BotCacheStore {
   get(key: string, ctx?: Context): MaybePromise<CachedResponse | undefined>;
   set(key: string, entry: CachedResponse, ctx?: Context): MaybePromise<void>;
   delete?(key: string, ctx?: Context): MaybePromise<void>;
+  /** Deletes every entry whose key passes `filter` (all without one); returns how many. Enumerable stores only (memory). */
+  purge?(filter?: (key: string) => boolean): MaybePromise<number>;
+  /** Approximate bytes held, when cheap to tell. */
+  bytes?(): number;
   /** Live entries, when cheap to tell. */
   size?(): number;
   inspect?(): Record<string, unknown>;
@@ -96,6 +100,17 @@ export function memoryBotStore(opts: MemoryBotStoreOptions = {}): BotCacheStore 
       for (const [k, x] of map) if (x.e.staleUntil <= t) drop(k);
       return map.size;
     },
+    purge(filter) {
+      let n = 0;
+      const t = now();
+      for (const [k, x] of map) {
+        if (filter && !filter(k)) continue;
+        if (x.e.staleUntil > t) n++;
+        drop(k);
+      }
+      return n;
+    },
+    bytes: () => bytes,
     inspect: () => ({ entries: map.size, bytes, maxEntries, maxBytes }),
   };
 }

@@ -2,6 +2,7 @@
 
 import { definePlugin, errors, type CloudflareNeeds, type Context, type Env } from "miujs";
 import { checkPolicy, configError, parseWindow, type Algorithm, type Decision, type Policy, type WindowSpec } from "./algorithms.ts";
+import { rateLimitManage } from "./manage.ts";
 import { memoryStore, type RateLimitStore } from "./stores.ts";
 
 type MaybePromise<T> = T | Promise<T>;
@@ -90,7 +91,8 @@ function pathMatcher(pattern: string, where: string): (path: string) => boolean 
   };
 }
 
-interface Compiled {
+/** @internal A rule ready to run; `policy` and `windowSpec` change when an operator edits limits. */
+export interface Compiled {
   name: string;
   policy: Policy;
   by: By;
@@ -125,7 +127,7 @@ function compile(rule: RateLimitRule, i: number, defaultBy: By, store: RateLimit
   const methods = list(m.method, where, "method")?.map((x) => x.toUpperCase());
   const tags = list(m.tag, where, "tag");
   const pathFns = paths?.map((p) => pathMatcher(p, where));
-  return {
+  const compiled: Compiled = {
     name,
     policy,
     by,
@@ -146,17 +148,18 @@ function compile(rule: RateLimitRule, i: number, defaultBy: By, store: RateLimit
       const out: Record<string, unknown> = {
         name,
         match: Object.keys(match).length ? match : "all requests",
-        limit: policy.limit,
-        window: rule.window,
-        windowSeconds: Math.ceil(windowMs / 1000),
-        algorithm: policy.algorithm,
+        limit: compiled.policy.limit,
+        window: compiled.windowSpec,
+        windowSeconds: Math.ceil(compiled.policy.windowMs / 1000),
+        algorithm: compiled.policy.algorithm,
         by: typeof by === "function" ? "custom" : by,
       };
-      if (policy.burst !== undefined) out.burst = policy.burst;
-      if (policy.cost !== 1) out.cost = policy.cost;
+      if (compiled.policy.burst !== undefined) out.burst = compiled.policy.burst;
+      if (compiled.policy.cost !== 1) out.cost = compiled.policy.cost;
       return out;
     },
   };
+  return compiled;
 }
 
 async function sha256Hex(s: string): Promise<string> {
@@ -202,6 +205,7 @@ export function rateLimit(opts: RateLimitOptions) {
   const now = opts.now ?? Date.now;
   const onStoreError = opts.onStoreError ?? "deny";
   const proxyHeader = opts.trustProxyHeader?.toLowerCase();
+  const counters = { rejected: 0, storeErrors: 0, rejectedBy: new Map<string, number>() };
 
   function clientIp(ctx: Context): string | undefined {
     if (proxyHeader) {
@@ -271,6 +275,7 @@ export function rateLimit(opts: RateLimitOptions) {
         try {
           d = await store.consume(`${rule.name}:${id}`, rule.policy, t, ctx.env);
         } catch (err) {
+          counters.storeErrors++;
           ctx.log.error("rate limit store failed", { err, store: store.kind, rule: rule.name });
           if (onStoreError === "allow") continue;
           return errors
@@ -293,6 +298,8 @@ export function rateLimit(opts: RateLimitOptions) {
       const chosen = denied ?? best;
       if (chosen) ctx.state.rateLimit = chosen;
       if (denied) {
+        counters.rejected++;
+        counters.rejectedBy.set(denied.rule.name, (counters.rejectedBy.get(denied.rule.name) ?? 0) + 1);
         const retry = retrySeconds(denied.d.retryAfterMs);
         ctx.log.warn("rate limited", { rule: denied.rule.name, route: ctx.route?.name ?? null, retryAfter: retry });
         return errors.tooManyRequests(retry).toResponse({ ...headerValues(denied), "retry-after": String(retry) });
@@ -320,6 +327,9 @@ export function rateLimit(opts: RateLimitOptions) {
         onStoreError,
         rules: rules.map((r) => r.describe()),
       };
+    },
+    manage() {
+      return rateLimitManage({ rules, store, now, counters, checkStore: (policy, where) => unsupported(store, policy, where) });
     },
     cloudflare(): CloudflareNeeds {
       return store.cloudflare?.() ?? {};

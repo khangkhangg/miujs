@@ -13,6 +13,29 @@ export interface RateLimitStore {
   unsupported?(policy: Policy): string | null;
   inspect?(): Record<string, unknown>;
   cloudflare?(): CloudflareNeeds;
+  /** Keys held, when the store can tell cheaply (memory). Used by `manage()`. */
+  size?(): number;
+  /** Page through live keys (memory). Used by `manage()`. */
+  scan?(q: RateLimitScanQuery): Promise<{ keys: RateLimitKeyInfo[]; next?: string }>;
+}
+
+export interface RateLimitScanQuery {
+  /** Opaque cursor from the previous page's `next`. */
+  cursor?: string;
+  limit: number;
+  now: number;
+  /** Only keys whose last hit used up the limit or was denied. */
+  limitedOnly?: boolean;
+  /** Only keys containing this text. */
+  search?: string;
+}
+
+export interface RateLimitKeyInfo {
+  /** `<rule>:<identity>`. */
+  key: string;
+  limited: boolean;
+  /** Epoch ms after which the key's state is dropped. */
+  expiresAt: number;
 }
 
 const missingBinding = (binding: string, what: string, fix: string) =>
@@ -75,6 +98,21 @@ export function memoryStore(opts: { maxKeys?: number } = {}): RateLimitStore {
     },
     async reset(key) {
       map.delete(key);
+    },
+    size: () => map.size,
+    // Cursor = matches already returned. Map order changes as clients are allowed, so paging is
+    // approximate under traffic; the walk is bounded by `maxKeys`.
+    async scan(q) {
+      const skip = q.cursor ? Number(q.cursor) || 0 : 0;
+      const keys: RateLimitKeyInfo[] = [];
+      let seen = 0;
+      for (const [key, e] of map) {
+        if (e.exp <= q.now || (q.limitedOnly && !e.blocked) || (q.search && !key.includes(q.search))) continue;
+        if (seen++ < skip) continue;
+        if (keys.length === q.limit) return { keys, next: String(skip + keys.length) };
+        keys.push({ key, limited: e.blocked, expiresAt: e.exp });
+      }
+      return { keys };
     },
     inspect: () => ({ store: "memory", exact: "per process", keys: map.size, maxKeys }),
   };

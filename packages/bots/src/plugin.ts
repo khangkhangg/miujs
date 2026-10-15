@@ -5,6 +5,7 @@ import { definePlugin, errors, route, type App, type CloudflareNeeds, type Conte
 import { AGENTS, createClassifier, type AgentEntry } from "./agents.ts";
 import { buildVisitor, cloudflareSignals, decideKind, type Access, type DetectOptions, type Visitor, type VisitorKind } from "./detect.ts";
 import { botsErrors } from "./errors.ts";
+import { BLOCKED_LOG, botsManage, ring, type BlockedVisit } from "./manage.ts";
 import { renderRobots, type RobotsOptions } from "./robots.ts";
 import { cacheApiStore, cacheClientStore, memoryBotStore, type BotCacheStore, type CachedResponse } from "./store.ts";
 
@@ -136,6 +137,8 @@ const BLOCK_STATUSES = new Set([403, 404, 410, 429, 451]);
 const MATCH_KEYS = new Set(["route", "path", "method", "tag"]);
 const MATCH_ONLY = new Set(["match"]);
 const COUNTRY = /^(?:[A-Z]{2}|T1)$/;
+/** Cloudflare bot scores below this are bots (DetectOptions.botScoreThreshold default). */
+const DEFAULT_BOT_SCORE = 30;
 const REVALIDATE_HEADER = "x-miu-bots-revalidate";
 const ROBOTS_ROUTE = "bots_robots_txt";
 const STATE = "bots";
@@ -330,8 +333,8 @@ export function bots(opts: BotsOptions = {}) {
     if (!r || typeof r.when !== "function") throw cfg(`bots rules[${i}] needs a when(visitor, ctx) function`, 'E.g. { when: (v) => v.kind === "ai", action: "block" }.');
     if (!ACTIONS.includes(r.action)) throw cfg(`bots rules[${i}]: unknown action ${JSON.stringify(r.action)}`, `Use one of: ${ACTIONS.join(", ")}.`);
   });
-  const blockCountries = checkCountries(opts.blockCountries, "bots blockCountries");
-  const allowCountries = checkCountries(opts.allowCountries, "bots allowCountries");
+  let blockCountries = checkCountries(opts.blockCountries, "bots blockCountries");
+  let allowCountries = checkCountries(opts.allowCountries, "bots allowCountries");
   const routeRules = (opts.routes ?? []).map(compileRoute);
   const blockStatus = opts.blockStatus ?? 403;
   if (!BLOCK_STATUSES.has(blockStatus)) throw cfg(`bots blockStatus must be one of ${[...BLOCK_STATUSES].join(", ")}, got ${String(blockStatus)}`, "Use 403 (default), 404, 410, 429 or 451.");
@@ -345,7 +348,7 @@ export function bots(opts: BotsOptions = {}) {
   checkPolicy(Object.fromEntries(Object.keys(budget).map((k) => [k, "full"])), "bots budget");
 
   const c = opts.cache === false ? null : (opts.cache ?? {});
-  const ttl = checkSeconds(c?.ttl, "cache.ttl") ?? 3600;
+  let ttl = checkSeconds(c?.ttl, "cache.ttl") ?? 3600;
   const waitMs = c?.waitMs === undefined ? 10_000 : (checkSeconds(c.waitMs, "cache.waitMs") as number);
   const timers = opts.timers ?? DEFAULT_TIMERS;
   const swr = checkSeconds(c?.staleWhileRevalidate, "cache.staleWhileRevalidate", true) ?? 0;
@@ -376,6 +379,7 @@ export function bots(opts: BotsOptions = {}) {
     cache: { hit: 0, stale: 0, miss: 0, coalesced: 0, stored: 0, skipped: 0, errors: 0, waitTimeouts: 0 },
     budgetDenied: 0,
   };
+  const blockedLog = ring<BlockedVisit>(BLOCKED_LOG);
   const inflight = new Map<string, Promise<CachedResponse | null>>();
   const revalidating = new Set<string>();
   const revalidations = new Map<string, { key: string; visitor: Visitor }>();
@@ -383,17 +387,23 @@ export function bots(opts: BotsOptions = {}) {
 
   const ignored = (k: string) => ignoreExact.has(k) || ignorePrefixes.some((p) => k.startsWith(p));
 
-  function keyFor(ctx: Context, access: Access): string {
-    const url = ctx.req.url;
-    let key = `GET:${access}:${hostOf(url)}${ctx.path}`;
-    if (url.indexOf("?") !== -1) {
+  /** The cache key of a URL before the `|c=` / `|v=` parts. */
+  function baseKey(url: string, path: string, access: Access, search: (() => URLSearchParams) | null): string {
+    let key = `GET:${access}:${hostOf(url)}${path}`;
+    if (search) {
       const params: [string, string][] = [];
-      for (const [k, v] of ctx.url.searchParams) if (!ignored(k)) params.push([k, v]);
+      for (const [k, v] of search()) if (!ignored(k)) params.push([k, v]);
       if (params.length) {
         params.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
         key += "?" + params.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
       }
     }
+    return key;
+  }
+
+  function keyFor(ctx: Context, access: Access): string {
+    const url = ctx.req.url;
+    let key = baseKey(url, ctx.path, access, url.indexOf("?") !== -1 ? () => ctx.url.searchParams : null);
     if (c?.varyByCountry) key += `|c=${ctx.visitor.country ?? ""}`;
     const extra = c?.varyBy?.(ctx);
     if (extra) key += `|v=${extra}`;
@@ -418,15 +428,26 @@ export function bots(opts: BotsOptions = {}) {
     return routeRules.length ? routeRules.find((r) => r.matches(ctx)) : undefined;
   }
 
+  /** Why the last decide() blocked, for the blocked visitors log. */
+  let reason = "";
   function decide(v: Visitor, ctx: Context, rule: BotsRouteOptions | undefined): Access {
     if (rule?.exempt) return "full";
-    for (const r of rules) if (r.when(v, ctx)) return r.action;
+    for (let i = 0; i < rules.length; i++) {
+      if (rules[i].when(v, ctx)) {
+        reason = `rule ${i + 1}`;
+        return rules[i].action;
+      }
+    }
     if (v.country !== undefined) {
+      reason = "country blocked";
       if (blockCountries?.has(v.country)) return "block";
+      reason = "country not allowed";
       if (allowCountries && !allowCountries.has(v.country)) return "block";
     }
     if (ctx.user) return "full";
-    return rule?.policy?.[v.kind] ?? policy[v.kind];
+    const routeAccess = rule?.policy?.[v.kind];
+    reason = routeAccess === undefined ? "policy" : "route policy";
+    return routeAccess ?? policy[v.kind];
   }
 
   function respond(e: CachedResponse, head: boolean, state: "hit" | "stale"): Response {
@@ -533,6 +554,7 @@ export function bots(opts: BotsOptions = {}) {
       v.access = action;
       counters.actions[action]++;
       if (action === "block") {
+        blockedLog.push({ at: now(), kind: v.kind, name: v.name ?? null, country: v.country ?? null, path: ctx.path, reason });
         ctx.log.debug("bot blocked", { kind: v.kind, name: v.name, country: v.country, score: v.score, route: ctx.route?.name ?? null });
         return blocked(v);
       }
@@ -658,6 +680,29 @@ export function bots(opts: BotsOptions = {}) {
         agents: { known: agents.length, memo: classify.memoSize() },
         counters: { kinds: { ...counters.kinds }, actions: { ...counters.actions }, cache: { ...counters.cache }, budgetDenied: counters.budgetDenied },
       };
+    },
+    manage() {
+      return botsManage({
+        policy,
+        counters,
+        blocked: blockedLog,
+        cacheOn: c !== null,
+        storeFor,
+        classify,
+        keysOf: (url) => (["cached", "partial"] as const).map((a) => baseKey(url.href, url.pathname, a, url.search ? () => url.searchParams : null)),
+        get: () => ({
+          blockCountries: blockCountries ? [...blockCountries] : [],
+          allowCountries: allowCountries ? [...allowCountries] : [],
+          botScoreThreshold: detectOpts.botScoreThreshold ?? DEFAULT_BOT_SCORE,
+          ttl,
+        }),
+        set(v) {
+          blockCountries = v.blockCountries.length ? new Set(v.blockCountries) : null;
+          allowCountries = v.allowCountries.length ? new Set(v.allowCountries) : null;
+          detectOpts.botScoreThreshold = workersDetect.botScoreThreshold = v.botScoreThreshold;
+          if (v.ttl !== undefined) ttl = v.ttl;
+        },
+      });
     },
     cloudflare(): CloudflareNeeds {
       return explicitStore?.cloudflare?.() ?? {};

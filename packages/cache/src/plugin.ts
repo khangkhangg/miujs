@@ -1,6 +1,7 @@
 import { definePlugin, type CloudflareNeeds, type Context, type Env } from "miujs";
 import { createCache, type CacheClient } from "./client.ts";
 import { isKVNamespace, kvStore } from "./kv.ts";
+import { cacheManage } from "./manage.ts";
 import { memoryStore } from "./memory.ts";
 import type { CacheStore } from "./store.ts";
 
@@ -76,6 +77,12 @@ export function cache(opts: CacheOptions = {}) {
       Object.assign(info, fallback.inspect?.());
       if (!configured) info.workers = `uses the KV binding env.${DEFAULT_KV_BINDING} when present`;
       return info;
+    },
+    manage() {
+      return cacheManage((ctx) => {
+        const store = storeFor(ctx.env, ctx.runtime);
+        return store.forEnv ? store.forEnv(ctx.env) : store;
+      });
     },
     cloudflare(): CloudflareNeeds {
       const binding = configured?.forEnv ? configured.inspect?.().binding : undefined;

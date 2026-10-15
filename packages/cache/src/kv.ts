@@ -1,12 +1,14 @@
 import type { Env } from "miujs";
 import { cacheErrors } from "./errors.ts";
-import type { CacheStore } from "./store.ts";
+import type { CacheScanQuery, CacheStore } from "./store.ts";
 
 /** The part of Cloudflare's `KVNamespace` this store uses. */
 export interface KVNamespaceLike {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
   delete(key: string): Promise<void>;
+  /** Present on real bindings; lets the admin list and purge keys. */
+  list?(options?: { prefix?: string; cursor?: string; limit?: number }): Promise<{ keys: { name: string; expiration?: number }[]; list_complete: boolean; cursor?: string }>;
 }
 
 /** Cloudflare KV rejects `expirationTtl` below 60 seconds. */
@@ -18,7 +20,15 @@ export function isKVNamespace(v: unknown): v is KVNamespaceLike {
 }
 
 function bindingStore(kv: KVNamespaceLike, binding?: string): CacheStore {
+  const list = kv.list?.bind(kv);
   return {
+    ...(list && {
+      async scan(q: CacheScanQuery) {
+        const res = await list({ prefix: q.prefix || undefined, cursor: q.cursor, limit: q.limit });
+        const keys = res.keys.map((k) => ({ key: k.name, bytes: null, expiresAt: k.expiration ? k.expiration * 1000 : null }));
+        return !res.list_complete && res.cursor ? { keys, next: res.cursor } : { keys };
+      },
+    }),
     name: "kv",
     async get(key) {
       return (await kv.get(key)) ?? undefined;

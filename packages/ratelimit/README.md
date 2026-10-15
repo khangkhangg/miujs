@@ -144,6 +144,17 @@ Rule fields:
 
 Store options: `memoryStore` `maxKeys` (default `100000`); `kvStore` and `redisStore` `prefix` (default `"ratelimit:"`); `durableObjectStore` binding (default `"RATE_LIMITER"`); `cloudflareBindingStore` `limit`, `period` (10 or 60) and optional `namespaceId`.
 
+## Admin (`manage()`)
+
+With `@miujs/admin`, `rateLimit()` shows a **Rate limits** section:
+
+- **Status**: store, number of rules, keys tracked (memory store only; other stores say they cannot count), 429s and store errors in this instance since it started, and a table of rules with their rejections.
+- **Settings**: `limit` and `window` per rule (e.g. `{ api: { limit: 200, window: "1m" } }`). They apply at once in this instance; the admin persists them and re-applies them on start. A value the store cannot enforce (e.g. a Cloudflare binding's fixed limit) is rejected and nothing changes. Lowering a limit can start affected clients on a fresh window.
+- **Limited clients** list (memory store only; paged, search, filter limited/all). API keys appear only as their hash. Row action: reset.
+- **Action** `resetKey`: forget one client (`ip:203.0.113.7`, `user:<id>`, `key:<hash>`) for a rule. Not available on `cloudflareBindingStore()`, which cannot reset.
+
+Counters are per instance; `limiter()` instances are not part of the plugin and do not appear.
+
 ## Errors
 
 - [`MIU_E_RATE_LIMITED`](../../docs/errors.md#miu_e_rate_limited): 429, the request exceeded a rule; see `Retry-After`.

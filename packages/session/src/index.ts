@@ -3,6 +3,7 @@
 
 import { definePlugin, errors, type CloudflareNeeds, type Context, type Env } from "miujs";
 import { base64urlDecode, base64urlEncode, randomId, sign, unsign, utf8 } from "./crypto.ts";
+import { sessionManage } from "./manage.ts";
 import type { SessionRecord, SessionStore } from "./stores.ts";
 
 export * from "./crypto.ts";
@@ -170,7 +171,7 @@ function withHeader(res: Response, name: string, value: string, append: boolean)
  */
 export function session(opts: SessionOptions = {}) {
   const cookieName = opts.cookieName ?? "miu_session";
-  const maxAge = opts.maxAge ?? 7 * DAY;
+  let maxAge = opts.maxAge ?? 7 * DAY;
   const store = opts.store;
   const csrf = opts.csrf ?? true;
   const trusted = new Set<string>();
@@ -331,6 +332,24 @@ export function session(opts: SessionOptions = {}) {
         trustedOrigins: [...(opts.trustedOrigins ?? [])],
         secret: opts.secret ? "(set)" : "env.SESSION_SECRET",
       };
+    },
+    manage() {
+      return sessionManage({
+        store,
+        csrf,
+        getMaxAge: () => maxAge,
+        setMaxAge: (s) => {
+          maxAge = s;
+        },
+        secretsFor,
+        secretSource(ctx) {
+          const raw = opts.secret ?? (ctx.env?.SESSION_SECRET as string | undefined);
+          const n = (Array.isArray(raw) ? raw : raw ? [raw] : []).filter(Boolean).length;
+          // Outside dev, a missing secret fails every request (MIU_E_SESSION_SECRET_MISSING) before this runs.
+          if (n === 0) return { value: "random (dev)", tone: "warning" };
+          return { value: n === 1 ? "configured" : `configured (${n} keys, rotating)` };
+        },
+      });
     },
     cloudflare(): CloudflareNeeds {
       return store?.cloudflare?.() ?? {};

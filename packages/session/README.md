@@ -157,6 +157,17 @@ export default miu({
 
 Store options: `dbSessionStore(database, { table })` (default `"miu_sessions"`), `redisSessionStore(client, { prefix })` (default `"miu:session:"`).
 
+## Admin (`manage()`)
+
+With `@miujs/admin`, `session()` shows a **Sessions** section:
+
+- **Status**: storage (`cookie` or the store kind), active sessions (memory and `dbSessionStore`; capped at 10000+; KV, Redis and cookies say they cannot count), max age, whether a secret is configured (never the secret itself; a random dev secret is flagged) and whether the CSRF check is on.
+- **Settings**: `maxAge` in seconds (60 s to 400 days). Applies to sessions written from then on.
+- **Active sessions** list (memory and `dbSessionStore`; paged, search = exact user id). Session ids are secrets, so rows show only a 12-character SHA-256 prefix; each row carries an encrypted reference (AES-GCM, key derived from the session secret) for the **revoke** row action.
+- **Action** `revokeUser` (danger): delete every session whose `userId` (what `@miujs/auth` stores) matches. Memory and `dbSessionStore` only.
+
+Cookie sessions cannot be listed or revoked one by one: rotate `SESSION_SECRET` to sign everyone out. KV and Redis stores cannot be listed or searched by user.
+
 ## Errors
 
 - [`MIU_E_SESSION_SECRET_MISSING`](../../docs/errors.md#miu_e_session_secret_missing): no secret outside dev. Set `SESSION_SECRET`.

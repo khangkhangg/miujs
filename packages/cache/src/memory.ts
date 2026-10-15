@@ -1,5 +1,5 @@
 import { cacheErrors } from "./errors.ts";
-import type { CacheStore } from "./store.ts";
+import type { CacheKeyInfo, CacheStore } from "./store.ts";
 
 export interface MemoryStoreOptions {
   /** Most entries kept before the least recently used one is evicted. Default 1000. */
@@ -25,6 +25,18 @@ export function memoryStore(opts: MemoryStoreOptions = {}): CacheStore {
   }
   const now = opts.now ?? Date.now;
   const map = new Map<string, Entry>();
+  let chars = 0; // total length of stored values, kept in step with `map`
+
+  const drop = (key: string): void => {
+    const e = map.get(key);
+    if (!e) return;
+    chars -= e.value.length;
+    map.delete(key);
+  };
+  const prune = (): void => {
+    const t = now();
+    for (const [k, e] of map) if (e.exp <= t) drop(k);
+  };
 
   return {
     name: "memory",
@@ -32,22 +44,52 @@ export function memoryStore(opts: MemoryStoreOptions = {}): CacheStore {
       const e = map.get(key);
       if (!e) return undefined;
       map.delete(key);
-      if (e.exp <= now()) return undefined;
+      if (e.exp <= now()) {
+        chars -= e.value.length;
+        return undefined;
+      }
       map.set(key, e); // move to most-recent position
       return e.value;
     },
     async set(key, value, o) {
-      map.delete(key);
+      drop(key);
       map.set(key, { value, exp: o?.ttl ? now() + o.ttl * 1000 : Infinity });
-      if (map.size > maxEntries) map.delete(map.keys().next().value as string);
+      chars += value.length;
+      if (map.size > maxEntries) drop(map.keys().next().value as string);
     },
     async delete(key) {
-      map.delete(key);
+      drop(key);
     },
     size() {
-      const t = now();
-      for (const [k, e] of map) if (e.exp <= t) map.delete(k);
+      prune();
       return map.size;
+    },
+    bytes() {
+      prune();
+      return chars;
+    },
+    // Keys in sorted order so a cursor (the last key of the page) stays stable while reads
+    // reorder the LRU. Costs O(n log n) over at most `maxEntries` keys.
+    async scan(q) {
+      prune();
+      const prefix = q.prefix ?? "";
+      const after = q.cursor;
+      const keys: string[] = [];
+      for (const k of map.keys()) if (k.startsWith(prefix) && (after === undefined || k > after)) keys.push(k);
+      keys.sort();
+      const page = keys.slice(0, q.limit);
+      const out: CacheKeyInfo[] = page.map((key) => {
+        const e = map.get(key)!;
+        return { key, bytes: e.value.length, expiresAt: e.exp === Infinity ? null : e.exp };
+      });
+      return keys.length > q.limit ? { keys: out, next: page[page.length - 1] } : { keys: out };
+    },
+    async clear() {
+      prune();
+      const n = map.size;
+      map.clear();
+      chars = 0;
+      return n;
     },
     inspect: () => ({ maxEntries }),
   };

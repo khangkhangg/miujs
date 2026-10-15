@@ -119,7 +119,7 @@ const store = redisStore(redisFromCommand((cmd, args) => client.sendCommand([cmd
 
 ### Custom stores
 
-A `CacheStore` moves strings: `name`, `get(key)`, `set(key, value, { ttl })`, `delete(key)`, and optionally `size()`, `forEnv(env)` and `inspect()`.
+A `CacheStore` moves strings: `name`, `get(key)`, `set(key, value, { ttl })`, `delete(key)`, and optionally `size()`, `bytes()`, `scan(query)`, `clear()`, `forEnv(env)` and `inspect()`.
 
 ## Options
 
@@ -148,6 +148,16 @@ A `CacheStore` moves strings: `name`, `get(key)`, `set(key, value, { ttl })`, `d
 | --- | --- | --- | --- |
 | `ttl` | `number` | none | Seconds until the entry expires. Must be positive. |
 | `tags` | `string[]` | `[]` | Tags for `invalidateTag`. |
+
+## Admin (`manage()`)
+
+With `@miujs/admin`, the plugin shows a **Cache** section:
+
+- **Status**: store name, entries and total size (memory store; `null` with a hint on KV and Redis, which cannot count cheaply), hits, misses and hit rate counted by this instance since it started.
+- **Keys** list (paged, search = key prefix, values are never shown): memory store, and KV when the binding has `list()` (real Cloudflare bindings do). Redis cannot list keys (no `SCAN` in `RedisLike`), so the list explains that instead. Row action: delete.
+- **Actions**: `deleteKey`, `invalidateTag`, `purgePrefix` (danger) and `purgeAll` (danger). Purges need a store that can list keys and delete at most 1000 keys per run; the result says when more remain. `purgeAll` on the memory store clears it at once.
+
+Custom stores can opt in by implementing `scan({ prefix, cursor, limit })`, `clear()` and `bytes()`.
 
 ## Errors
 

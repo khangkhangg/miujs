@@ -21,7 +21,41 @@ export interface SessionStore {
   delete(id: string, env: Env): Promise<void>;
   inspect?(): Record<string, unknown>;
   cloudflare?(): CloudflareNeeds;
+  /** Live sessions, counting at most `max` (admin status). Memory and SQL stores. */
+  count?(env: Env, max: number): Promise<number>;
+  /** Pages through live sessions (admin list). Memory and SQL stores. */
+  list?(q: SessionListQuery, env: Env): Promise<{ sessions: SessionInfo[]; next?: string }>;
+  /** Deletes every session of this user (`data.userId`, compared as text); returns how many. */
+  deleteUser?(userId: string, env: Env): Promise<number>;
 }
+
+/** The session data key that holds the signed-in user's id (set by @miujs/auth). */
+export const SESSION_USER_KEY = "userId";
+
+/** SQL for a stored session's user id as text (SQLite and D1 JSON functions). */
+const USER_SQL = `CAST(json_extract(data, '$.d.${SESSION_USER_KEY}') AS TEXT)`;
+
+export interface SessionListQuery {
+  /** Opaque cursor from the previous page's `next`. */
+  cursor?: string;
+  limit: number;
+  /** Only sessions of this user. */
+  userId?: string;
+}
+
+/** A session as listed for the admin. `id` is a secret: callers must not show it. */
+export interface SessionInfo {
+  id: string;
+  /** `data.userId` as text, or null when signed out. */
+  userId: string | null;
+  /** Epoch ms. */
+  expiresAt: number;
+}
+
+const userOf = (d: Record<string, unknown> | undefined): string | null => {
+  const v = d?.[SESSION_USER_KEY];
+  return v === undefined || v === null ? null : String(v);
+};
 
 // ---------------------------------------------------------------------------------------------
 
@@ -59,6 +93,38 @@ export function memorySessionStore(opts: { now?: () => number } = {}): SessionSt
     },
     async delete(id) {
       map.delete(id);
+    },
+    async count(_env, max) {
+      const t = now();
+      let n = 0;
+      for (const r of map.values()) if (r.e > t && ++n >= max) break;
+      return n;
+    },
+    // Cursor = sessions already returned (Map order is insertion order; new logins append).
+    async list(q) {
+      const t = now();
+      const skip = q.cursor ? Number(q.cursor) || 0 : 0;
+      const sessions: SessionInfo[] = [];
+      let seen = 0;
+      for (const [id, r] of map) {
+        if (r.e <= t) continue;
+        const userId = userOf(r.d);
+        if (q.userId !== undefined && userId !== q.userId) continue;
+        if (seen++ < skip) continue;
+        if (sessions.length === q.limit) return { sessions, next: String(skip + sessions.length) };
+        sessions.push({ id, userId, expiresAt: r.e });
+      }
+      return { sessions };
+    },
+    async deleteUser(userId) {
+      let n = 0;
+      for (const [id, r] of map) {
+        if (userOf(r.d) === userId) {
+          map.delete(id);
+          if (r.e > now()) n++;
+        }
+      }
+      return n;
     },
     inspect: () => ({ store: "memory" }),
   };
@@ -115,6 +181,8 @@ interface DbStatement {
   bind(...values: unknown[]): DbStatement;
   first<T = Record<string, unknown>>(column?: string): Promise<T | null>;
   run(): Promise<unknown>;
+  /** D1 and @miujs/db have it; the admin list needs it. */
+  all?<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
 }
 interface DbLike {
   prepare(sql: string): DbStatement;
@@ -160,6 +228,30 @@ export function dbSessionStore(database: DbSource, opts: { table?: string } = {}
     async delete(id, env) {
       const d = await get(env);
       await d.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
+    },
+    async count(env, max) {
+      const d = await get(env);
+      return (await d.prepare(`SELECT COUNT(*) AS n FROM (SELECT 1 FROM ${table} WHERE expires > ? LIMIT ?)`).bind(Date.now(), max).first<number>("n")) ?? 0;
+    },
+    // Paged by rowid, so the cursor never carries a session id.
+    async list(q, env) {
+      const d = await get(env);
+      const after = q.cursor ? Number(q.cursor) || 0 : 0;
+      const byUser = q.userId !== undefined ? ` AND ${USER_SQL} = ?` : "";
+      const stmt = d
+        .prepare(`SELECT rowid AS r, id, expires, ${USER_SQL} AS u FROM ${table} WHERE rowid > ? AND expires > ?${byUser} ORDER BY rowid LIMIT ?`)
+        .bind(...[after, Date.now(), ...(q.userId !== undefined ? [q.userId] : []), q.limit + 1]);
+      if (!stmt.all) throw errors.badRequest("This database client cannot list rows", "Use @miujs/db (sqlite() or d1()) for dbSessionStore.");
+      const rows = (await stmt.all<{ r: number; id: string; expires: number; u: string | null }>()).results;
+      const page = rows.slice(0, q.limit);
+      const sessions = page.map((x) => ({ id: x.id, userId: x.u ?? null, expiresAt: Number(x.expires) }));
+      return rows.length > q.limit ? { sessions, next: String(page[page.length - 1].r) } : { sessions };
+    },
+    async deleteUser(userId, env) {
+      const d = await get(env);
+      const n = (await d.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${USER_SQL} = ? AND expires > ?`).bind(userId, Date.now()).first<number>("n")) ?? 0;
+      await d.prepare(`DELETE FROM ${table} WHERE ${USER_SQL} = ?`).bind(userId).run();
+      return n;
     },
     inspect: () => ({ store: "db", table, ...("prepare" in database ? {} : { binding: database.binding }) }),
     cloudflare: () => ("prepare" in database ? {} : { d1: [database.binding] }),

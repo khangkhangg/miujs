@@ -40,10 +40,22 @@ const TAG_INDEX_GRACE = 60;
 interface Shared {
   inflight: Map<string, Promise<unknown>>;
   tagLocks: Map<string, Promise<void>>;
+  stats: CacheStats;
 }
 
-// State shared by every client over the same store (in-flight `remember` calls, tag locks).
+/** Reads through `get`/`remember` in this process, for the admin's status. */
+export interface CacheStats {
+  hits: number;
+  misses: number;
+}
+
+// State shared by every client over the same store (in-flight `remember` calls, tag locks, stats).
 const shared = new WeakMap<CacheStore, Shared>();
+
+/** Hits and misses counted by clients over `store` in this process (zero before any client exists). */
+export function cacheStats(store: CacheStore): CacheStats {
+  return { ...(shared.get(store)?.stats ?? { hits: 0, misses: 0 }) };
+}
 
 function checkName(what: "key" | "tag", v: unknown): asserts v is string {
   if (typeof v !== "string" || v === "") throw cacheErrors.key(what, v);
@@ -76,8 +88,13 @@ function parse(text: string | undefined): unknown {
 /** A cache client over `store`. Use this outside requests (jobs, scripts); handlers get `ctx.cache`. */
 export function createCache(store: CacheStore): CacheClient {
   let state = shared.get(store);
-  if (!state) shared.set(store, (state = { inflight: new Map(), tagLocks: new Map() }));
-  const { inflight, tagLocks } = state;
+  if (!state) shared.set(store, (state = { inflight: new Map(), tagLocks: new Map(), stats: { hits: 0, misses: 0 } }));
+  const { inflight, tagLocks, stats } = state;
+  const count = <T>(v: T): T => {
+    if (v === undefined) stats.misses++;
+    else stats.hits++;
+    return v;
+  };
 
   // Serialize read-modify-write of a tag index so concurrent sets don't drop keys.
   // (Within one process. On KV, writes from other isolates can still race: see README.)
@@ -144,7 +161,7 @@ export function createCache(store: CacheStore): CacheClient {
   return {
     async get<T>(key: string) {
       checkName("key", key);
-      return parse(await store.get(key)) as T | undefined;
+      return count(parse(await store.get(key))) as T | undefined;
     },
     set,
     async delete(key) {
@@ -161,7 +178,7 @@ export function createCache(store: CacheStore): CacheClient {
       const running = inflight.get(key);
       if (running) return running as Promise<T>;
       const p = (async () => {
-        const hit = parse(await store.get(key));
+        const hit = count(parse(await store.get(key)));
         if (hit !== undefined) return hit as T;
         const value = await fn();
         if (value !== undefined) await set(key, value, { ttl: ttlSeconds });
