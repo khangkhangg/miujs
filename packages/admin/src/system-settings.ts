@@ -3,13 +3,25 @@
 // on a request, so a change made on one Workers isolate reaches the others within the TTL.
 
 import { validate, type Context, type ManageSettings } from "miujs";
-import type { Database, Migration } from "@miujs/db";
+import { tableSql, type Database, type Migration, type TableDescription } from "@miujs/db";
 
 export const SETTINGS_TABLE = "admin_system_settings";
 
+/** The settings table as a plain description (`introspect()` shape), for adminTables() and Drizzle diffs. */
+export function settingsTable(): TableDescription {
+  const col = (name: string, type: string, notNull: boolean, primaryKey = false) => ({ name, type, notNull, default: null, primaryKey });
+  return {
+    name: SETTINGS_TABLE,
+    columns: [col("plugin", "TEXT", true, true), col("section", "TEXT", true, true), col("value", "TEXT", true), col("updated_at", "INTEGER", true), col("updated_by", "TEXT", false)],
+    primaryKey: ["plugin", "section"],
+    indexes: [],
+    foreignKeys: [],
+  };
+}
+
 export const systemMigration: Migration = {
   id: "admin_system_001_settings",
-  sql: `CREATE TABLE "${SETTINGS_TABLE}" ("plugin" TEXT NOT NULL, "section" TEXT NOT NULL, "value" TEXT NOT NULL, "updated_at" INTEGER NOT NULL, "updated_by" TEXT, PRIMARY KEY ("plugin", "section"));`,
+  sql: tableSql(settingsTable()).map((s) => `${s};`).join("\n"),
 };
 
 export interface SettingsTarget {

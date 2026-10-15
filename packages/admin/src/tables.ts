@@ -4,7 +4,7 @@ import { quoteIdent, tableSql, type ColumnDescription, type IndexDescription, ty
 import { adminErrors } from "./errors.ts";
 import { sqlType } from "./fields.ts";
 import type { Resource } from "./resource.ts";
-import { systemMigration } from "./system-settings.ts";
+import { settingsTable, systemMigration } from "./system-settings.ts";
 
 /** Checks names are unique and every relation points at a resource in the set. */
 export function checkResources(resources: readonly Resource[]): Map<string, Resource> {
@@ -88,10 +88,10 @@ export function tableDescription(r: Resource, byName: Map<string, Resource>): Ta
   return { name: r.table, columns, primaryKey: ["id"], indexes, foreignKeys };
 }
 
-/** Table descriptions for every resource (feed them to `diffSchema` from `@miujs/db/drizzle`). */
+/** Table descriptions for every resource plus `admin_system_settings` (feed them to `diffSchema` from `@miujs/db/drizzle`). */
 export function adminTables(resources: readonly Resource[]): TableDescription[] {
   const byName = checkResources(resources);
-  return orderByDependencies(resources).map((r) => tableDescription(r, byName));
+  return [...orderByDependencies(resources).map((r) => tableDescription(r, byName)), settingsTable()];
 }
 
 export function ftsTable(r: Resource): string {

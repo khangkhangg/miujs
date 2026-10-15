@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { isMiuError } from "miujs";
 import { introspect, migrate, sqlite } from "@miujs/db";
+import { diffSchema } from "@miujs/db/drizzle";
 import { adminMigrations, adminTables, field, resource } from "../src/index.ts";
 
 const companies = resource("companies", {
@@ -104,5 +105,29 @@ describe("adminMigrations", () => {
 
     // Re-running applies nothing.
     expect(await migrate(db, adminMigrations([contacts, companies, notes]))).toEqual([]);
+  });
+});
+
+describe("admin_system_settings in adminTables", () => {
+  test("adminTables describes the System settings table, matching what adminMigrations creates", async () => {
+    const tables = adminTables([contacts, companies]);
+    const s = tables.find((x) => x.name === "admin_system_settings")!;
+    expect(s.primaryKey).toEqual(["plugin", "section"]);
+    expect(s.columns.filter((c) => c.primaryKey).map((c) => c.name)).toEqual(["plugin", "section"]);
+    expect(s.columns.map((c) => [c.name, c.type, c.notNull])).toEqual([
+      ["plugin", "TEXT", true],
+      ["section", "TEXT", true],
+      ["value", "TEXT", true],
+      ["updated_at", "INTEGER", true],
+      ["updated_by", "TEXT", false],
+    ]);
+    const db = sqlite();
+    await migrate(db, adminMigrations([contacts, companies]));
+    const diff = diffSchema(await introspect(db), tables);
+    expect(diff.statements).toEqual([]);
+    // A database without it gets it from a Drizzle diff.
+    const fresh = sqlite();
+    await migrate(fresh, adminMigrations([contacts, companies]).filter((m) => m.id !== "admin_system_001_settings"));
+    expect(diffSchema(await introspect(fresh), tables).sql).toContain('CREATE TABLE "admin_system_settings"');
   });
 });

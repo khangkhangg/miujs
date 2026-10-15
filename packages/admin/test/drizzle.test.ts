@@ -25,7 +25,7 @@ describe("resourceTables (via @miujs/db tableFromSchema)", () => {
   test("matches adminTables column for column", () => {
     const viaDrizzle = resourceTables([contacts, companies]);
     const plain = adminTables([contacts, companies]);
-    for (const desc of plain) {
+    for (const desc of plain.filter((d) => d.name !== "admin_system_settings")) {
       const other = viaDrizzle[desc.name === "contacts" ? "contacts" : "companies"].description;
       const strip = (cs: typeof desc.columns) => cs.map(({ name, type, notNull, primaryKey }) => ({ name, type, notNull, primaryKey }));
       expect(strip(other.columns)).toEqual(strip(desc.columns));

@@ -388,6 +388,45 @@ describe("system actions as MCP tools", () => {
     expect((await h.mcp("tools/call", { name: "system_jobs_ping", arguments: {} }, "jo")).result.isError).toBe(false);
   });
 
+  test("three read-only tools: system_overview, system_status, system_list", async () => {
+    const h = await systemSetup();
+    const tools = (await h.mcp("tools/list")).result.tools as any[];
+    for (const n of ["system_overview", "system_status", "system_list"]) {
+      const tool = tools.find((x) => x.name === n);
+      expect([n, tool?.annotations.readOnlyHint, tool?.annotations.destructiveHint]).toEqual([n, true, false]);
+    }
+    expect(tools.find((x) => x.name === "system_status").inputSchema.required).toEqual(["plugin", "section"]);
+    expect(tools.find((x) => x.name === "system_list").inputSchema.required).toEqual(["plugin", "section", "list"]);
+    expect(tools.filter((x) => x.name.startsWith("admin_system")).length).toBe(0);
+
+    const call = async (name: string, args: unknown, user = "root") => {
+      const r = (await h.mcp("tools/call", { name, arguments: args }, user)).result;
+      return { isError: r.isError, body: JSON.parse(r.content[0].text) };
+    };
+    const ov = await call("system_overview", {});
+    expect(ov.body.plugins.map((p: any) => p.name)).toContain("jobs");
+    const st = await call("system_status", { plugin: "jobs", section: "queue" });
+    expect(st.body.status.stats[0].label).toBe("Pending");
+    const ls = await call("system_list", { plugin: "jobs", section: "queue", list: "jobs", limit: 500, search: "Job", filters: JSON.stringify({ state: "failed" }) });
+    expect(ls.body.rows.map((r: any) => r.id)).toEqual(["job1", "job5"]);
+    expect(h.jobs.queries.at(-1)).toEqual({ limit: 100, search: "Job", filters: { state: "failed" } });
+    expect((await call("system_status", { plugin: "jobs", section: "nope" })).body.error.code).toBe("MIU_E_ADMIN_SYSTEM_SECTION_UNKNOWN");
+    for (const [n, a] of [["system_overview", {}], ["system_status", { plugin: "jobs", section: "queue" }], ["system_list", { plugin: "jobs", section: "queue", list: "jobs" }]] as const) {
+      const r = await call(n, a, "bob");
+      expect([n, r.isError, r.body.error.code]).toEqual([n, true, "MIU_E_ADMIN_SYSTEM_FORBIDDEN"]);
+    }
+  });
+
+  test("read tools use per-plugin read permissions with access", async () => {
+    const h = await systemSetup({ access: true });
+    const call = async (name: string, args: unknown, user: string) => (await h.mcp("tools/call", { name, arguments: args }, user)).result;
+    expect((await call("system_status", { plugin: "jobs", section: "queue" }, "jo")).isError).toBe(false);
+    expect((await call("system_status", { plugin: "mailer", section: "outbox" }, "jo")).isError).toBe(true);
+    expect((await call("system_list", { plugin: "jobs", section: "queue", list: "jobs" }, "view")).isError).toBe(false);
+    const ov = JSON.parse((await call("system_overview", {}, "jo")).content[0].text);
+    expect(ov.plugins.map((p: any) => p.name)).toEqual(["jobs"]);
+  });
+
   test("systemMcp: false keeps actions off MCP", async () => {
     const h = await systemSetup({ admin: { systemMcp: false } });
     const tools = (await h.mcp("tools/list")).result.tools as any[];
@@ -482,7 +521,8 @@ describe("built-in app section", () => {
     const table = (title: string) => r.body.status.tables.find((x: any) => x.title === title);
     const routes = table("Routes").rows;
     expect(routes.find((x: any) => x.path === "/api/_admin/system/jobs/queue/actions/purge")).toMatchObject({ method: "POST", auth: "required", mcp: true });
-    expect(routes.find((x: any) => x.path === "/api/_admin/system")).toMatchObject({ mcp: false });
+    expect(routes.find((x: any) => x.path === "/api/_admin/system")).toMatchObject({ name: "system_overview", mcp: true });
+    expect(routes.find((x: any) => x.path === "/api/_admin/system/:plugin")).toMatchObject({ mcp: false });
     expect(table("Plugins").rows.map((x: any) => x.name)).toContain("jobs");
     expect(table("Recent errors").rows[0]).toMatchObject({ code: "MIU_E_ADMIN_SYSTEM_SECTION_UNKNOWN", count: 1 });
   });

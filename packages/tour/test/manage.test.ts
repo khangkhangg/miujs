@@ -14,7 +14,10 @@ function harness() {
     ],
   });
   const proc = fakeProcessor({ fail: 0 });
-  const s = setup({ plugins: [probe], processors: [proc] });
+  // The tour store stamps rows with the test clock, so newest-first order never ties.
+  let now = () => Date.now();
+  const s = setup({ plugins: [probe], processors: [proc], now: () => now() });
+  now = () => s.clock.now();
   const [section] = s.plugin.manage() as ManageSection[];
   const inReq = async <T>(fn: (ctx: Context) => Promise<T> | T): Promise<T> => {
     job = async (ctx) => fn(ctx);
@@ -76,9 +79,10 @@ describe("tour manage()", () => {
   test("the tours list pages, filters, searches and never shows password hashes or secrets", async () => {
     const h = harness();
     const { tour } = await seedTour(h.app);
+    await call(h.app, `/tours/${tour.id}`, json("PATCH", { status: "published", password: "hunter2-secret-pw" }, editor));
+    // Strictly newer, so the newest-first order never depends on how two equal timestamps tie.
     h.clock.advance(1_000);
     await call(h.app, "/tours", json("POST", { title: "Beach House", slug: "beach" }, editor));
-    await call(h.app, `/tours/${tour.id}`, json("PATCH", { status: "published", password: "hunter2-secret-pw" }, editor));
     const p1 = await h.inReq((ctx) => h.list.list({ limit: 1 }, ctx));
     expect(p1.rows.map((r) => r.slug)).toEqual(["beach"]);
     expect(p1.next).toBeString();

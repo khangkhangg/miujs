@@ -223,7 +223,9 @@ export function createSystem(o: SystemOptions) {
   const routes: RouteDef[] = [
     route.get(base, {
       ...common,
-      name: "admin_system",
+      name: "system_overview",
+      mcp: o.mcp,
+      description: "Start here: the plugins you may read, each with its management sections (ids for system_status) and what you may change. Requires system:read or system.<plugin>:read (the admin role without @miujs/access).",
       summary: "List the plugins of this app and their management sections",
       handler: (ctx) => {
         const c = ctx as unknown as Context;
@@ -267,7 +269,9 @@ export function createSystem(o: SystemOptions) {
     }),
     route.get(`${base}/:plugin/:section`, {
       ...common,
-      name: "admin_system_section",
+      name: "system_status",
+      mcp: o.mcp,
+      description: "Status (stats, tables) of one section, plus its lists (for system_list), settings schema and actions (run them with system_<plugin>_<action>). Requires system.<plugin>:read or system:read.",
       summary: "One management section: status, lists, settings schema and actions",
       params: sectionParams,
       handler: async (ctx) => {
@@ -307,7 +311,9 @@ export function createSystem(o: SystemOptions) {
     }),
     route.get(`${base}/:plugin/:section/lists/:list`, {
       ...common,
-      name: "admin_system_list",
+      name: "system_list",
+      mcp: o.mcp,
+      description: "One page of a section list: { rows, next }. Pass next back as cursor. limit 1-100 (default 25). filters is a JSON object string of the list filter keys to one of their options, e.g. {\"state\":\"failed\"}. Requires system.<plugin>:read or system:read.",
       summary: "One page of a management list",
       params: listParams,
       query: t.object({
@@ -423,7 +429,7 @@ export function createSystem(o: SystemOptions) {
   function mcpRoutes(): RouteDef[] {
     if (!o.mcp) return [];
     const snapshot = collect(app(), o.builtin(), () => {});
-    const used = new Set<string>();
+    const used = new Set(["system_overview", "system_status", "system_list"]);
     const nameFor = (plugin: string, section: string, action: string) => {
       for (const n of [`system_${plugin}_${action}`, `system_${plugin}_${section}_${action}`]) {
         const tn = toolName(n);
