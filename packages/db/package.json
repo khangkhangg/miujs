@@ -5,21 +5,30 @@
   "license": "AGPL-3.0-only",
   "exports": {
     ".": "./src/index.ts",
-    "./drizzle": "./src/drizzle.ts"
+    "./drizzle": "./src/drizzle.ts",
+    "./postgres": "./src/postgres.ts"
   },
   "files": ["src"],
+  "sideEffects": ["./src/drizzle.ts"],
   "dependencies": {
     "miujs": "workspace:*"
   },
   "peerDependencies": {
-    "drizzle-orm": ">=0.45.0 <1"
+    "drizzle-orm": ">=0.45.0 <1",
+    "postgres": ">=3.4.4 <4"
   },
   "peerDependenciesMeta": {
     "drizzle-orm": {
       "optional": true
+    },
+    "postgres": {
+      "optional": true
     }
   },
   "devDependencies": {
-    "drizzle-orm": "^0.45.4"
+    "@electric-sql/pglite": "0.3.10",
+    "@electric-sql/pglite-socket": "0.0.15",
+    "drizzle-orm": "^0.45.4",
+    "postgres": "3.4.7"
   }
 }

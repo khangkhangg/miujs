@@ -1,0 +1,21 @@
+{
+  "name": "example-postgres",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun serve.ts",
+    "migrate": "bun migrate.ts",
+    "dev:worker": "bunx wrangler dev",
+    "deploy": "bunx wrangler deploy"
+  },
+  "dependencies": {
+    "miujs": "workspace:*",
+    "@miujs/db": "workspace:*",
+    "drizzle-orm": "^0.45.4",
+    "postgres": "3.4.7"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.3.10",
+    "@electric-sql/pglite-socket": "0.0.15"
+  }
+}

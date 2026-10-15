@@ -40,6 +40,11 @@ export interface CloudflareNeeds {
   ai?: { binding: string };
   /** Vectorize indexes (`[[vectorize]]`). */
   vectorize?: { binding: string; indexName: string }[];
+  /**
+   * Hyperdrive configs (`[[hyperdrive]]`) for Postgres/MySQL. `id` comes from
+   * `wrangler hyperdrive create`; `localConnectionString` is what `wrangler dev` connects to.
+   */
+  hyperdrive?: { binding: string; id?: string; localConnectionString?: string }[];
 }
 
 /**

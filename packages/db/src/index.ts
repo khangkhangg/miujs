@@ -6,13 +6,13 @@
 //                        loadMigrations()/migrationsFromGlob(), introspect(), generateDrizzleSchema().
 //   "@miujs/db/drizzle"  drizzle(ctx)/drizzleFor(db), tableFromSchema()/schemaFromTable(),
 //                        describeTable()/diffSchema(). Needs the optional peer `drizzle-orm`.
+//   "@miujs/db/postgres" pg() plugin: ctx.sql (postgres.js) + ctx.orm (Drizzle), through Hyperdrive on
+//                        Workers (a client per request) and a pool elsewhere; migratePostgres(),
+//                        fromPgError(). Needs `postgres` and `drizzle-orm`. See docs/postgres.md.
 //
-// Postgres / MySQL (not built): MiuJS targets D1/SQLite. On Cloudflare, Postgres or MySQL is
-// reached through a Hyperdrive binding plus a driver (postgres.js / pg / mysql2) and Drizzle's own
-// adapter (drizzle-orm/postgres-js, drizzle-orm/mysql2), created per request from
-// `ctx.env.HYPERDRIVE.connectionString`. None of this package's SQL helpers (splitSql, introspect,
-// diffSchema, tableFromSchema DDL) speak those dialects. A future `@miujs/db` adapter would need a
-// dialect-aware Database interface first; until then use Drizzle directly for those databases.
+// The D1-shaped Database and the SQL helpers here (splitSql, migrate, introspect, diffSchema,
+// tableFromSchema DDL) are SQLite/D1 only; Postgres goes through @miujs/db/postgres. MySQL is not
+// supported: use Drizzle's own adapter (drizzle-orm/mysql2) directly.
 
 import { dbManage } from "./manage.ts";
 import { definePlugin, detectRuntime, errors, targetRuntime, type CloudflareNeeds, type Env, type Runtime } from "miujs";

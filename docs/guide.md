@@ -117,7 +117,7 @@ export default miu({ name: "notes", routes: [listNotes], plugins: [db({ migratio
 | --- | --- |
 | [`@miujs/auth`](../packages/auth/README.md) | Email and password accounts, API tokens, roles (`user`, `auth: "required"`) |
 | [`@miujs/session`](../packages/session/README.md) | Signed-cookie or server-side sessions, flash, CSRF protection |
-| [`@miujs/db`](../packages/db/README.md) | D1-compatible SQL on SQLite or Cloudflare D1, migrations |
+| [`@miujs/db`](../packages/db/README.md) | D1-compatible SQL on SQLite or Cloudflare D1, migrations; [Postgres over Hyperdrive](postgres.md) |
 | [`@miujs/cache`](../packages/cache/README.md) | `remember()`, tags; memory, KV or Redis |
 | [`@miujs/queue`](../packages/queue/README.md) | Typed jobs, retries, cron; Cloudflare Queues |
 | [`@miujs/ratelimit`](../packages/ratelimit/README.md) | Rate limiting rules |

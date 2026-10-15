@@ -26,6 +26,9 @@ export { describeTable, diffSchema, type DiffOptions, type SchemaDiff, type Sche
  * ```ts
  * declare module "@miujs/db/drizzle" { interface DrizzleRegister { schema: typeof schema } }
  * ```
+ *
+ * With Postgres (`@miujs/db/postgres`), register the whole ORM type instead:
+ * `interface DrizzleRegister { orm: PgOrm<typeof schema> }`.
  */
 export interface DrizzleRegister {}
 
@@ -34,10 +37,13 @@ export type RegisteredSchema = DrizzleRegister extends { schema: infer S extends
 /** A Drizzle database over a MiuJS `Database`. */
 export type Orm<TSchema extends Record<string, unknown> = RegisteredSchema> = DrizzleD1Database<TSchema>;
 
+/** The type of `ctx.orm`: `DrizzleRegister["orm"]` when registered (Postgres), else `Orm`. */
+export type ContextOrm = DrizzleRegister extends { orm: infer O } ? O : Orm;
+
 declare module "miujs" {
   interface Context {
     /** Drizzle ORM over `ctx.db`, set by `db({ drizzle: { schema } })`. */
-    orm: Orm;
+    orm: ContextOrm;
   }
 }
 
@@ -72,7 +78,7 @@ export function drizzleFor<TSchema extends Record<string, unknown> = Record<stri
 
 /** `ctx.orm` when the plugin set it up, otherwise Drizzle over `ctx.db` (no schema). */
 export function drizzle(ctx: Pick<Context, "orm" | "db">): Orm {
-  if (ctx.orm) return ctx.orm;
+  if (ctx.orm) return ctx.orm as unknown as Orm;
   if (!ctx.db) {
     throw errors.config(
       "MIU_E_DB_MISSING",

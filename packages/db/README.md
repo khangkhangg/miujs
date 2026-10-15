@@ -2,16 +2,17 @@
 
 > D1-compatible SQL for MiuJS: one `Database` interface over Cloudflare D1 and local bun:sqlite, with migrations, introspection and optional Drizzle ORM.
 
-`@miujs/db` adds `ctx.db`, a small D1-shaped interface (`prepare`/`bind`/`first`/`all`/`run`/`raw`, `batch`, `exec`). The same code runs on a Cloudflare D1 binding and, locally, on `bun:sqlite`. It applies SQL migrations once per database, reads schemas back with `introspect()`, and, through the `@miujs/db/drizzle` entry point, decorates `ctx.orm` with Drizzle. It targets SQLite/D1 only; for Postgres or MySQL use Drizzle directly.
+`@miujs/db` adds `ctx.db`, a small D1-shaped interface (`prepare`/`bind`/`first`/`all`/`run`/`raw`, `batch`, `exec`). The same code runs on a Cloudflare D1 binding and, locally, on `bun:sqlite`. It applies SQL migrations once per database, reads schemas back with `introspect()`, and, through the `@miujs/db/drizzle` entry point, decorates `ctx.orm` with Drizzle. The `@miujs/db/postgres` entry adds Postgres (Hyperdrive on Workers, a pool elsewhere) with Drizzle and postgres.js; see [Postgres](#postgres). MySQL is not supported; use Drizzle directly.
 
 ## Install
 
 ```bash
 bun add @miujs/db miujs
-bun add drizzle-orm   # optional, only for @miujs/db/drizzle
+bun add drizzle-orm   # optional, for @miujs/db/drizzle and @miujs/db/postgres
+bun add postgres      # optional, only for @miujs/db/postgres
 ```
 
-Bun runs the TypeScript source; Node and Deno get prebuilt JS with `.d.ts` types (npm packages are not published yet). `drizzle-orm` (`>=0.45.0 <1`) is an optional peer dependency used only by the `@miujs/db/drizzle` subpath; `@miujs/db` itself never imports it.
+Bun runs the TypeScript source; Node and Deno get prebuilt JS with `.d.ts` types (npm packages are not published yet). `drizzle-orm` (`>=0.45.0 <1`) is an optional peer dependency used only by the `@miujs/db/drizzle` and `@miujs/db/postgres` subpaths, and `postgres` (postgres.js, `>=3.4.4 <4`) only by `@miujs/db/postgres`; `@miujs/db` itself imports neither.
 
 ## Quick start
 
@@ -148,6 +149,19 @@ The subpath also exports `tableFromSchema(name, t.object(...), { primaryKey, ind
 
 `sqlite(path)`: `path` defaults to `":memory:"`.
 
+## Postgres
+
+`@miujs/db/postgres` (needs `postgres` and `drizzle-orm`) gives each request `ctx.orm` (Drizzle over postgres.js) and `ctx.sql` (the postgres.js client). On Cloudflare Workers it creates a client per request from a Hyperdrive binding and closes it after the response; on Bun, Node and Deno it keeps one pool from `DATABASE_URL` that `app.stop()` closes. `migratePostgres(sql, migrations)` applies the same `NNNN_name.sql` files, and `fromPgError(err)` maps constraint errors to 409/400 MiuErrors.
+
+```ts
+import { pg } from "@miujs/db/postgres";
+
+const database = pg({ schema, hyperdriveId: "<id>" }); // DATABASE_URL off Workers, env.HYPERDRIVE on Workers
+const app = miu({ plugins: [database], routes: [route.get("/n", { handler: async (ctx) => (await ctx.sql`SELECT 1 AS n`)[0] })] });
+```
+
+The rest of this package (`db()`, `ctx.db`, `migrate()`, `introspect()`, `diffSchema()`, `tableFromSchema()`) and `@miujs/admin` resources are SQLite/D1 only. Setup, Hyperdrive, pooling, transactions, migrations, testing with PGlite and what is and is not tested: [docs/postgres.md](../../docs/postgres.md). Example: [examples/postgres](../../examples/postgres).
+
 ## In @miujs/admin
 
 `db()` has a management section (`manage()`), shown by `@miujs/admin`:
@@ -192,6 +206,7 @@ When bundling with `db({ drizzle })`, add `import "@miujs/db/drizzle";` to your 
 ## Links
 
 - [Getting started guide](../../docs/guide.md)
+- [Postgres and Hyperdrive](../../docs/postgres.md)
 - [Error codes](../../docs/errors.md)
 - [AGENTS.md](../../AGENTS.md)
 - [Source](./src)
