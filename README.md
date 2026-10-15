@@ -323,8 +323,11 @@ export const followUp = defineWorkflow("contact-follow-up", {
 - **Verified only against fakes:** Redis and S3 adapters (fake servers, AWS signature test vectors),
   Laravel/Django session crypto (independent reference ports, no real PHP/Python app yet), OAuth
   providers and the Anthropic/Workers AI APIs (recorded shapes, no live calls).
-- **Not built yet:** an npm release (`scripts/build-packages.ts` builds it; the `@miujs` npm scope isn't
-  registered yet).
+- **Not on npm yet:** the packages are release-ready (prebuilt JS and `.d.ts` for Node, Deno and
+  bundlers; TypeScript source for Bun), and `bun scripts/release/verify.ts` installs the packed
+  tarballs on Node 24, Deno 2, Bun, a Workers bundle and strict `tsc`. Publishing waits on the
+  `@miujs` npm scope and the unscoped `miujs` name, which another project owns
+  ([RELEASING.md](RELEASING.md)).
 
 ## Developing MiuJS
 

@@ -8,5 +8,6 @@
     ".": "./src/index.ts",
     "./node": "./src/node.ts"
   },
-  "files": ["src"]
+  "files": ["src"],
+  "sideEffects": ["./src/websocket.ts"]
 }

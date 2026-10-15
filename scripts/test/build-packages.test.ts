@@ -3,7 +3,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { findDeno, findNode, publishManifest, stageDir } from "../build-packages.ts";
+import { RELEASE_PACKAGES, checkDeclarations, checkSideEffects, findDeno, findNode, publishManifest, stageDir, topLevelLines } from "../build-packages.ts";
 import { ROOT, readPackageJson } from "../lib/repo.ts";
 
 const bun = process.execPath;
@@ -39,6 +39,38 @@ describe("publishManifest", () => {
   test("bin points at built JS", () => {
     expect(publishManifest(readPackageJson("cli")).bin).toEqual({ miu: "./dist/bin.js" });
   });
+
+  test("npm metadata: license files, bugs, engines, sideEffects", () => {
+    const m = publishManifest(readPackageJson("cache"));
+    expect(m.license).toBe("AGPL-3.0-only");
+    expect(m.files).toContain("COMMERCIAL-LICENSE.md");
+    expect(m.bugs).toEqual({ url: "https://github.com/khangkhangg/miujs/issues" });
+    expect(m.engines.node).toMatch(/^>=\d+/);
+    expect(m.sideEffects).toBe(false);
+    // Declared side effects keep their built twin when they are an entry point.
+    expect(publishManifest(readPackageJson("db")).sideEffects).toEqual(["./src/drizzle.ts", "./dist/drizzle.js"]);
+    expect(publishManifest(readPackageJson("miujs")).sideEffects).toEqual(["./src/websocket.ts"]);
+  });
+
+  test("topLevelLines skips strings, templates, comments, regexes and nested code", () => {
+    const src = [
+      "import { a } from \"x\";",
+      "const s = `",
+      "register(1);",
+      "`;",
+      "/* register(2); */",
+      "const re = /[(]/;",
+      "function f() {",
+      "  register(3);",
+      "}",
+      "register(4);",
+    ].join("\n");
+    expect(topLevelLines(src)).toEqual(["import { a } from \"x\";", "const s = `", "const re = /[(]/;", "function f() {", "register(4);"]);
+  });
+
+  test("every release package declares its import-time side effects", () => {
+    for (const p of RELEASE_PACKAGES) expect(checkSideEffects(p, readPackageJson(p))).toEqual([]);
+  });
 });
 
 describe("bun scripts/build-packages.ts", () => {
@@ -72,12 +104,14 @@ describe("bun scripts/build-packages.ts", () => {
     const miujsJs = readdirSync(join(ROOT, "packages", "miujs", "dist")).filter((f) => f.endsWith(".js")).map((f) => readFileSync(join(ROOT, "packages", "miujs", "dist", f), "utf8")).join("\n");
     expect(miujsJs).not.toMatch(/["']\.\/[\w./-]+\.ts["']/);
     expect(miujsJs).toContain('"./node.js"');
+    expect(checkDeclarations("miujs", publishManifest(readPackageJson("miujs")))).toEqual([]);
+    expect(checkDeclarations("cache", publishManifest(readPackageJson("cache")))).toEqual([]);
     const dts = readFileSync(join(ROOT, "packages", "miujs", "dist", "types", "index.d.ts"), "utf8");
     expect(dts).not.toMatch(/from "\.[^"]*\.ts"/);
     // The staged folder is what `npm publish` gets.
     const staged = JSON.parse(readFileSync(join(stageDir("cache"), "package.json"), "utf8"));
     expect(staged).toEqual(publishManifest(readPackageJson("cache")));
-    for (const f of ["src/index.ts", "dist/index.js", "dist/types/index.d.ts", "README.md", "LICENSE"]) expect(existsSync(join(stageDir("cache"), f))).toBe(true);
+    for (const f of ["src/index.ts", "dist/index.js", "dist/types/index.d.ts", "README.md", "LICENSE", "COMMERCIAL-LICENSE.md"]) expect(existsSync(join(stageDir("cache"), f))).toBe(true);
     expect(existsSync(join(stageDir("cache"), "test"))).toBe(false);
   }, 180_000);
 

@@ -1,13 +1,15 @@
 // Builds packages for npm.
 //
-//   bun scripts/build-packages.ts                  # every documented package
+//   bun scripts/build-packages.ts                  # every released package (RELEASE_PACKAGES)
 //   bun scripts/build-packages.ts miujs cache      # these (and their workspace deps, built first)
 //   bun scripts/build-packages.ts cache --dry-run  # print the planned package.json, write nothing
+//   bun scripts/build-packages.ts --all            # every workspace package, released or not
 //
 // For each package:
 //   packages/<pkg>/dist/*.js        Bun.build: target node, ESM, not minified, deps external
 //   packages/<pkg>/dist/types/      tsc --emitDeclarationOnly
-//   dist/npm/<pkg>/                 the folder to publish: package.json (below), src/, dist/, README.md, LICENSE
+//   dist/npm/<pkg>/                 the folder to publish: package.json (below), src/, dist/, README.md,
+//                                   LICENSE (AGPL-3.0) and COMMERCIAL-LICENSE.md (the dual-licensing notice)
 //
 // The published package.json sends each runtime to the right files:
 //   "types"  -> dist/types/*.d.ts   (TypeScript, including deno check)
@@ -16,12 +18,33 @@
 // There is deliberately no "deno" -> src condition: Node and Deno 2 both refuse to strip types
 // under node_modules (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING), so Deno gets the JS too.
 // Deno users who want the TypeScript source should get it from JSR instead.
-// Publish with: npm publish dist/npm/<pkg>
+// Workspace deps become "^<version>" (all packages are versioned in lockstep by
+// scripts/release/version.ts). "sideEffects" is false unless the source package.json lists files
+// (src paths; entry points get their dist twins), and the build fails if a source module has
+// undeclared top-level side effects. Declarations are checked for .ts specifiers and undeclared packages.
+// Verify the packed tarballs on Node, Deno, Bun, Workers and tsc: bun scripts/release/verify.ts
+// Publish with: npm publish dist/npm/<pkg> (see RELEASING.md; CI does it on a v* tag)
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { DOCUMENTED_PACKAGES, GITHUB_REPO, ROOT, blobUrl, readPackageJson, slash, type PackageJson } from "./lib/repo.ts";
 
 type Conditions = { types: string; bun: string; default: string };
+
+/**
+ * Packages published to npm, in docs order. admin, game, tour and migrate are left out until their
+ * APIs settle (see DOCUMENTED_PACKAGES); build them with --all.
+ */
+export const RELEASE_PACKAGES: readonly string[] = DOCUMENTED_PACKAGES;
+
+/** Every workspace package folder under packages/. */
+export const ALL_PACKAGES = (): string[] =>
+  readdirSync(join(ROOT, "packages")).filter((d) => existsSync(join(ROOT, "packages", d, "package.json"))).sort();
+
+/** Oldest Node the published JS is tested on (CI and scripts/release/verify.ts run Node 24). */
+export const NODE_ENGINE = ">=24";
+
+/** Publishing fields we read from a source package.json beyond the shared PackageJson type. */
+type SourcePackage = PackageJson & { sideEffects?: boolean | string[]; keywords?: string[] };
 
 export interface PublishManifest {
   name: string;
@@ -40,7 +63,26 @@ export interface PublishManifest {
   devDependencies?: never;
   repository: { type: "git"; url: string; directory: string };
   homepage: string;
+  bugs: { url: string };
+  keywords?: string[];
+  engines: { node: string };
+  sideEffects: boolean | string[];
   publishConfig?: { access: "public" };
+}
+
+/** Source paths ("./src/x.ts") a package declares side-effectful, plus their built twins. */
+export function sideEffectsOf(pkg: SourcePackage): boolean | string[] {
+  const se = pkg.sideEffects;
+  if (se === undefined || se === false) return false;
+  if (se === true) return true;
+  const out: string[] = [];
+  // A declared entry point keeps its built twin; other modules are bundled into the entry that imports them.
+  const entries = new Set([...Object.values(pkg.exports ?? {}), ...Object.values(pkg.bin ?? {})]);
+  for (const p of se) {
+    out.push(p);
+    if (entries.has(p)) out.push(`./dist/${stem(p)}.js`);
+  }
+  return out;
 }
 
 /** Workspace folder name for an npm name: "miujs" -> "miujs", "@miujs/db" -> "db". */
@@ -50,7 +92,7 @@ const isWorkspace = (spec: string) => spec.startsWith("workspace:");
 /** "./src/node.ts" -> "node" */
 const stem = (srcPath: string) => srcPath.replace(/^\.\/src\//, "").replace(/\.tsx?$/, "");
 
-export function publishManifest(pkg: PackageJson): PublishManifest {
+export function publishManifest(pkg: SourcePackage): PublishManifest {
   const exports: Record<string, Conditions | string> = {};
   for (const [sub, target] of Object.entries(pkg.exports ?? {})) {
     const s = stem(target);
@@ -75,12 +117,16 @@ export function publishManifest(pkg: PackageJson): PublishManifest {
     types: "./dist/types/index.d.ts",
     exports,
     ...(pkg.bin ? { bin: Object.fromEntries(Object.entries(pkg.bin).map(([k, v]) => [k, `./dist/${stem(v)}.js`])) } : {}),
-    files: ["src", "dist", ...extraFiles, "README.md", "LICENSE"],
+    files: ["src", "dist", ...extraFiles, "README.md", "LICENSE", "COMMERCIAL-LICENSE.md"],
     ...(pkg.dependencies ? { dependencies: deps(pkg.dependencies) } : {}),
     ...(pkg.peerDependencies ? { peerDependencies: deps(pkg.peerDependencies) } : {}),
     ...(pkg.peerDependenciesMeta ? { peerDependenciesMeta: pkg.peerDependenciesMeta } : {}),
     repository: { type: "git", url: `git+https://github.com/${GITHUB_REPO}.git`, directory: `packages/${folder}` },
     homepage: blobUrl(`packages/${folder}/README.md`),
+    bugs: { url: `https://github.com/${GITHUB_REPO}/issues` },
+    ...(pkg.keywords ? { keywords: pkg.keywords } : {}),
+    engines: { node: NODE_ENGINE },
+    sideEffects: sideEffectsOf(pkg),
     ...(pkg.name.startsWith("@") ? { publishConfig: { access: "public" as const } } : {}),
   };
   return m;
@@ -264,12 +310,143 @@ function stage(folder: string, manifest: PublishManifest) {
   cpSync(join(src, "src"), join(out, "src"), { recursive: true });
   cpSync(join(src, "dist"), join(out, "dist"), { recursive: true });
   for (const f of manifest.files) {
-    if (f === "src" || f === "dist" || f === "LICENSE" || f === "README.md") continue;
+    if (f === "src" || f === "dist" || f === "LICENSE" || f === "COMMERCIAL-LICENSE.md" || f === "README.md") continue;
     if (existsSync(join(src, f))) cpSync(join(src, f), join(out, f), { recursive: true });
   }
   if (existsSync(join(src, "README.md"))) cpSync(join(src, "README.md"), join(out, "README.md"));
   cpSync(join(ROOT, "LICENSE"), join(out, "LICENSE"));
+  cpSync(join(ROOT, "COMMERCIAL-LICENSE.md"), join(out, "COMMERCIAL-LICENSE.md"));
   writeFileSync(join(out, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
+}
+
+/** A top-level statement that runs on import: a call, an await, an expression in parentheses, or an assignment to a property / global. */
+const TOP_LEVEL_EFFECT = /^(?:[(;]|(?:await|new|void|delete)\b|globalThis\b.*=|[A-Za-z_$][\w$]*(?:\.[\w$]+)*\s*\(|[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]+\])+\s*=[^=>])/;
+
+/**
+ * The lines of a module that start at the top level: not inside a string, template literal, comment,
+ * regex, or any bracket. Comments are dropped. A small lexer, good enough for our own sources.
+ */
+export function topLevelLines(src: string): string[] {
+  type State = "code" | "sq" | "dq" | "tpl" | "lc" | "bc" | "re";
+  const out: string[] = [];
+  const tpl: number[] = []; // bracket depth at each open `${`
+  let state: State = "code";
+  let depth = 0;
+  let cur = "";
+  let top = true;
+  let inClass = false; // inside [...] of a regex
+  let prev = ""; // last non-space code character, to tell a regex from a division
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    const n = src[i + 1];
+    if (c === "\n") {
+      if (state === "lc") state = "code";
+      if (top && cur.trim()) out.push(cur.replace(/\r$/, ""));
+      cur = "";
+      top = state === "code" && depth === 0;
+      continue;
+    }
+    if (state === "lc") continue;
+    if (state === "bc") {
+      if (c === "*" && n === "/") (state = "code"), i++;
+      continue;
+    }
+    cur += c;
+    if (state === "sq" || state === "dq") {
+      if (c === "\\") cur += src[++i] ?? "";
+      else if (c === (state === "sq" ? "'" : '"')) state = "code";
+      continue;
+    }
+    if (state === "tpl") {
+      if (c === "\\") cur += src[++i] ?? "";
+      else if (c === "`") state = "code";
+      else if (c === "$" && n === "{") {
+        tpl.push(depth++);
+        cur += src[++i];
+        state = "code";
+      }
+      continue;
+    }
+    if (state === "re") {
+      if (c === "\\") cur += src[++i] ?? "";
+      else if (c === "[") inClass = true;
+      else if (c === "]") inClass = false;
+      else if (c === "/" && !inClass) state = "code";
+      continue;
+    }
+    // code
+    if (c === "/" && n === "/") (state = "lc"), (cur = cur.slice(0, -1));
+    else if (c === "/" && n === "*") (state = "bc"), (cur = cur.slice(0, -1)), i++;
+    else if (c === "/" && (prev === "" || "(,=:[!&|?{};+-*%<>~^".includes(prev) || /\b(return|typeof|case|in|of)$/.test(cur.slice(0, -1).trimEnd()))) (state = "re"), (inClass = false);
+    else if (c === "'") state = "sq";
+    else if (c === '"') state = "dq";
+    else if (c === "`") state = "tpl";
+    else if (c === "{" || c === "(" || c === "[") depth++;
+    else if (c === "}" || c === ")" || c === "]") {
+      depth--;
+      if (c === "}" && tpl.length && tpl[tpl.length - 1] === depth) (tpl.pop(), (state = "tpl"));
+    }
+    if (!/\s/.test(c)) prev = state === "re" ? "/" : c;
+  }
+  if (top && cur.trim()) out.push(cur);
+  return out;
+}
+
+/**
+ * Source modules with top-level side effects that `sideEffects` does not declare. Checked per source
+ * module because that is what a bundler drops under `sideEffects: false` (Bun loads src/ through the
+ * "bun" condition); in dist/ the same statement sits inside the entry or chunk that needs it.
+ */
+export function checkSideEffects(folder: string, pkg: SourcePackage): string[] {
+  if (pkg.sideEffects === true) return [];
+  const declared = new Set(pkg.sideEffects || []);
+  const dir = join(ROOT, "packages", folder);
+  const problems: string[] = [];
+  for (const p of declared) if (!existsSync(join(dir, p))) problems.push(`  "sideEffects" lists ${p}, which does not exist.`);
+  for (const file of listFiles(join(dir, "src"), /\.tsx?$/)) {
+    const rel = `./${slash(relative(dir, file))}`;
+    if (declared.has(rel)) continue;
+    const text = readFileSync(file, "utf8");
+    const lines = topLevelLines(text);
+    // Patching the prototype of a class declared in the same module only matters when that class is
+    // used, and then the module is kept anyway.
+    const ownPrototype = (l: string) => {
+      const m = /^(?:Object\.(?:assign|defineProperty|defineProperties)\(\s*)?([A-Za-z_$][\w$]*)\.prototype\b/.exec(l);
+      return !!m && new RegExp(`^(?:export\\s+)?(?:class|function|var|let|const)\\s+${m[1].replace(/\$/g, "\\$")}\\b`, "m").test(text);
+    };
+    const hit = lines.find((l) => TOP_LEVEL_EFFECT.test(l) && !ownPrototype(l));
+    if (hit) problems.push(`  ${rel} runs code on import (${hit.trim().slice(0, 80)}). Fix: add "${rel}" to "sideEffects" in packages/${folder}/package.json, or move the code into a function.`);
+  }
+  return problems;
+}
+
+const stripComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+const SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|^\s*import\s+)["']([^"']+)["']/gm;
+const packageOf = (spec: string) => (spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0]);
+
+/**
+ * Declarations a consumer can load with `skipLibCheck: false`: no `.ts` specifiers (they would point
+ * at source a Node/tsc consumer must not compile), relative imports that exist, and bare imports only
+ * of the package itself or its declared dependencies. Built-in modules (`node:*`, `bun`,
+ * `cloudflare:*`) need the consumer's ambient types, so they are not allowed either.
+ */
+export function checkDeclarations(folder: string, manifest: PublishManifest): string[] {
+  const typesDir = join(ROOT, "packages", folder, "dist", "types");
+  const allowed = new Set([manifest.name, ...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {})]);
+  const problems: string[] = [];
+  for (const file of listFiles(typesDir, /\.d\.ts$/)) {
+    const rel = slash(relative(join(ROOT, "packages", folder), file));
+    for (const m of stripComments(readFileSync(file, "utf8")).matchAll(SPECIFIER)) {
+      const spec = m[1];
+      if (spec.startsWith(".")) {
+        if (/\.tsx?$/.test(spec)) problems.push(`  ${rel} imports "${spec}" (a .ts source path).`);
+        else if (!existsSync(join(file, "..", spec.replace(/\.js$/, ".d.ts"))) && !existsSync(join(file, "..", spec, "index.d.ts"))) problems.push(`  ${rel} imports "${spec}", which has no declaration file.`);
+      } else if (!allowed.has(packageOf(spec))) {
+        problems.push(`  ${rel} imports "${spec}", which ${manifest.name} does not depend on. Fix: use a structural type, or add it to dependencies/peerDependencies.`);
+      }
+    }
+  }
+  return problems;
 }
 
 export async function buildPackage(folder: string) {
@@ -277,14 +454,17 @@ export async function buildPackage(folder: string) {
   rmSync(join(ROOT, "packages", folder, "dist"), { recursive: true, force: true });
   await buildJs(folder, pkg);
   await buildTypes(folder, pkg);
-  stage(folder, publishManifest(pkg));
+  const manifest = publishManifest(pkg);
+  const problems = [...checkSideEffects(folder, pkg), ...checkDeclarations(folder, manifest)];
+  if (problems.length) throw new Error(`${pkg.name} is not publishable:\n${problems.join("\n")}`);
+  stage(folder, manifest);
 }
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
   const requested = args.filter((a) => !a.startsWith("--"));
-  const targets = requested.length ? requested : [...DOCUMENTED_PACKAGES];
+  const targets = args.includes("--all") ? ALL_PACKAGES() : requested.length ? requested : [...RELEASE_PACKAGES];
   for (const t of targets) if (!existsSync(join(ROOT, "packages", t, "package.json"))) throw new Error(`No package at packages/${t}`);
   if (dryRun) {
     for (const t of targets) {

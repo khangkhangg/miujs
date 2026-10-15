@@ -10,6 +10,7 @@
     "src",
     "templates"
   ],
+  "sideEffects": ["./src/bin.ts"],
   "bin": {
     "miu": "./src/bin.ts"
   },
