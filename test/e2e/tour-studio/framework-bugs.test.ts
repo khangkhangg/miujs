@@ -119,12 +119,12 @@ describe("framework bugs (documented with failing tests)", () => {
    * Fix: a `unique` option on repositories (UNIQUE index in SQL drivers; create() throws a typed conflict
    * error) and have tourKit map it to 409 / retry with a suffix.
    */
-  test.failing("concurrent tour creates with the same slug cannot both succeed on an async repository", async () => {
+  test("concurrent tour creates with the same slug cannot both succeed on an async repository", async () => {
     const slow = <T extends { id: string }>(r: Repository<T>): Repository<T> => ({
       list: async (q) => (await Bun.sleep(1), r.list(q)),
       get: async (id) => (await Bun.sleep(1), r.get(id)),
-      create: async (d) => (await Bun.sleep(1), r.create(d)),
-      update: async (id, p) => (await Bun.sleep(1), r.update(id, p)),
+      create: async (d, o) => (await Bun.sleep(1), r.create(d, o)),
+      update: async (id, p, o) => (await Bun.sleep(1), r.update(id, p, o)),
       delete: async (id) => (await Bun.sleep(1), r.delete(id)),
     });
     const tours = slow(memoryRepository<Tour>());
@@ -141,7 +141,7 @@ describe("framework bugs (documented with failing tests)", () => {
    * "Failed to load resource: 404 /favicon.ico" in the Console (unless the app happens to serve one).
    * The tour pages already use `<link rel="icon" href="data:,">`. Fix: same in src/admin/ui.ts renderPage().
    */
-  test.failing("the admin page declares an icon (no favicon 404 in the DevTools console)", async () => {
+  test("the admin page declares an icon (no favicon 404 in the DevTools console)", async () => {
     const app = new Miu({ logger: false })
       .use(sessions({ store: memoryStore(), secret: "s".repeat(32) }))
       .use(auth({ loadUser: async () => ({ id: "a", roles: ["admin"] }) }))
@@ -157,7 +157,7 @@ describe("framework bugs (documented with failing tests)", () => {
    * stripped) still bumps updatedAt and writes an audit entry with `changes: {}`.
    * Fix: skip the update + audit when the patch is empty or equal to the stored values (or 422 on read-only keys).
    */
-  test.failing("an admin PATCH that changes nothing is not audited", async () => {
+  test("an admin PATCH that changes nothing is not audited", async () => {
     const audit = memoryRepository<any>();
     const repo = memoryRepository<any>();
     const app = new Miu({ logger: false })
@@ -176,7 +176,7 @@ describe("framework bugs (documented with failing tests)", () => {
    * can drop the last commits). Fix: `PRAGMA synchronous = NORMAL` by default in src/batteries/sqlite.ts, with
    * an option to keep FULL.
    */
-  test.failing("openDatabase() pairs WAL with synchronous=NORMAL", async () => {
+  test("openDatabase() pairs WAL with synchronous=NORMAL", async () => {
     const dir = tmp();
     const db = await openDatabase(join(dir, "x.sqlite"));
     const row = db.prepare("PRAGMA synchronous").get() as { synchronous: number };

@@ -26,6 +26,7 @@ export function renderPage({ title, nonce, loginUrl }: PageOptions): string {
 <meta name="color-scheme" content="light dark">
 <meta name="referrer" content="same-origin">
 <title>${t}</title>
+<link rel="icon" href="data:,">
 <style nonce="${nonce}">${CSS}</style>
 </head>
 <body data-login="${login}">

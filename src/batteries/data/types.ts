@@ -1,3 +1,5 @@
+import { HttpError } from "../../core/errors.ts";
+
 /**
  * A minimal document repository: the shared persistence interface for the admin back-office, the tour kit
  * and user code. Drivers: memory (dev/tests), SQLite and D1 (JSON documents), and anything else that
@@ -28,13 +30,31 @@ export interface ListResult<T> {
 
 export type CreateInput<T extends Doc> = Omit<T, "id" | "createdAt" | "updatedAt"> & { id?: string };
 
+export interface WriteOptions {
+  /**
+   * Top-level fields whose values must not already exist in another document. Enforced atomically by the
+   * driver (safe under concurrency and across instances for SQL drivers); throws {@link ConflictError}.
+   */
+  unique?: string[];
+}
+
+/** A write violated `unique`. It is an HttpError (409), so routes that don't catch it answer correctly. */
+export class ConflictError extends HttpError {
+  readonly fields: string[];
+  constructor(fields: string[]) {
+    super(409, `Already exists: ${fields.join(", ")}`, { code: "conflict", details: { fields } });
+    this.name = "ConflictError";
+    this.fields = fields;
+  }
+}
+
 export interface Repository<T extends Doc> {
   list(query?: ListQuery): Promise<ListResult<T>>;
   get(id: string): Promise<T | undefined>;
-  /** Assigns `id` (unless given), `createdAt` and `updatedAt`. Throws on a duplicate id. */
-  create(data: CreateInput<T>): Promise<T>;
+  /** Assigns `id` (unless given), `createdAt` and `updatedAt`. Throws on a duplicate id or `unique` conflict. */
+  create(data: CreateInput<T>, opts?: WriteOptions): Promise<T>;
   /** Shallow-merges `patch`; `id` and `createdAt` never change. Undefined when missing. */
-  update(id: string, patch: Partial<T>): Promise<T | undefined>;
+  update(id: string, patch: Partial<T>, opts?: WriteOptions): Promise<T | undefined>;
   delete(id: string): Promise<boolean>;
 }
 

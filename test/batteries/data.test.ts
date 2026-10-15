@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { memoryRepository, type Repository } from "../../src/batteries/data/index.ts";
+import { ConflictError, memoryRepository, type Repository } from "../../src/batteries/data/index.ts";
 
 interface Scene { id: string; title: string; tourId: string; order: number; createdAt?: string; updatedAt?: string }
 
@@ -60,6 +60,33 @@ export function repositoryContract(name: string, make: () => Repository<Scene> |
       for (let i = 0; i < 60; i++) await repo.create({ title: `s${i}`, tourId: "t", order: i });
       expect((await repo.list()).items.length).toBe(50);
       expect((await repo.list({ limit: 5000 })).items.length).toBe(60);
+    });
+
+    test("create with unique fields rejects a duplicate atomically (ConflictError, 409)", async () => {
+      const repo = await make();
+      await repo.create({ title: "Lobby", tourId: "t1", order: 1 }, { unique: ["title"] });
+      const results = await Promise.allSettled([
+        repo.create({ title: "Hall", tourId: "t1", order: 2 }, { unique: ["title"] }),
+        repo.create({ title: "Hall", tourId: "t2", order: 3 }, { unique: ["title"] }),
+        repo.create({ title: "Lobby", tourId: "t3", order: 4 }, { unique: ["title"] }),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected", "rejected"]);
+      const err = (results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason;
+      expect(err).toBeInstanceOf(ConflictError);
+      expect(err.status).toBe(409);
+      expect((await repo.list({ where: { title: "Hall" } })).total).toBe(1);
+      // Without the option, duplicates are allowed (uniqueness is per call, not per table).
+      await repo.create({ title: "Lobby", tourId: "t4", order: 5 });
+    });
+
+    test("update with unique fields rejects taking another document's value, allows keeping its own", async () => {
+      const repo = await make();
+      const a = await repo.create({ title: "A", tourId: "t", order: 1 });
+      const b = await repo.create({ title: "B", tourId: "t", order: 2 });
+      await expect(repo.update(b.id, { title: "A" }, { unique: ["title"] })).rejects.toBeInstanceOf(ConflictError);
+      expect((await repo.get(b.id))?.title).toBe("B");
+      expect((await repo.update(a.id, { title: "A", order: 9 }, { unique: ["title"] }))?.order).toBe(9);
+      expect(await repo.update("missing", { title: "Z" }, { unique: ["title"] })).toBeUndefined();
     });
 
     test("returned objects are copies (mutating them does not change stored data)", async () => {

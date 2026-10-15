@@ -3,7 +3,7 @@ import type { Context } from "../core/context.ts";
 import { HttpError, problem } from "../core/errors.ts";
 import { t } from "../core/schema.ts";
 import { currentUser } from "../batteries/auth/auth.ts";
-import { MAX_LIMIT, newId, type Repository } from "../batteries/data/index.ts";
+import { ConflictError, MAX_LIMIT, newId, type Repository } from "../batteries/data/index.ts";
 import { imageInfo, isEquirectangular, type BlobStore, type ImageInfo } from "../batteries/files/index.ts";
 import { serveBlob } from "../batteries/files/serve.ts";
 import { uploadFiles } from "../batteries/files/upload.ts";
@@ -109,10 +109,12 @@ export function tourKit(opts: TourKitOptions): Miu {
   const hotspotsOf = async (tourId: string) => (await hotspots.list({ where: { tourId }, sort: "createdAt", limit: MAX_LIMIT })).items;
   const bySlug = async (slug: string) => (await tours.list({ where: { slug }, limit: 1 })).items[0];
 
+  const slugTaken = (slug: string) => new HttpError(409, `The slug "${slug}" is taken`, { code: "slug_taken" });
+
   const uniqueSlug = async (wanted: string | undefined, title: string, exceptId?: string): Promise<string> => {
     if (wanted) {
       const other = await bySlug(wanted);
-      if (other && other.id !== exceptId) throw new HttpError(409, `The slug "${wanted}" is taken`, { code: "slug_taken" });
+      if (other && other.id !== exceptId) throw slugTaken(wanted);
       return wanted;
     }
     const root = slugify(title);
@@ -193,11 +195,21 @@ export function tourKit(opts: TourKitOptions): Miu {
     description: "Create a draft virtual tour owned by the caller. The slug (public URL name) defaults to one made from the title. Next: add scenes with scene_import, link them with hotspot_create, then tour_publish.",
   }, async (c) => {
     const { title, slug, description } = c.body;
-    const tour = await tours.create({
-      ownerId: String(user(c).id), title, slug: await uniqueSlug(slug, title), status: "draft",
-      ...(description ? { description } : {}),
-    } as Omit<Tour, "id" | "createdAt" | "updatedAt">);
-    return c.json(tour, 201);
+    const base = { ownerId: String(user(c).id), title, status: "draft", ...(description ? { description } : {}) };
+    // uniqueSlug() is a friendly pre-check; { unique: ["slug"] } makes the write itself atomic, so concurrent
+    // creates (or other instances) can never both claim a slug. Auto-generated slugs retry with a new suffix.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const tour = await tours.create(
+          { ...base, slug: await uniqueSlug(slug, title) } as Omit<Tour, "id" | "createdAt" | "updatedAt">,
+          { unique: ["slug"] },
+        );
+        return c.json(tour, 201);
+      } catch (e) {
+        if (!(e instanceof ConflictError)) throw e;
+        if (slug || attempt >= 4) throw slugTaken(slug ?? slugify(title));
+      }
+    }
   });
 
   app.get(p("/api/tours/:id"), {
@@ -231,7 +243,12 @@ export function tourKit(opts: TourKitOptions): Miu {
       }
       patch.coverKey = b.coverKey;
     }
-    return tours.update(tour.id, patch);
+    try {
+      return await tours.update(tour.id, patch, patch.slug ? { unique: ["slug"] } : {});
+    } catch (e) {
+      if (e instanceof ConflictError) throw slugTaken(patch.slug!);
+      throw e;
+    }
   });
 
   app.delete(p("/api/tours/:id"), {

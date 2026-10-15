@@ -77,8 +77,8 @@ describe("admin journey", () => {
     expect(((await pub.json()) as { tour: { title: string } }).tour.title).toBe("Demo house (renovated)");
 
     const audit = (await (await admin.json("GET", `/admin/api/audit?filter[recordId]=${demo.id}`)).json()) as { items: { action: string; resource: string; user: string; changes: unknown }[] };
-    // Two updates: the title change, and the stripped read-only patch above (audited with empty changes).
-    expect(audit.items.map((a) => a.action)).toEqual(["update", "update"]);
+    // Only the title change: the stripped read-only patch above changed nothing, so it is not audited.
+    expect(audit.items.map((a) => a.action)).toEqual(["update"]);
     const titleChange = audit.items.find((a) => (a.changes as Record<string, unknown>).title)!;
     const me = (await (await admin.json("GET", "/api/me")).json()) as { id: string };
     expect(titleChange).toMatchObject({ action: "update", resource: "tours", user: me.id, changes: { title: { from: demo.title, to: "Demo house (renovated)" } } });

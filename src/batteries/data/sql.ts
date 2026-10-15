@@ -1,6 +1,6 @@
 import {
   assertField, clampLimit, newId,
-  type CreateInput, type Doc, type ListQuery, type ListResult, type Repository,
+  ConflictError, type CreateInput, type Doc, type ListQuery, type ListResult, type Repository,
 } from "./types.ts";
 
 /**
@@ -111,6 +111,19 @@ export function sqlRepository<T extends Doc>(
   };
 
   const getRow = async (id: string) => exec.first(`SELECT ${COLS} FROM ${table} WHERE id = ?`, [id]);
+  /** Which `unique` fields collide with another document (for the conflict error after a refused write). */
+  const conflicting = async (fields: string[], data: Record<string, unknown>, exceptId = ""): Promise<string[]> => {
+    const hits: string[] = [];
+    for (const f of fields) {
+      if (data[f] === undefined) continue;
+      const row = await exec.first(
+        `SELECT 1 AS hit FROM ${table} WHERE id <> ? AND json_extract(data, '$.${f}') = json_extract(?, '$') LIMIT 1`,
+        [exceptId, JSON.stringify(data[f])],
+      );
+      if (row) hits.push(f);
+    }
+    return hits.length ? hits : fields;
+  };
 
   return {
     async list(query: ListQuery = {}): Promise<ListResult<T>> {
@@ -137,21 +150,35 @@ export function sqlRepository<T extends Doc>(
       return row ? toDoc<T>(row) : undefined;
     },
 
-    async create(input: CreateInput<T>) {
+    async create(input: CreateInput<T>, o = {}) {
       await ensure();
       const id = (input as { id?: string }).id ?? newId();
       const now = new Date().toISOString();
       const data = stripMeta(input as Record<string, unknown>);
+      const json = JSON.stringify(data);
       try {
-        await exec.run(`INSERT INTO ${table} (id, data, created_at, updated_at) VALUES (?, ?, ?, ?)`, [id, JSON.stringify(data), now, now]);
+        const unique = (o.unique ?? []).filter((f) => data[assertField(f)] !== undefined);
+        if (unique.length) {
+          // One statement: SQLite/D1 run it atomically, so concurrent writers cannot both pass the check.
+          const clash = unique.map((f) => `json_extract(data, '$.${f}') = json_extract(?, '$.${f}')`).join(" OR ");
+          const row = await exec.first(
+            `INSERT INTO ${table} (id, data, created_at, updated_at) SELECT ?, ?, ?, ?
+             WHERE NOT EXISTS (SELECT 1 FROM ${table} WHERE ${clash}) RETURNING id`,
+            [id, json, now, now, ...unique.map(() => json)],
+          );
+          if (!row) throw new ConflictError(await conflicting(unique, data));
+        } else {
+          await exec.run(`INSERT INTO ${table} (id, data, created_at, updated_at) VALUES (?, ?, ?, ?)`, [id, json, now, now]);
+        }
       } catch (e) {
+        if (e instanceof ConflictError) throw e;
         if (/UNIQUE|PRIMARY KEY|constraint/i.test(String((e as Error)?.message))) throw new Error(`Duplicate id: ${id}`, { cause: e });
         throw e;
       }
       return { ...(JSON.parse(JSON.stringify(data)) as object), id, createdAt: now, updatedAt: now } as T;
     },
 
-    async update(id, patch) {
+    async update(id, patch, o = {}) {
       const rest = stripMeta(patch as Record<string, unknown>);
       const removes: string[] = [];
       const sets: string[] = [];
@@ -164,15 +191,34 @@ export function sqlRepository<T extends Doc>(
           params.push(JSON.stringify(v));
         }
       }
-      let expr = "data";
-      if (removes.length) expr = `json_remove(${expr}, ${removes.join(", ")})`;
-      if (sets.length) expr = `json_set(${expr}, ${sets.join(", ")})`;
+      const build = (base: string) => {
+        let expr = base;
+        if (removes.length) expr = `json_remove(${expr}, ${removes.join(", ")})`;
+        if (sets.length) expr = `json_set(${expr}, ${sets.join(", ")})`;
+        return expr;
+      };
       await ensure();
+      const unique = (o.unique ?? []).map(assertField);
+      if (!unique.length) {
+        const row = await exec.first(
+          `UPDATE ${table} SET data = ${build("data")}, updated_at = ? WHERE id = ? RETURNING ${COLS}`,
+          [...params, new Date().toISOString(), id],
+        );
+        return row ? toDoc<T>(row) : undefined;
+      }
+      // Atomic: the row is updated only if no other document holds any unique value of the merged result.
+      const next = build(`${table}.data`);
+      const clash = unique.map((f) => `json_extract(o.data, '$.${f}') = json_extract(${next}, '$.${f}')`).join(" OR ");
       const row = await exec.first(
-        `UPDATE ${table} SET data = ${expr}, updated_at = ? WHERE id = ? RETURNING ${COLS}`,
-        [...params, new Date().toISOString(), id],
+        `UPDATE ${table} SET data = ${build("data")}, updated_at = ? WHERE id = ?
+         AND NOT EXISTS (SELECT 1 FROM ${table} AS o WHERE o.id <> ${table}.id AND (${clash})) RETURNING ${COLS}`,
+        [...params, new Date().toISOString(), id, ...unique.flatMap(() => params)],
       );
-      return row ? toDoc<T>(row) : undefined;
+      if (row) return toDoc<T>(row);
+      const current = await getRow(id);
+      if (!current) return undefined;
+      const merged = { ...(toDoc<T>(current) as Record<string, unknown>), ...rest };
+      throw new ConflictError(await conflicting(unique, merged, id));
     },
 
     async delete(id) {

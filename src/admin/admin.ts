@@ -381,6 +381,10 @@ export function admin(opts: AdminOptions): Miu {
           const out = await r.def.hooks.beforeUpdate(patch, ctx);
           if (out && typeof out === "object") patch = out as Record<string, unknown>;
         }
+        // A patch that sets nothing new (e.g. only read-only/unknown fields, which are stripped) is a no-op:
+        // no write, no updatedAt bump, no audit entry.
+        const prev = before as unknown as Record<string, unknown>;
+        if (Object.entries(patch).every(([k, v]) => sameValue(prev[k], v))) return clean(r, before);
         const after = await r.def.repo.update(id, patch as never);
         if (!after) throw new HttpError(404, `${r.label}: no record with id ${JSON.stringify(id)}`, { code: "not_found" });
         const changes: Record<string, { from: unknown; to: unknown }> = {};
@@ -486,4 +490,11 @@ function defaultRoles(user: any): readonly string[] {
   if (Array.isArray(user?.roles)) return user.roles;
   if (typeof user?.role === "string") return [user.role];
   return [];
+}
+
+/** Structural equality for JSON-like field values (no-op detection on update). */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a == null || b == null || typeof a !== "object" || typeof b !== "object") return false;
+  return JSON.stringify(a) === JSON.stringify(b);
 }
