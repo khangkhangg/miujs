@@ -47,6 +47,8 @@ export type AuditInput = Omit<AuditRecord, "seq" | "prevHash" | "hash" | "keyId"
   Partial<Pick<AuditRecord, "actor" | "org" | "ip" | "userAgent" | "requestId" | "changes" | "metadata">> & { resourceId?: string | number | null };
 
 export interface AuditQuery {
+  /** Exact action, e.g. "update". */
+  action?: string;
   resource?: string;
   resourceId?: string;
   actor?: string;
@@ -93,6 +95,7 @@ export interface AuditStore {
 }
 
 interface NormalizedQuery {
+  action?: string;
   resource?: string;
   resourceId?: string;
   actor?: string;
@@ -226,6 +229,7 @@ function normalizeQuery(q: AuditQuery): NormalizedQuery {
   }
   const s = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined);
   return {
+    action: s(q.action),
     resource: s(q.resource),
     resourceId: s(q.resourceId),
     actor: s(q.actor),
@@ -333,6 +337,7 @@ export interface AuditStoreOptions {
 
 function matches(r: AuditRecord, q: NormalizedQuery): boolean {
   return (
+    (q.action === undefined || r.action === q.action) &&
     (q.resource === undefined || r.resource === q.resource) &&
     (q.resourceId === undefined || r.resourceId === q.resourceId) &&
     (q.actor === undefined || r.actor === q.actor) &&
@@ -525,6 +530,7 @@ export function dbAuditStore(source: DatabaseSource, opts: DbAuditStoreOptions =
         where.push(sql);
         values.push(v);
       };
+      if (q.action !== undefined) add("action = ?", q.action);
       if (q.resource !== undefined) add("resource = ?", q.resource);
       if (q.resourceId !== undefined) add("resource_id = ?", q.resourceId);
       if (q.actor !== undefined) add("actor = ?", q.actor);

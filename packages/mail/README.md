@@ -136,6 +136,16 @@ console.log(sent.to, sent.subject);
 
 `consoleTransport(options)`: `log` (default `console.log`), `keep` (default `50`).
 
+## Admin (`manage()`)
+
+With `@miujs/admin`, the plugin shows a **Mail** section:
+
+- **Status**: transport kind (never its API key, URL or headers), sender, sends that succeeded and failed since this instance started, and the number of templates.
+- **Recent sends**: the last 200 sends of this instance (a ring buffer), newest first, filterable by `sent` / `failed`. Recipients are masked (`a***@example.com`), bodies are never kept, and 6+ digit codes and long tokens in subjects show as `[hidden]`. Failures show their error code.
+- **Action** `sendTest`: send a short test email to one address through the configured transport.
+
+The counters and the list are also available in code: `createMailer(...).stats()` and `.recent()`.
+
 ## Errors
 
 - `MIU_E_MAIL_TRANSPORT_MISSING`: no transport in production; fails at startup.

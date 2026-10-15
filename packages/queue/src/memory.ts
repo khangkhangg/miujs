@@ -1,4 +1,4 @@
-import type { QueueAdapter, QueueMessage, QueueRuntime } from "./adapter.ts";
+import type { JobRow, JobState, QueueAdapter, QueueMessage, QueueRuntime } from "./adapter.ts";
 import { realClock, type Clock } from "./clock.ts";
 import { queueErrors } from "./errors.ts";
 import type { Env } from "miujs";
@@ -46,7 +46,7 @@ interface Item {
  * lost if it exits. Good for development, tests and single-server apps.
  */
 export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
-  const concurrency = opts.concurrency ?? 1;
+  let concurrency = opts.concurrency ?? 1;
   if (!Number.isInteger(concurrency) || concurrency < 1) {
     throw queueErrors.config(`memoryQueue concurrency must be a positive integer, got ${String(concurrency)}`, "Pass `concurrency: 1` or more.");
   }
@@ -58,11 +58,13 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
   let rt: QueueRuntime | undefined;
   const ready: Item[] = [];
   const delayed = new Map<unknown, number>(); // timer handle -> due time
-  const delayedById = new Map<string, unknown>(); // message id -> timer handle (for cancel)
+  const delayedById = new Map<string, { h: unknown; item: Item; due: number }>(); // for cancel and listing
   let started = false; // setup() ran and stop() did not
   const scheduleTimers = new Set<unknown>();
   const deadLetters: DeadLetter[] = [];
   let running = 0;
+  const runningItems = new Set<Item>();
+  let paused = false;
   let dispatching = 0; // scheduled dispatches not yet enqueued
   let pumpQueued = false;
   let waiters: (() => void)[] = [];
@@ -80,7 +82,7 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
 
   const pump = () => {
     pumpQueued = false;
-    while (running < concurrency && ready.length) start(ready.shift()!);
+    while (!paused && running < concurrency && ready.length) start(ready.shift()!);
     notify();
   };
   const schedulePump = () => {
@@ -98,15 +100,16 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
     }
     const h = clock.setTimeout(() => {
       delayed.delete(h);
-      if (delayedById.get(item.msg.id) === h) delayedById.delete(item.msg.id);
+      if (delayedById.get(item.msg.id)?.h === h) delayedById.delete(item.msg.id);
       ready.push(item);
       schedulePump();
     }, delayMs);
     // A waiting delay or retry backoff does not keep the process alive (like schedules): an
     // in-process queue loses pending jobs on exit anyway. Use a durable queue to keep them.
     (h as { unref?: () => void } | null)?.unref?.();
-    delayed.set(h, clock.now() + delayMs);
-    delayedById.set(item.msg.id, h);
+    const due = clock.now() + delayMs;
+    delayed.set(h, due);
+    delayedById.set(item.msg.id, { h, item, due });
   };
 
   const deadLetter = (item: Item, error: unknown) => {
@@ -126,6 +129,7 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
 
   const start = (item: Item) => {
     running++;
+    runningItems.add(item);
     runtime()
       .run(item.msg, item.attempt, item.env)
       .then((res) => {
@@ -136,6 +140,7 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
       .catch((err) => deadLetter(item, err))
       .finally(() => {
         running--;
+        runningItems.delete(item);
         pump();
       });
   };
@@ -146,6 +151,7 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
     for (const s of r.schedules) {
       if (!s.cron.matches(date)) continue;
       dispatching++;
+      r.fired?.(s, minute);
       r.dispatch(s.job, s.input, undefined, r.defaultEnv())
         .catch((err) => r.log.error("scheduled dispatch failed", { job: s.job.name, cron: s.cron.source, err }))
         .finally(() => {
@@ -191,11 +197,11 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
       }
     },
     async cancel(id) {
-      const h = delayedById.get(id);
-      if (h !== undefined) {
-        clock.clearTimeout(h);
+      const d = delayedById.get(id);
+      if (d !== undefined) {
+        clock.clearTimeout(d.h);
         delayedById.delete(id);
-        delayed.delete(h);
+        delayed.delete(d.h);
         notify();
         return true;
       }
@@ -226,6 +232,49 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
         await new Promise<void>((r) => waiters.push(r));
       }
     },
+    stats: async () => ({ pending: ready.length, delayed: delayed.size, inflight: running, deadLetters: deadLetters.length }),
+    async listJobs(state, offset, limit) {
+      const row = (item: Item, st: JobState, runAt: number | null): JobRow => ({ id: item.msg.id, job: item.msg.job, input: item.msg.input, state: st, attempt: item.attempt, runAt });
+      if (state === "pending") return ready.slice(offset, offset + limit).map((it) => row(it, "pending", null));
+      if (state === "running") return [...runningItems].slice(offset, offset + limit).map((it) => row(it, "running", null));
+      return [...delayedById.values()]
+        .sort((a, b) => a.due - b.due)
+        .slice(offset, offset + limit)
+        .map((d) => row(d.item, "delayed", d.due));
+    },
+    async listDead(offset, limit) {
+      const out: DeadLetter[] = [];
+      for (let i = deadLetters.length - 1 - offset; i >= 0 && out.length < limit; i--) out.push(deadLetters[i]);
+      return out;
+    },
+    async retryDead(id, env) {
+      const i = deadLetters.findIndex((d) => d.id === id);
+      if (i === -1) return false;
+      const [d] = deadLetters.splice(i, 1);
+      enqueue({ msg: { id: d.id, job: d.job, input: d.input }, attempt: 1, env }, 0);
+      return true;
+    },
+    async deleteDead(id) {
+      const i = deadLetters.findIndex((d) => d.id === id);
+      if (i === -1) return false;
+      deadLetters.splice(i, 1);
+      return true;
+    },
+    pause() {
+      paused = true;
+    },
+    resume() {
+      paused = false;
+      pump();
+    },
+    isPaused: () => paused,
+    getConcurrency: () => concurrency,
+    setConcurrency(n) {
+      if (!Number.isInteger(n) || n < 1) throw queueErrors.config(`memoryQueue concurrency must be a positive integer, got ${String(n)}`, "Pass 1 or more.");
+      concurrency = n;
+      pump();
+    },
+    now: () => clock.now(),
     inspect: () => ({ concurrency, pending: ready.length, running, delayed: delayed.size, deadLetters: deadLetters.length }),
     cloudflare: () => ({}),
   };

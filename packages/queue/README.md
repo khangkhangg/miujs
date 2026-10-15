@@ -187,6 +187,18 @@ SQLite and Redis adapters are `DurableQueue`s: `drain()`, `stop()`, `close()`, `
 | `binding` | `string` | `"JOBS"` | Producer binding name. |
 | `queue` | `string` | all batches | Only consume batches from this queue name. |
 
+## Admin (`manage()`)
+
+With `@miujs/admin`, the plugin shows a **Queue** section:
+
+- **Status**: adapter, pending, delayed, running and dead-letter counts (memory, SQLite and Redis; Cloudflare Queues cannot be counted or listed from a Worker, so those stats are `null` with a hint pointing to the Cloudflare dashboard), whether this instance is paused, its concurrency, a **Jobs** table (retries, backoff, last run and result in this instance) and a **Schedules** table (cron, job, last fired in this instance).
+- **Jobs** list (memory, SQLite, Redis), filtered by state (`pending`, `delayed`, `running`), paged by offset up to 10 000. Row action: `delete` (danger, only jobs that have not started).
+- **Dead letters** list, newest first. Row actions: `retry` (queues the message again as attempt 1) and `delete` (danger). Both are idempotent: a second run says there is nothing to do. On Redis, retry/delete look through the newest 10 000 dead letters.
+- **Actions**: `dispatch` (enqueue a job with JSON input, validated by its schema; internal `miu.*` jobs are refused), `runSchedule` (dispatch a schedule's job with its input now; pass `cron` when the job has several), and `pause` / `resume` (this instance only; jobs are still accepted, other instances keep running, a restart resumes).
+- **Settings**: `concurrency` (1–1000), applied at once in this instance.
+
+Job inputs are shown as compact JSON with secret-looking keys (`password`, `token`, `apiKey`, `secret`, ...) replaced by `[redacted]`. Custom adapters opt in by implementing the optional `QueueManagement` methods (`stats`, `listJobs`, `listDead`, `retryDead`, `deleteDead`, `pause`, `resume`, `setConcurrency`, ...); durable backends by implementing `jobs`, `deadPage` and `takeDead`.
+
 ## Errors
 
 - [`MIU_E_VALIDATION`](../../docs/errors.md#miu_e_validation): job input does not match its schema.

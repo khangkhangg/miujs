@@ -1,5 +1,5 @@
 import { detectRuntime } from "miujs";
-import type { QueueMessage } from "./adapter.ts";
+import type { JobRow, JobState, QueueMessage } from "./adapter.ts";
 import { durableQueue, type Claimed, type DurableBackend, type DurableQueue, type DurableQueueOptions } from "./durable.ts";
 import { queueErrors } from "./errors.ts";
 import type { DeadLetter } from "./memory.ts";
@@ -41,6 +41,8 @@ interface Row {
   input: string;
   attempt: number;
 }
+
+const deadRow = (r: Record<string, any>): DeadLetter => ({ id: r.id, job: r.job, input: JSON.parse(r.input), attempts: r.attempts, error: r.error, code: r.code ?? undefined, failedAt: r.failed_at });
 
 const claimed = (rows: unknown[]): Claimed[] =>
   (rows as Row[]).sort((a, b) => a.seq - b.seq).map((r) => ({ msg: { id: r.id, job: r.job, input: JSON.parse(r.input) }, attempt: r.attempt }));
@@ -130,11 +132,22 @@ function sqliteBackend(open: () => SqliteDatabaseLike, table: string, path: stri
         .get(now) as { pending: number; delayed: number; inflight: number; deadLetters: number };
       return { pending: r.pending, delayed: r.delayed, inflight: r.inflight, deadLetters: r.deadLetters };
     }),
-    deadLetters: g("dead-letters", (d) =>
-      (d.query(`SELECT id, job, input, attempts, error, code, failed_at FROM ${table}_dead ORDER BY seq`).all() as Record<string, any>[]).map(
-        (r): DeadLetter => ({ id: r.id, job: r.job, input: JSON.parse(r.input), attempts: r.attempts, error: r.error, code: r.code ?? undefined, failedAt: r.failed_at }),
-      ),
+    deadLetters: g("dead-letters", (d) => (d.query(`SELECT id, job, input, attempts, error, code, failed_at FROM ${table}_dead ORDER BY seq`).all() as Record<string, any>[]).map(deadRow)),
+    jobs: g("list", (d, state: JobState, now: number, offset: number, limit: number) => {
+      const where = state === "running" ? "lease_until IS NOT NULL" : state === "pending" ? "lease_until IS NULL AND run_at <= ?1" : "lease_until IS NULL AND run_at > ?1";
+      const rows = d
+        .query(`SELECT id, job, input, attempt, run_at FROM ${table} WHERE ${where} ORDER BY run_at, seq LIMIT ?2 OFFSET ?3`)
+        .all(now, limit, offset) as { id: string; job: string; input: string; attempt: number; run_at: number }[];
+      return rows.map((r): JobRow => ({ id: r.id, job: r.job, input: JSON.parse(r.input), state, attempt: r.attempt, runAt: state === "running" ? null : r.run_at }));
+    }),
+    deadPage: g("dead-letters", (d, offset: number, limit: number) =>
+      (d.query(`SELECT id, job, input, attempts, error, code, failed_at FROM ${table}_dead ORDER BY seq DESC LIMIT ? OFFSET ?`).all(limit, offset) as Record<string, any>[]).map(deadRow),
     ),
+    // DELETE ... RETURNING: atomic, so two operators retrying one letter queue it once.
+    takeDead: g("dead-letter", (d, id: string) => {
+      const r = d.query(`DELETE FROM ${table}_dead WHERE seq = (SELECT seq FROM ${table}_dead WHERE id = ? ORDER BY seq DESC LIMIT 1) RETURNING id, job, input, attempts, error, code, failed_at`).get(id) as Record<string, any> | null;
+      return r ? deadRow(r) : null;
+    }),
     close() {
       closed = true;
       if (owned) db?.close?.();

@@ -192,6 +192,17 @@ The memory store is bounded so a long-running process does not grow: it keeps th
 
 `defineWorkflow(name, config)`: `run` (required), `input` (a `t` schema; default any object), `trigger` (one or an array; default `manual()`), `description`, `concurrency: { key(input), limit }` (limit default `1`).
 
+## Admin (`manage()`)
+
+With `@miujs/admin`, the plugin shows a **Workflows** section next to the admin's workflow builder (which edits definitions; this section operates runs):
+
+- **Status**: registered and disabled workflows, runs queued, running, sleeping, waiting and failed (each counted up to 200, then shown as `200+`), the store and queue in use, a **Workflows** table (triggers, enabled) and the 5 most recent failures.
+- **Runs** list, newest first, filtered by workflow and status; search finds a run by id. Rows never include the resume token, and inputs hide secret-looking keys. Row actions: `cancel` (danger) and `retry` (failed runs, from the failed step). Both answer with a message instead of failing when there is nothing to do.
+- **Actions**: `start` (start a workflow with JSON input as a manual run by the operator) and `emit` (send an event with optional data and idempotency key).
+- **Settings**: `disabled`, a list of workflow names that start no new runs from any trigger (event, cron, webhook, manual, admin). Runs already started go on; cancel them from the runs list. Starting a disabled workflow fails with `MIU_E_CONFLICT` (409); emit reports it under `skipped`; cron firings are skipped without retries.
+
+There is no "resume now" action for sleeping or waiting runs: they wake on their timer or event (use `emit`).
+
 ## Errors
 
 - `MIU_E_WORKFLOW_CONFIG`: invalid `defineWorkflow`, trigger, action or plugin options.

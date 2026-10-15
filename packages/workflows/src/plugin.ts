@@ -3,6 +3,7 @@ import { CF_MAX_DELAY, cloudflareQueue, defineJob, memoryQueue, parseCron, queue
 import { describeTrigger, isWorkflow, type Mailer, type WebhookTrigger, type WorkflowDef } from "./define.ts";
 import { Engine, type EmitResult, type RunView } from "./engine.ts";
 import { workflowErrors } from "./errors.ts";
+import { workflowsManage } from "./manage.ts";
 import { workflowMcpTools } from "./mcp.ts";
 import { handleWebhook, workflowRoutes, type Permissions } from "./routes.ts";
 import { memoryRunStore, type RunFilter, type RunRecord, type RunStatus, type RunStore, type TriggerInfo } from "./store.ts";
@@ -87,6 +88,8 @@ export function workflows(opts: WorkflowsOptions) {
   let log: Logger = createLogger("info", { plugin: "workflows" });
   let appMailer: Mailer | undefined;
   let appRef: App | undefined;
+  // Workflows an operator disabled (admin settings): they start no new runs.
+  const disabled = new Set<string>();
 
   const resumeJob = defineJob(RESUME_JOB, {
     input: t.object({ runId: t.string(), token: t.string() }),
@@ -99,6 +102,10 @@ export function workflows(opts: WorkflowsOptions) {
       const tr = def?.triggers.find((x) => x.type === "cron" && x.cron === input.cron);
       if (!def || !tr || tr.type !== "cron") {
         log.warn("cron fired for a workflow that is no longer registered; skipped", { workflow: input.workflow, cron: input.cron });
+        return;
+      }
+      if (disabled.has(def.name)) {
+        log.info("cron fired for a disabled workflow; skipped", { workflow: def.name, cron: input.cron });
         return;
       }
       await engine.start(def, tr.input ?? {}, env, { trigger: { type: "cron", cron: input.cron } });
@@ -158,6 +165,7 @@ export function workflows(opts: WorkflowsOptions) {
     fetch: () => opts.fetch ?? globalThis.fetch,
     mailer: () => opts.mailer ?? appMailer ?? (appRef?.hasService("mail") ? appRef.service<Mailer>("mail") : undefined),
     resolve: (name, env) => askUnknown({ workflow: name }, env),
+    isDisabled: (name) => disabled.has(name),
     service: (name) => {
       if (!appRef) {
         throw errors.config("MIU_E_SERVICE_MISSING", `No app to look up the "${name}" service in`, "Add workflows() to miu({ plugins }) and start runs after `await app.ready()`.");
@@ -260,6 +268,8 @@ export function workflows(opts: WorkflowsOptions) {
       if (hit) return handleWebhook(engine, hit.def, hit.tr, ctx);
     },
     mcpTools: () => workflowMcpTools({ engine, registry, permissions }),
+    /** Runs, manual starts, events and disabling workflows, for @miujs/admin. */
+    manage: () => workflowsManage({ engine, registry, store, adapter, disabled }),
     /** Stop the queue's timers (schedules and delays). */
     stop() {
       q.stop();

@@ -2,6 +2,7 @@
 
 import { definePlugin, errors, processEnv, route, t, type CloudflareNeeds, type Context, type Env } from "miujs";
 import { diff, redact, redactor, type RedactRule } from "./diff.ts";
+import { auditManage } from "./manage.ts";
 import { checkKeys, ENV_KEY, envKeys, hashAuditEmail, MIN_KEY_LENGTH, type AuditKeys } from "./keys.ts";
 import { storeKeys, type AuditInput, type AuditPage, type AuditQuery, type AuditRecord, type AuditStore } from "./store.ts";
 
@@ -261,6 +262,8 @@ export function audit(opts: AuditOptions) {
         ctx.log.error("audit: could not record auth event", { err, action });
       }
     },
+    /** The audit log (filtered, paged), recent activity and export, for @miujs/admin. Read only. */
+    manage: () => auditManage({ store, keyed, orgOf }),
     inspect() {
       return { store: store.inspect?.() ?? { store: store.kind }, keyed: opts.key !== undefined || storeKeys(store) !== undefined ? true : `from env ${ENV_KEY}`, redactFailedLoginEmail: !!opts.redactFailedLoginEmail, auth: !!opts.auth, permission, redact: (opts.redact ?? []).map(String), path: opts.routes === false ? null : path };
     },

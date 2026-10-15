@@ -2,7 +2,7 @@
 // backend only stores and leases messages; this file runs them with the same retry, backoff and
 // dead-letter rules as memoryQueue.
 import type { Env } from "miujs";
-import type { QueueAdapter, QueueMessage, QueueRuntime } from "./adapter.ts";
+import type { JobRow, JobState, QueueAdapter, QueueMessage, QueueRuntime, QueueStats } from "./adapter.ts";
 import { realClock, type Clock } from "./clock.ts";
 import { queueErrors } from "./errors.ts";
 import type { DeadLetter } from "./memory.ts";
@@ -13,15 +13,7 @@ export interface Claimed {
   attempt: number;
 }
 
-export interface QueueStats {
-  /** Ready to run now. */
-  pending: number;
-  /** Waiting for a delay or retry backoff. */
-  delayed: number;
-  /** Leased by a worker (this one or another). */
-  inflight: number;
-  deadLetters: number;
-}
+export type { QueueStats };
 
 /** Storage for a durable queue. Every method may be called by several processes at once. */
 export interface DurableBackend {
@@ -46,6 +38,12 @@ export interface DurableBackend {
   deadLetters(): Promise<DeadLetter[]>;
   /** Delete a message that is not leased (delayed or ready). False when there was none. */
   cancel?(id: string): Promise<boolean>;
+  /** Messages in `state` at `now`, the next due first, for the admin. */
+  jobs?(state: JobState, now: number, offset: number, limit: number): Promise<JobRow[]>;
+  /** Dead letters, newest first. */
+  deadPage?(offset: number, limit: number): Promise<DeadLetter[]>;
+  /** Remove a dead letter and return it; null when there was none. One caller wins per id. */
+  takeDead?(id: string): Promise<DeadLetter | null>;
   close?(): void;
   inspect(): Record<string, unknown>;
 }
@@ -96,9 +94,13 @@ export function durableQueue(name: string, backend: DurableBackend | (() => Dura
   const clock = opts.clock ?? realClock;
   let be: DurableBackend | undefined = typeof backend === "function" ? undefined : backend;
   const store = (): DurableBackend => (be ??= (backend as () => DurableBackend)());
+  // What the backend supports, for the admin (a lazily created backend is assumed to support nothing extra).
+  const probe: Partial<DurableBackend> = typeof backend === "function" ? {} : backend;
 
   let rt: QueueRuntime | undefined;
   let running = 0;
+  let paused = false; // this process claims nothing while set
+  let limit = concurrency;
   let dispatching = 0;
   let active = false; // workers started (setup) and not stopped
   let pollTimer: unknown;
@@ -190,8 +192,8 @@ export function durableQueue(name: string, backend: DurableBackend | (() => Dura
     const r = runtime();
     const now = clock.now();
     for (const c of await store().reap(now, now + leaseMs)) await expired(c, now);
-    const free = concurrency - running;
-    if (free <= 0) return;
+    const free = limit - running;
+    if (paused || free <= 0) return;
     const claimed = await store().claim(now, now + leaseMs, free);
     const env = r.defaultEnv();
     for (const c of claimed) start(c, env);
@@ -241,7 +243,11 @@ export function durableQueue(name: string, backend: DurableBackend | (() => Dura
       dispatching++;
       store()
         .once(`${minute}:${s.cron.source}:${s.job.name}`, 120_000, clock.now())
-        .then((mine) => (mine ? r.dispatch(s.job, s.input, undefined, r.defaultEnv()) : undefined))
+        .then((mine) => {
+          if (!mine) return;
+          r.fired?.(s, minute);
+          return r.dispatch(s.job, s.input, undefined, r.defaultEnv());
+        })
         .catch((err) => r.log.error("scheduled dispatch failed", { job: s.job.name, cron: s.cron.source, err }))
         .finally(() => {
           dispatching--;
@@ -324,7 +330,7 @@ export function durableQueue(name: string, backend: DurableBackend | (() => Dura
       for (;;) {
         await pump();
         if (pumpError) throw pumpError;
-        if (running || dispatching || pumping) {
+        if (running || dispatching || pumping || paused) {
           await new Promise<void>((r) => waiters.push(r));
           continue;
         }
@@ -336,8 +342,39 @@ export function durableQueue(name: string, backend: DurableBackend | (() => Dura
       }
     },
     listDeadLetters: () => store().deadLetters(),
+    ...(probe.jobs ? { listJobs: (state: JobState, offset: number, n: number) => store().jobs!(state, clock.now(), offset, n) } : {}),
+    ...(probe.deadPage ? { listDead: (offset: number, n: number) => store().deadPage!(offset, n) } : {}),
+    ...(probe.takeDead
+      ? {
+          async retryDead(id: string) {
+            const d = await store().takeDead!(id);
+            if (!d) return false;
+            const now = clock.now();
+            await store().enqueue({ id: d.id, job: d.job, input: d.input }, 1, now, now);
+            if (active) void pump();
+            return true;
+          },
+          deleteDead: async (id: string) => (await store().takeDead!(id)) !== null,
+        }
+      : {}),
+    pause() {
+      paused = true;
+    },
+    resume() {
+      paused = false;
+      notify();
+      if (active) void pump();
+    },
+    isPaused: () => paused,
+    getConcurrency: () => limit,
+    setConcurrency(n: number) {
+      positive(`${name}Queue`, "concurrency", n, true, "1");
+      limit = n;
+      if (active) void pump();
+    },
+    now: () => clock.now(),
     stats: () => store().stats(clock.now()),
-    inspect: () => ({ ...(be ?? store()).inspect(), concurrency, visibilityTimeout: visibility, pollInterval, running }),
+    inspect: () => ({ ...(be ?? store()).inspect(), concurrency: limit, visibilityTimeout: visibility, pollInterval, running }),
     cloudflare: () => ({}),
   };
 }

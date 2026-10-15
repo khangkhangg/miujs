@@ -139,6 +139,16 @@ console.log(check.ok);
 
 Stores: `memoryAuditStore({ key? })` and `dbAuditStore(database, { key?, table? })` (default table `audit_log`).
 
+## Admin (`manage()`)
+
+With `@miujs/admin`, the plugin shows an **Audit log** section. It is read only: the log is append-only, so there is no delete or edit action (retention stays with `purgeOlderThan`).
+
+- **Status**: entries written in the last 24 hours (counted by sequence number, so it stays cheap), the newest sequence number and time, whether entries are HMAC-signed (a warning when not), and the store.
+- **Entries** list, newest first, paged with the store's cursor. Search with `actor:`, `action:`, `resource:`, `id:`, `org:`, `since:` and `until:` (ISO date or epoch ms); a bare word matches the resource. The **Time** filter limits to the last `1h`, `24h`, `7d` or `30d`. Rows show the changed field names, not their values.
+- **Action** `export`: up to 1000 matching entries as JSON or CSV (with hashes, for offline checks); the result says when more match. CSV cells that a spreadsheet would run as formulas are prefixed with `'`.
+
+Like `GET /audit`, a request with an active organization only sees that organization's entries. `AuditQuery` also accepts `action` now. Chain verification is not offered as an action because it reads the whole log; run `verifyChain` from a job or script.
+
 ## Errors
 
 - [`MIU_E_AUDIT_STORE_MISSING`](../../docs/errors.md#miu_e_audit_store_missing): `audit()` without a store.

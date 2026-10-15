@@ -75,10 +75,15 @@ export function cloudflareQueue(opts: CloudflareQueueOptions = {}): QueueAdapter
     );
   };
 
-  const onCron = async (controller: { cron: string }, env: Env) => {
+  const onCron = async (controller: { cron: string; scheduledTime?: number }, env: Env) => {
     const r = runtime();
     const cron = String(controller.cron).trim().split(/\s+/).join(" ");
-    for (const s of r.schedules) if (s.cron.source === cron) await r.dispatch(s.job, s.input, undefined, env);
+    const at = typeof controller.scheduledTime === "number" ? controller.scheduledTime : Date.now();
+    for (const s of r.schedules) {
+      if (s.cron.source !== cron) continue;
+      r.fired?.(s, Math.floor(at / 60_000) * 60_000);
+      await r.dispatch(s.job, s.input, undefined, env);
+    }
   };
 
   return {
@@ -95,7 +100,7 @@ export function cloudflareQueue(opts: CloudflareQueueOptions = {}): QueueAdapter
     },
     setup(app: App) {
       app.on("queue", (batch: CfMessageBatch, env: Env) => consume(batch, env));
-      app.on("scheduled", (controller: { cron: string }, env: Env) => onCron(controller, env));
+      app.on("scheduled", (controller: { cron: string; scheduledTime?: number }, env: Env) => onCron(controller, env));
     },
     inspect: () => ({ binding, ...(opts.queue ? { queue: opts.queue } : {}) }),
     cloudflare() {

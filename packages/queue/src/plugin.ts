@@ -2,6 +2,7 @@ import { createLogger, definePlugin, targetRuntime, isMiuError, type App, type C
 import type { QueueAdapter, QueueMessage, QueueRuntime, RunResult } from "./adapter.ts";
 import { queueErrors } from "./errors.ts";
 import { backoffSeconds, checkInput, isJob, type Dispatch, type DispatchOptions, type JobDef, type JobInput, type Schedule } from "./job.ts";
+import { queueManage, type LastRun } from "./manage.ts";
 import { memoryQueue } from "./memory.ts";
 
 declare module "miujs" {
@@ -92,7 +93,23 @@ export function queue(opts: QueueOptions = {}) {
     return adapter.cancel(id, env);
   };
 
+  // For the admin status: the latest attempt per job and the latest firing per schedule, in this process.
+  const lastRuns = new Map<string, LastRun>();
+  const lastFired = new WeakMap<Schedule<any>, number>();
+  const now = () => adapter.now?.() ?? Date.now();
+  const errText = (e: unknown) => {
+    const m = (e as { message?: unknown } | null)?.message;
+    const text = typeof m === "string" ? m : String(e);
+    return text.length > 200 ? `${text.slice(0, 199)}…` : text;
+  };
+
   const run = async (msg: QueueMessage, attempt: number, env: Env): Promise<RunResult> => {
+    const res = await attemptJob(msg, attempt, env);
+    if (jobs.has(msg.job)) lastRuns.set(msg.job, { at: now(), result: res.ok ? "ok" : `${res.retry ? "retrying" : "failed"}: ${errText(res.error)}` });
+    return res;
+  };
+
+  const attemptJob = async (msg: QueueMessage, attempt: number, env: Env): Promise<RunResult> => {
     const job = jobs.get(msg.job);
     const jlog = log.child({ job: msg.job, jobId: msg.id, attempt });
     if (!job) {
@@ -130,6 +147,7 @@ export function queue(opts: QueueOptions = {}) {
     defaultEnv: processEnv,
     run,
     dispatch,
+    fired: (s, minute) => void lastFired.set(s, minute),
   };
   adapter.attach(rt);
 
@@ -185,6 +203,10 @@ export function queue(opts: QueueOptions = {}) {
     /** Stop schedule and delay timers. */
     stop() {
       adapter.stop?.();
+    },
+    /** Status, job lists, actions and settings for @miujs/admin. */
+    manage() {
+      return queueManage({ adapter, jobs, schedules, lastRuns, lastFired, dispatch });
     },
     inspect() {
       return {

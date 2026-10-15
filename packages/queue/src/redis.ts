@@ -1,4 +1,4 @@
-import type { QueueMessage } from "./adapter.ts";
+import type { JobRow, JobState, QueueMessage } from "./adapter.ts";
 import { durableQueue, type Claimed, type DurableBackend, type DurableQueue, type DurableQueueOptions } from "./durable.ts";
 import { queueErrors } from "./errors.ts";
 import type { DeadLetter } from "./memory.ts";
@@ -27,6 +27,17 @@ const METHODS = ["get", "set", "del", "zadd", "zrangebyscore", "zrem", "zscore",
 export interface RedisQueueOptions extends DurableQueueOptions {
   /** Prepended to every key. Default "miu:queue:". */
   prefix?: string;
+}
+
+/** Dead letters searched for an id by retry/delete from the admin (newest first). */
+const DEAD_SCAN = 10_000;
+
+function parseDead(s: string): DeadLetter | undefined {
+  try {
+    return JSON.parse(s) as DeadLetter;
+  } catch {
+    return undefined;
+  }
 }
 
 const FIX = "Check that Redis is running and reachable at REDIS_URL (or the url passed to bunRedis()), with the right credentials and TLS settings.";
@@ -164,15 +175,37 @@ function redisBackend(client: QueueRedisLike, prefix: string): DurableBackend {
     deadLetters: g("dead-letters", async () =>
       (await client.lrange(k.dead, 0, -1))
         .reverse()
-        .map((s) => {
-          try {
-            return JSON.parse(s) as DeadLetter;
-          } catch {
-            return undefined;
-          }
-        })
+        .map(parseDead)
         .filter((d): d is DeadLetter => d !== undefined),
     ),
+    jobs: g("list", async (state: JobState, _now: number, offset: number, limit: number) => {
+      let ids: string[];
+      if (state === "delayed") ids = (await client.zrangebyscore(k.delayed, -Infinity, Infinity, offset + limit)).slice(offset);
+      // ready and processing take new ids at the head, so the next one out is at the tail.
+      else ids = (await client.lrange(state === "pending" ? k.ready : k.processing, -(offset + limit), -(offset + 1))).reverse();
+      const out: JobRow[] = [];
+      for (const id of ids) {
+        const c = await load(id);
+        if (!c) continue; // finished meanwhile
+        const runAt = state === "delayed" ? await client.zscore(k.delayed, id) : null;
+        out.push({ id, job: c.msg.job, input: c.msg.input, state, attempt: c.attempt, runAt });
+      }
+      return out;
+    }),
+    deadPage: g("dead-letters", async (offset: number, limit: number) => (await client.lrange(k.dead, offset, offset + limit - 1)).map(parseDead).filter((d): d is DeadLetter => d !== undefined)),
+    // The dead list has no index by id: look through the newest DEAD_SCAN entries. LREM decides
+    // which caller removed it.
+    takeDead: g("dead-letter", async (id: string) => {
+      for (let start = 0; start < DEAD_SCAN; start += 100) {
+        const page = await client.lrange(k.dead, start, start + 99);
+        for (const raw of page) {
+          const d = parseDead(raw);
+          if (d?.id === id) return (await client.lrem(k.dead, raw)) > 0 ? d : null;
+        }
+        if (page.length < 100) break;
+      }
+      return null;
+    }),
     close: () => client.close?.(),
     inspect: () => ({ prefix, ...(client.inspect ? { client: client.inspect() } : {}) }),
   };

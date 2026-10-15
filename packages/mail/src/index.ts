@@ -3,10 +3,11 @@
 
 import { definePlugin, errors, route, t, type Context } from "miujs";
 import { createMailer, transportMissing, type CreatedMailer, type Mailer, type MailerOptions, type MailTransport, type OutgoingMail } from "./mailer.ts";
+import { mailManage } from "./manage.ts";
 import { checkAddress, escapeHtml } from "./message.ts";
 import { consoleTransport } from "./transports.ts";
 
-export { createMailer, defineTemplate, type CreatedMailer, type MailMessage, type MailTemplate, type Mailer, type MailerOptions, type MailTransport, type OutgoingMail, type RenderedTemplate } from "./mailer.ts";
+export { createMailer, defineTemplate, maskAddress, RECENT_SENDS, type RecentSend, type CreatedMailer, type MailMessage, type MailTemplate, type Mailer, type MailerOptions, type MailTransport, type OutgoingMail, type RenderedTemplate } from "./mailer.ts";
 export { escapeHtml, htmlToText } from "./message.ts";
 export * from "./transports.ts";
 
@@ -86,6 +87,11 @@ export function mail(opts: MailOptions) {
     },
     onRequest(ctx: Context) {
       ctx.mail = mailer!.withEnv(ctx.env);
+    },
+    /** Transport, counters, recent sends and a test email, for @miujs/admin. */
+    manage() {
+      const templates = Array.isArray(opts.templates) ? opts.templates.length : Object.keys(opts.templates ?? {}).length;
+      return mailManage({ mailer: () => mailer, transport: () => opts.transport, from: opts.from, templates });
     },
     inspect() {
       const transport = describeTransport();

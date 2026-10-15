@@ -1,4 +1,4 @@
-import { isMiuError, validate, type Env, type Logger } from "miujs";
+import { errors, isMiuError, validate, type Env, type Logger } from "miujs";
 import { backoffSeconds, type Clock } from "@miujs/queue";
 import {
   isWorkflow,
@@ -46,6 +46,8 @@ export interface EngineOptions {
    * been registered in another isolate or process). It may register it; the lookup is retried once.
    */
   resolve?(name: string, env: Env): Promise<void>;
+  /** True for workflows an operator disabled: they start no new runs (runs already started go on). */
+  isDisabled?(name: string): boolean;
 }
 
 export interface StartOptions {
@@ -182,6 +184,9 @@ export class Engine {
 
   async start(nameOrDef: string | WorkflowDef<any>, input: unknown, env: Env, o: StartOptions = {}): Promise<{ id: string; status: RunStatus }> {
     const def = typeof nameOrDef === "string" ? await this.def(nameOrDef, env) : nameOrDef;
+    if (this.opts.isDisabled?.(def.name)) {
+      throw errors.conflict(`Workflow "${def.name}" is disabled`, "An operator disabled it in the admin (Workflows settings). Enable it there to start new runs; runs started before keep going.");
+    }
     const checked = validate(def.input, input ?? {});
     if (!checked.ok) throw workflowErrors.input(def.name, checked.issues);
     const value = roundTrip(checked.value);

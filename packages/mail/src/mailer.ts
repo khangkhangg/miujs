@@ -76,6 +76,47 @@ export interface CreatedMailer extends Mailer {
   readonly templateNames: string[];
   /** The same mailer with other env vars / bindings (used per request on Workers). */
   withEnv(env: Env): Mailer;
+  /** Sends that succeeded or threw since this mailer was created (all `withEnv` copies included). */
+  stats(): { sent: number; failed: number };
+  /** The last `RECENT_SENDS` sends, newest first, with masked recipients and no bodies. */
+  recent(): RecentSend[];
+}
+
+/** How many sends `recent()` keeps (a ring buffer: older ones are dropped). */
+export const RECENT_SENDS = 200;
+
+/** One send, as operators see it: no bodies, recipients masked, codes in subjects hidden. */
+export interface RecentSend {
+  id: string;
+  /** Masked, e.g. "a***@example.com"; several recipients are joined with ", ". */
+  to: string;
+  subject: string | null;
+  status: "sent" | "failed";
+  /** MiuError code of a failure. */
+  code: string | null;
+  /** Epoch ms. */
+  at: number;
+}
+
+/** "Ann <ann@example.com>" -> "a***@example.com". Anything that is not an address -> "***". */
+export function maskAddress(address: string): string {
+  const m = /<([^<>\s]+)>\s*$/.exec(address);
+  const bare = (m ? m[1] : address).trim();
+  const at = bare.lastIndexOf("@");
+  if (at < 1 || at === bare.length - 1 || /\s/.test(bare)) return "***";
+  return `${bare[0]}***${bare.slice(at)}`;
+}
+
+function maskRecipients(to: unknown): string {
+  const list = (Array.isArray(to) ? to : [to]).map((a) => (typeof a === "string" ? maskAddress(a) : "***"));
+  return list.length > 3 ? `${list.slice(0, 3).join(", ")} +${list.length - 3} more` : list.join(", ");
+}
+
+/** Hides one-time codes (6+ digits) and long tokens (24+ characters) that subjects sometimes carry. */
+function maskSubject(subject: unknown): string | null {
+  if (typeof subject !== "string") return null;
+  const s = subject.replace(/\b\d{6,}\b/g, "[hidden]").replace(/[A-Za-z0-9_\-.~+/=]{24,}/g, "[hidden]");
+  return s.length > 200 ? `${s.slice(0, 199)}…` : s;
 }
 
 export function defaultDev(): boolean {
@@ -111,7 +152,29 @@ export function createMailer(opts: MailerOptions): CreatedMailer {
   const templates = new Map<string, MailTemplate>();
   for (const tpl of Array.isArray(opts.templates) ? opts.templates : Object.values(opts.templates ?? {})) templates.set(tpl.name, tpl);
 
+  const counts = { sent: 0, failed: 0 };
+  const recent: RecentSend[] = [];
+  const remember = (r: RecentSend) => {
+    recent.push(r);
+    if (recent.length > RECENT_SENDS) recent.shift();
+  };
+
   async function send(msg: MailMessage, env: Env): Promise<{ id: string }> {
+    let subject: unknown = msg?.subject;
+    try {
+      const r = await deliver(msg, env, (s) => (subject = s));
+      counts.sent++;
+      remember({ id: r.id, to: maskRecipients(msg.to), subject: maskSubject(subject), status: "sent", code: null, at: Date.now() });
+      return r;
+    } catch (err) {
+      counts.failed++;
+      const code = (err as { code?: unknown } | null)?.code;
+      remember({ id: newId(), to: maskRecipients(msg?.to), subject: maskSubject(subject), status: "failed", code: typeof code === "string" ? code : null, at: Date.now() });
+      throw err;
+    }
+  }
+
+  async function deliver(msg: MailMessage, env: Env, rendered: (subject: string) => void): Promise<{ id: string }> {
     const from = checkAddress(opts.from, "from");
     let { subject, html, text } = msg;
     if (msg.template !== undefined) {
@@ -135,6 +198,7 @@ export function createMailer(opts: MailerOptions): CreatedMailer {
     const to = toList.map((a) => checkAddress(a, "to"));
     const replyTo = msg.replyTo === undefined ? undefined : checkAddress(msg.replyTo, "replyTo");
     if (typeof subject !== "string" || subject === "") throw contentMissing("subject");
+    rendered(subject);
     checkSubject(subject);
     const headers = checkHeaders(msg.headers);
     if (!html && !text) throw contentMissing("body");
@@ -164,5 +228,7 @@ export function createMailer(opts: MailerOptions): CreatedMailer {
     templateNames: [...templates.keys()],
     send: (msg) => send(msg, baseEnv ?? (processEnv() as Env)),
     withEnv: (env) => ({ send: (msg) => send(msg, env) }),
+    stats: () => ({ ...counts }),
+    recent: () => recent.slice().reverse(),
   };
 }
