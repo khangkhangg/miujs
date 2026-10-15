@@ -21,9 +21,14 @@ import { dbRunStore, workflows } from "@miujs/workflows";
 
 const CRM = ["companies", "contacts", "deals", "activities", "tasks"];
 
-/** owner: everything · admin: all CRM data, members and workflows · sales: day-to-day selling. */
+/**
+ * Organization roles: owner (everything), admin (all CRM data, members and workflows), sales
+ * (day-to-day selling). operator is a global role (user.roles, not an org role) for the admin's
+ * System area, where every installed package can be inspected and operated.
+ */
 export const roles = defineRoles({
   owner: ["*"],
+  operator: ["system:*"],
   admin: [...CRM.map((r) => `${r}:*`), "members:read", "members:invite", "workflows:*"],
   sales: [
     "companies:read",

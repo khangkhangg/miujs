@@ -88,4 +88,19 @@ describe("CRM example", () => {
     expect((await b("/admin/workflows/new")).status).toBe(403);
     expect((await b("/admin/workflows")).status).toBe(200);
   });
+
+  test("the seeded owner is a global operator who can open the System area; sales cannot", async () => {
+    const { app, database } = make();
+    await seed(app, database, { password: "correct horse battery" });
+    const owner = browser(app);
+    await owner("/admin/login", { form: { email: "owner@example.com", password: "correct horse battery", next: "/admin" } });
+    const home = await owner("/admin");
+    expect(home.text).toContain('href="/admin/system"');
+    const system = await owner("/admin/system");
+    expect(system.status).toBe(200);
+    expect(system.text).toContain("workflows");
+    const sales = browser(app);
+    await sales("/admin/login", { form: { email: "sales@example.com", password: "correct horse battery", next: "/admin" } });
+    expect((await sales("/admin/system")).status).toBe(403);
+  });
 });

@@ -39,6 +39,8 @@ export async function seed(app: App, database: Database | null, o: SeedOptions) 
   }
   const orgs = accessStore(database);
   const [owner, ...rest] = users;
+  // The owner also operates the app: a global role that opens the admin's System area.
+  await database.prepare("UPDATE users SET roles = ? WHERE id = ?").bind(JSON.stringify(["operator"]), owner.id).run();
   const org = await orgs.createOrg({ name: o.orgName ?? "Acme Inc", ownerId: owner.id, ownerEmail: owner.email });
   for (const u of rest) await orgs.addMember(org.id, u.id, u.role, u.email);
 
