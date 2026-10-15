@@ -77,9 +77,15 @@ export interface RateLimitOptions {
   trustProxyHeader?: string;
   login?: { perIpAccount?: number; perAccount?: number; perIp?: number; windowSeconds?: number };
   register?: { perIp?: number; windowSeconds?: number };
+  /** POST /password/forgot. Counts unknown emails too, so a 429 reveals nothing. */
+  passwordReset?: { perIp?: number; perAccount?: number; windowSeconds?: number };
+  /** POST /verify-email/request. */
+  verifyEmail?: { perIp?: number; perAccount?: number; windowSeconds?: number };
 }
 
 export const RATE_LIMIT_DEFAULTS = {
   login: { perIpAccount: 10, perAccount: 50, perIp: 100, windowSeconds: 15 * 60 },
   register: { perIp: 10, windowSeconds: 60 * 60 },
+  passwordReset: { perIp: 20, perAccount: 5, windowSeconds: 60 * 60 },
+  verifyEmail: { perIp: 20, perAccount: 5, windowSeconds: 60 * 60 },
 };

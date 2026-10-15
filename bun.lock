@@ -35,6 +35,22 @@
         "miujs": "workspace:*",
       },
     },
+    "packages/access": {
+      "name": "@miujs/access",
+      "version": "0.1.0",
+      "dependencies": {
+        "@miujs/db": "workspace:*",
+        "miujs": "workspace:*",
+      },
+    },
+    "packages/audit": {
+      "name": "@miujs/audit",
+      "version": "0.1.0",
+      "dependencies": {
+        "@miujs/db": "workspace:*",
+        "miujs": "workspace:*",
+      },
+    },
     "packages/auth": {
       "name": "@miujs/auth",
       "version": "0.1.0",
@@ -68,6 +84,20 @@
         "miujs": "workspace:*",
       },
     },
+    "packages/files": {
+      "name": "@miujs/files",
+      "version": "0.1.0",
+      "dependencies": {
+        "miujs": "workspace:*",
+      },
+    },
+    "packages/mail": {
+      "name": "@miujs/mail",
+      "version": "0.1.0",
+      "dependencies": {
+        "miujs": "workspace:*",
+      },
+    },
     "packages/miujs": {
       "name": "miujs",
       "version": "0.1.0",
@@ -93,9 +123,29 @@
         "miujs": "workspace:*",
       },
     },
+    "packages/web": {
+      "name": "@miujs/web",
+      "version": "0.1.0",
+      "dependencies": {
+        "miujs": "workspace:*",
+      },
+    },
+    "packages/workflows": {
+      "name": "@miujs/workflows",
+      "version": "0.1.0",
+      "dependencies": {
+        "@miujs/db": "workspace:*",
+        "@miujs/queue": "workspace:*",
+        "miujs": "workspace:*",
+      },
+    },
   },
   "packages": {
     "@borewit/text-codec": ["@borewit/text-codec@0.2.2", "", {}, "sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ=="],
+
+    "@miujs/access": ["@miujs/access@workspace:packages/access"],
+
+    "@miujs/audit": ["@miujs/audit@workspace:packages/audit"],
 
     "@miujs/auth": ["@miujs/auth@workspace:packages/auth"],
 
@@ -105,11 +155,19 @@
 
     "@miujs/db": ["@miujs/db@workspace:packages/db"],
 
+    "@miujs/files": ["@miujs/files@workspace:packages/files"],
+
+    "@miujs/mail": ["@miujs/mail@workspace:packages/mail"],
+
     "@miujs/queue": ["@miujs/queue@workspace:packages/queue"],
 
     "@miujs/realtime": ["@miujs/realtime@workspace:packages/realtime"],
 
     "@miujs/session": ["@miujs/session@workspace:packages/session"],
+
+    "@miujs/web": ["@miujs/web@workspace:packages/web"],
+
+    "@miujs/workflows": ["@miujs/workflows@workspace:packages/workflows"],
 
     "@sinclair/typebox": ["@sinclair/typebox@0.34.52", "", {}, "sha512-XiMQh7qqVlxZzcVD+kkGMNGMzcTrDMLWI7S4x7z1MkCkbDPrekpZXEUK0eZqZFMuHQg2a2DZOcDIh9o5v3Gonw=="],
 

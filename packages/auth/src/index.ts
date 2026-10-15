@@ -1,12 +1,14 @@
 // @miujs/auth — email/password accounts, sessions and API tokens. Sets `ctx.user`; core enforces
 // `route.auth`. Needs `session()` earlier in `plugins`.
 
-import { definePlugin, errors, route, t, type AuthUser, type CloudflareNeeds, type Context, type Env } from "miujs";
+import { definePlugin, errors, processEnv, route, t, type AuthUser, type CloudflareNeeds, type Context, type Env, type RouteDef } from "miujs";
 import { getSession, hex, randomId, sha256, timingSafeEqual, utf8, base64urlEncode, randomBytes } from "@miujs/session";
+import { defaultAuthEmails, type AuthEmails, type AuthMailer } from "./emails.ts";
 import { hashPassword, needsRehash, verifyPassword, type PasswordOptions } from "./password.ts";
 import { RATE_LIMIT_DEFAULTS, memoryRateLimiter, type RateLimitOptions } from "./ratelimit.ts";
-import { memoryUserStore, type StoredUser, type UserStore } from "./store.ts";
+import { memoryUserStore, type OneTimeTokenPurpose, type OneTimeTokenRecord, type StoredUser, type UserStore } from "./store.ts";
 
+export * from "./emails.ts";
 export * from "./password.ts";
 export * from "./ratelimit.ts";
 export * from "./store.ts";
@@ -17,6 +19,13 @@ export interface TurnstileOptions {
   /** Injectable for tests. Default: global `fetch`. */
   fetch?: typeof fetch;
 }
+
+/**
+ * - `"off"` (default): today's behavior; no verify routes.
+ * - `"optional"`: register signs in as before and emails a verify link; `ctx.user.emailVerified` says whether it was used.
+ * - `"required"`: unverified users cannot sign in, and register always answers 202 "check-your-email" (no account enumeration).
+ */
+export type EmailVerificationMode = "off" | "optional" | "required";
 
 export interface AuthOptions {
   /** Default `memoryUserStore()` (dev only). Use `dbUserStore(db)` for real apps. */
@@ -40,21 +49,39 @@ export interface AuthOptions {
    * `false` turns it off.
    */
   rateLimit?: RateLimitOptions | false;
+  /**
+   * Sends account emails (verify, reset). Default: `ctx.mail` from `mail()` in plugins.
+   * Giving a mailer (or adding `mail()`) turns on POST /password/forgot, /password/reset and /password/change.
+   */
+  mailer?: AuthMailer;
+  /**
+   * Public URL that links in emails point to, e.g. `https://app.example.com`. Default: `env.APP_URL`;
+   * in dev only, the request's origin. Required in production so a forged Host header cannot
+   * redirect reset links to an attacker.
+   */
+  appUrl?: string;
+  /** Default `"off"`. */
+  emailVerification?: EmailVerificationMode;
+  /** Replace the default email texts. */
+  emails?: Partial<AuthEmails>;
+  /** Pages in your app that emailed links open (they read `?token=` and POST it). */
+  pages?: { verifyEmail?: string; resetPassword?: string; forgotPassword?: string };
 }
 
 const MAX_PASSWORD = 1024;
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+const HOUR = 3_600_000;
+const VERIFY_TTL = 24 * HOUR;
+const RESET_TTL = HOUR;
+const CHECK_EMAIL = { status: "check-your-email" } as const;
 
 const UserSchema = t.object({
   id: t.string(),
   email: t.optional(t.string()),
   name: t.optional(t.nullable(t.string())),
   roles: t.array(t.string()),
+  emailVerified: t.optional(t.boolean()),
 });
-
-function publicUser(u: StoredUser): AuthUser {
-  return { id: u.id, email: u.email, name: u.name ?? undefined, roles: u.roles };
-}
 
 const invalidLogin = () =>
   errors.custom({
@@ -80,6 +107,8 @@ function requireSession(ctx: Context) {
   return s;
 }
 
+const ACCOUNT_STORE_METHODS = ["markEmailVerified", "changePassword", "createOneTimeToken", "consumeOneTimeToken", "deleteOneTimeTokens"] as const;
+
 /**
  * Accounts and sign-in.
  *
@@ -93,12 +122,24 @@ export function auth(opts: AuthOptions = {}) {
   const pw = opts.password ?? {};
   const minLen = opts.minPasswordLength ?? 8;
   const prefix = opts.tokenPrefix ?? "miu_";
+  const verification: EmailVerificationMode = opts.emailVerification ?? "off";
+  const emails: AuthEmails = { ...defaultAuthEmails, ...opts.emails };
+  const pages = { verifyEmail: "/verify-email", resetPassword: "/reset-password", forgotPassword: "/forgot-password", ...opts.pages };
   let dummyHash: Promise<string> | undefined;
+  let dev = true;
 
   const rl = opts.rateLimit === false ? null : (opts.rateLimit ?? {});
   const limiter = rl ? (rl.limiter ?? memoryRateLimiter()) : null;
   const loginLimits = { ...RATE_LIMIT_DEFAULTS.login, ...rl?.login };
   const registerLimits = { ...RATE_LIMIT_DEFAULTS.register, ...rl?.register };
+  const resetLimits = { ...RATE_LIMIT_DEFAULTS.passwordReset, ...rl?.passwordReset };
+  const verifyLimits = { ...RATE_LIMIT_DEFAULTS.verifyEmail, ...rl?.verifyEmail };
+
+  function publicUser(u: StoredUser): AuthUser {
+    const out: AuthUser = { id: u.id, email: u.email, name: u.name ?? undefined, roles: u.roles };
+    if (verification !== "off") out.emailVerified = u.emailVerifiedAt != null;
+    return out;
+  }
 
   function clientIp(ctx: Context): string | undefined {
     if (rl?.trustProxyHeader) {
@@ -165,43 +206,136 @@ export function auth(opts: AuthOptions = {}) {
     const s = requireSession(ctx);
     s.regenerate();
     s.set("userId", user.id);
+    s.set("sv", user.sessionVersion ?? 0);
     ctx.user = publicUser(user);
   }
+
+  // --- account emails ------------------------------------------------------------------------
+
+  function mailerFor(ctx: Context): AuthMailer {
+    const m = opts.mailer ?? (ctx as { mail?: AuthMailer }).mail;
+    if (!m || typeof m.send !== "function") throw mailerMissing();
+    return m;
+  }
+
+  /** Base URL for emailed links. Never derived from the Host header outside dev. */
+  function appUrlFor(ctx: Context): string {
+    const configured = opts.appUrl ?? (typeof ctx.env?.APP_URL === "string" ? (ctx.env.APP_URL as string) : undefined);
+    if (configured) return configured.replace(/\/+$/, "");
+    if (dev) return ctx.url.origin;
+    throw appUrlMissing();
+  }
+
+  const store = users as Required<Pick<UserStore, (typeof ACCOUNT_STORE_METHODS)[number]>> & UserStore;
+
+  async function issueToken(userId: string, purpose: OneTimeTokenPurpose, env: Env): Promise<string> {
+    // One live link per purpose: a new one replaces any earlier one.
+    await store.deleteOneTimeTokens(userId, purpose, env);
+    const token = base64urlEncode(randomBytes(32));
+    const now = Date.now();
+    await store.createOneTimeToken({ tokenHash: hex(await sha256(token)), userId, purpose, createdAt: now, expiresAt: now + (purpose === "verify" ? VERIFY_TTL : RESET_TTL) }, env);
+    return token;
+  }
+
+  /** Uses up a token. Returns its record only when it is genuine, of this purpose and unexpired. */
+  async function consumeToken(token: string, purpose: OneTimeTokenPurpose, env: Env): Promise<OneTimeTokenRecord | null> {
+    if (typeof token !== "string" || token.length < 32 || token.length > 200) return null;
+    const digest = hex(await sha256(token));
+    const rec = await store.consumeOneTimeToken(digest, purpose, env);
+    if (!rec || !timingSafeEqual(utf8(rec.tokenHash), utf8(digest))) return null;
+    if (rec.expiresAt <= Date.now()) return null;
+    return rec;
+  }
+
+  const link = (appUrl: string, page: string, token?: string) => `${appUrl}${page}${token ? `?token=${token}` : ""}`;
+
+  async function sendVerify(mailer: AuthMailer, appUrl: string, user: StoredUser, env: Env) {
+    const token = await issueToken(user.id, "verify", env);
+    await mailer.send({ to: user.email, ...emails.verifyEmail({ link: link(appUrl, pages.verifyEmail, token), appUrl }) });
+  }
+
+  /** Work whose duration must not show in the response time (it would reveal whether an account exists). */
+  function inBackground(ctx: Context, task: () => Promise<unknown>) {
+    ctx.waitUntil(Promise.resolve().then(task));
+  }
+
+  // --- routes ----------------------------------------------------------------------------------
 
   const Credentials = {
     email: t.string({ format: "email", maxLength: 254 }),
     password: t.string({ maxLength: MAX_PASSWORD }),
     "cf-turnstile-response": t.optional(t.string({ maxLength: 4096 })),
   };
+  const Token = t.string({ maxLength: 200 });
+  const StatusSchema = t.object({ status: t.string() });
 
-  const registerRoute = route.post(`${base}/register`, {
-    name: "auth_register",
-    summary: "Create an account with email and password, and sign in",
-    tags: ["auth", "csrf-always"],
-    mcp: false,
-    status: 201,
-    body: t.object({ ...Credentials, name: t.optional(t.string({ maxLength: 200 })) }),
-    response: t.object({ user: UserSchema }),
-    handler: async (ctx) => {
-      const ip = clientIp(ctx as unknown as Context);
-      const blocked = await limited(ctx as unknown as Context, [[ip ? `register:ip:${ip}` : null, registerLimits.perIp]], registerLimits.windowSeconds);
-      if (blocked) return blocked;
-      await checkTurnstile(ctx as unknown as Context, ctx.body["cf-turnstile-response"]);
-      checkPassword(ctx.body.password);
-      const passwordHash = await hashPassword(ctx.body.password, pw);
-      const user = await users.createUser({ email: ctx.body.email, name: ctx.body.name ?? null, roles: [...(opts.defaultRoles ?? [])], passwordHash }, ctx.env);
-      if (!user) {
-        throw errors.custom({
-          code: "MIU_E_AUTH_EMAIL_TAKEN",
-          status: 409,
-          message: "An account with this email already exists",
-          fix: "Sign in with POST /auth/login instead, or use another email.",
+  async function registerChecks(ctx: Context, body: { password: string; "cf-turnstile-response"?: string }): Promise<Response | null> {
+    const ip = clientIp(ctx);
+    const blocked = await limited(ctx, [[ip ? `register:ip:${ip}` : null, registerLimits.perIp]], registerLimits.windowSeconds);
+    if (blocked) return blocked;
+    await checkTurnstile(ctx, body["cf-turnstile-response"]);
+    checkPassword(body.password);
+    return null;
+  }
+
+  const registerRoute =
+    verification === "required"
+      ? route.post(`${base}/register`, {
+          name: "auth_register",
+          summary: "Create an account with email and password; a link to confirm the email is sent",
+          tags: ["auth", "csrf-always"],
+          mcp: false,
+          status: 202,
+          body: t.object({ ...Credentials, name: t.optional(t.string({ maxLength: 200 })) }),
+          response: StatusSchema,
+          handler: async (ctx) => {
+            const c = ctx as unknown as Context;
+            const blocked = await registerChecks(c, ctx.body);
+            if (blocked) return blocked;
+            const mailer = mailerFor(c);
+            const appUrl = appUrlFor(c);
+            const passwordHash = await hashPassword(ctx.body.password, pw);
+            const created = await users.createUser({ email: ctx.body.email, name: ctx.body.name ?? null, roles: [...(opts.defaultRoles ?? [])], passwordHash }, ctx.env);
+            // Same answer either way, so the form cannot be used to test which emails have accounts.
+            inBackground(c, async () => {
+              if (created) return sendVerify(mailer, appUrl, created, ctx.env);
+              const existing = await users.findUserByEmail(ctx.body.email, ctx.env);
+              if (!existing) return;
+              if (existing.emailVerifiedAt == null) return sendVerify(mailer, appUrl, existing, ctx.env);
+              await mailer.send({ to: existing.email, ...emails.alreadyRegistered({ forgotPasswordLink: link(appUrl, pages.forgotPassword), appUrl }) });
+            });
+            return CHECK_EMAIL;
+          },
+        })
+      : route.post(`${base}/register`, {
+          name: "auth_register",
+          summary: "Create an account with email and password, and sign in",
+          tags: ["auth", "csrf-always"],
+          mcp: false,
+          status: 201,
+          body: t.object({ ...Credentials, name: t.optional(t.string({ maxLength: 200 })) }),
+          response: t.object({ user: UserSchema }),
+          handler: async (ctx) => {
+            const c = ctx as unknown as Context;
+            const blocked = await registerChecks(c, ctx.body);
+            if (blocked) return blocked;
+            const mailer = verification === "optional" ? mailerFor(c) : null;
+            const appUrl = mailer ? appUrlFor(c) : "";
+            const passwordHash = await hashPassword(ctx.body.password, pw);
+            const user = await users.createUser({ email: ctx.body.email, name: ctx.body.name ?? null, roles: [...(opts.defaultRoles ?? [])], passwordHash }, ctx.env);
+            if (!user) {
+              throw errors.custom({
+                code: "MIU_E_AUTH_EMAIL_TAKEN",
+                status: 409,
+                message: "An account with this email already exists",
+                fix: "Sign in with POST /auth/login instead, or use another email.",
+              });
+            }
+            signIn(c, user);
+            if (mailer) inBackground(c, () => sendVerify(mailer, appUrl, user, ctx.env));
+            return { user: publicUser(user) };
+          },
         });
-      }
-      signIn(ctx as unknown as Context, user);
-      return { user: publicUser(user) };
-    },
-  });
 
   const loginRoute = route.post(`${base}/login`, {
     name: "auth_login",
@@ -235,6 +369,8 @@ export function auth(opts: AuthOptions = {}) {
       if (needsRehash(user.passwordHash, pw)) {
         await users.updatePasswordHash(user.id, await hashPassword(ctx.body.password, pw), ctx.env);
       }
+      // Only after the password matched, so this reveals nothing to someone without it.
+      if (verification === "required" && user.emailVerifiedAt == null) throw emailUnverified(base);
       signIn(ctx as unknown as Context, user);
       return { user: publicUser(user) };
     },
@@ -256,7 +392,11 @@ export function auth(opts: AuthOptions = {}) {
     tags: ["auth"],
     auth: "required",
     response: t.object({ user: UserSchema }),
-    handler: (ctx) => ({ user: { id: ctx.user.id, email: ctx.user.email, name: ctx.user.name, roles: ctx.user.roles } }),
+    handler: (ctx) => {
+      const user: Record<string, unknown> = { id: ctx.user.id, email: ctx.user.email, name: ctx.user.name, roles: ctx.user.roles };
+      if (typeof ctx.user.emailVerified === "boolean") user.emailVerified = ctx.user.emailVerified;
+      return { user: user as { id: string; roles: string[] } };
+    },
   });
 
   const createTokenRoute = route.post(`${base}/tokens`, {
@@ -288,6 +428,160 @@ export function auth(opts: AuthOptions = {}) {
     },
   });
 
+  // --- verify / reset / change (added in setup when a mailer is available) --------------------
+
+  const verifyRequestRoute = route.post(`${base}/verify-email/request`, {
+    name: "auth_verify_email_request",
+    summary: "Email a new link to confirm the address (signed in, or send { email })",
+    tags: ["auth", "csrf-always"],
+    mcp: false,
+    auth: "optional",
+    status: 202,
+    body: t.object({ email: t.optional(t.string({ format: "email", maxLength: 254 })) }),
+    response: StatusSchema,
+    handler: async (ctx) => {
+      const c = ctx as unknown as Context;
+      const ip = clientIp(c);
+      const mailer = mailerFor(c);
+      const appUrl = appUrlFor(c);
+      if (ctx.user) {
+        const blocked = await limited(c, [[`verify:account:${ctx.user.id}`, verifyLimits.perAccount], [ip ? `verify:ip:${ip}` : null, verifyLimits.perIp]], verifyLimits.windowSeconds);
+        if (blocked) return blocked;
+        const user = await users.findUserById(ctx.user.id, ctx.env);
+        if (!user) throw errors.unauthorized();
+        if (user.emailVerifiedAt != null) {
+          ctx.set.status = 200;
+          return { status: "already-verified" };
+        }
+        await sendVerify(mailer, appUrl, user, ctx.env);
+        return CHECK_EMAIL;
+      }
+      const email = ctx.body.email;
+      if (!email) throw errors.badRequest("Send { email } or sign in first", "POST { \"email\": \"you@example.com\" } to get a new link, or call this while signed in.");
+      const blocked = await limited(c, [[`verify:account:${email.toLowerCase()}`, verifyLimits.perAccount], [ip ? `verify:ip:${ip}` : null, verifyLimits.perIp]], verifyLimits.windowSeconds);
+      if (blocked) return blocked;
+      inBackground(c, async () => {
+        const user = await users.findUserByEmail(email, ctx.env);
+        if (user && user.emailVerifiedAt == null) await sendVerify(mailer, appUrl, user, ctx.env);
+      });
+      return CHECK_EMAIL;
+    },
+  });
+
+  const verifyRoute = route.post(`${base}/verify-email`, {
+    name: "auth_verify_email",
+    summary: "Confirm an email address with the token from the emailed link",
+    tags: ["auth", "csrf-always"],
+    mcp: false,
+    body: t.object({ token: Token }),
+    response: StatusSchema,
+    handler: async (ctx) => {
+      const rec = await consumeToken(ctx.body.token, "verify", ctx.env);
+      if (!rec) {
+        throw errors.custom({
+          code: "MIU_E_AUTH_VERIFY_INVALID",
+          status: 400,
+          message: "This email confirmation link is invalid, used or expired",
+          fix: `Request a new link with POST ${base}/verify-email/request. Links work once and expire after 24 hours.`,
+        });
+      }
+      await store.markEmailVerified(rec.userId, Date.now(), ctx.env);
+      return { status: "verified" };
+    },
+  });
+
+  const forgotRoute = route.post(`${base}/password/forgot`, {
+    name: "auth_password_forgot",
+    summary: "Email a password reset link (same answer whether or not the account exists)",
+    tags: ["auth", "csrf-always"],
+    mcp: false,
+    status: 202,
+    body: t.object({ email: t.string({ format: "email", maxLength: 254 }) }),
+    response: StatusSchema,
+    handler: async (ctx) => {
+      const c = ctx as unknown as Context;
+      const ip = clientIp(c);
+      const email = ctx.body.email.toLowerCase();
+      const blocked = await limited(c, [[`reset:account:${email}`, resetLimits.perAccount], [ip ? `reset:ip:${ip}` : null, resetLimits.perIp]], resetLimits.windowSeconds);
+      if (blocked) return blocked;
+      const mailer = mailerFor(c);
+      const appUrl = appUrlFor(c);
+      inBackground(c, async () => {
+        const user = await users.findUserByEmail(email, ctx.env);
+        if (!user) return;
+        const token = await issueToken(user.id, "reset", ctx.env);
+        await mailer.send({ to: user.email, ...emails.resetPassword({ link: link(appUrl, pages.resetPassword, token), appUrl }) });
+      });
+      return CHECK_EMAIL;
+    },
+  });
+
+  const resetRoute = route.post(`${base}/password/reset`, {
+    name: "auth_password_reset",
+    summary: "Set a new password with the token from the emailed link, and sign in",
+    tags: ["auth", "csrf-always"],
+    mcp: false,
+    body: t.object({ token: Token, password: t.string({ maxLength: MAX_PASSWORD }) }),
+    response: t.object({ user: UserSchema }),
+    handler: async (ctx) => {
+      // Before using up the token, so a weak password can be retried with the same link.
+      checkPassword(ctx.body.password);
+      const rec = await consumeToken(ctx.body.token, "reset", ctx.env);
+      const user = rec ? await users.findUserById(rec.userId, ctx.env) : null;
+      if (!user) {
+        throw errors.custom({
+          code: "MIU_E_AUTH_RESET_INVALID",
+          status: 400,
+          message: "This password reset link is invalid, used or expired",
+          fix: `Ask for a new link with POST ${base}/password/forgot. Links work once and expire after 1 hour.`,
+        });
+      }
+      const passwordHash = await hashPassword(ctx.body.password, pw);
+      const sessionVersion = await store.changePassword(user.id, passwordHash, ctx.env);
+      await store.deleteOneTimeTokens(user.id, "reset", ctx.env);
+      // Opening the emailed link proves the address belongs to them.
+      const emailVerifiedAt = user.emailVerifiedAt ?? Date.now();
+      if (user.emailVerifiedAt == null) await store.markEmailVerified(user.id, emailVerifiedAt, ctx.env);
+      const updated: StoredUser = { ...user, passwordHash, sessionVersion, emailVerifiedAt };
+      signIn(ctx as unknown as Context, updated);
+      return { user: publicUser(updated) };
+    },
+  });
+
+  const changeRoute = route.post(`${base}/password/change`, {
+    name: "auth_password_change",
+    summary: "Change your password; other sessions are signed out",
+    tags: ["auth", "csrf-always"],
+    mcp: false,
+    auth: "required",
+    body: t.object({ currentPassword: t.string({ maxLength: MAX_PASSWORD }), newPassword: t.string({ maxLength: MAX_PASSWORD }) }),
+    response: StatusSchema,
+    handler: async (ctx) => {
+      const c = ctx as unknown as Context;
+      const blocked = await limited(c, [[`change:user:${ctx.user.id}`, loginLimits.perIpAccount]], loginLimits.windowSeconds);
+      if (blocked) return blocked;
+      checkPassword(ctx.body.newPassword);
+      const user = await users.findUserById(ctx.user.id, ctx.env);
+      if (!user) throw errors.unauthorized();
+      if (!(await verifyPassword(ctx.body.currentPassword, user.passwordHash, pw))) {
+        throw errors.custom({
+          code: "MIU_E_AUTH_PASSWORD_INCORRECT",
+          status: 403,
+          message: "The current password is incorrect",
+          fix: `Send your current password as currentPassword. Forgot it? Use POST ${base}/password/forgot.`,
+        });
+      }
+      const passwordHash = await hashPassword(ctx.body.newPassword, pw);
+      const sessionVersion = await store.changePassword(user.id, passwordHash, ctx.env);
+      await store.deleteOneTimeTokens(user.id, "reset", ctx.env);
+      // Keep this browser signed in under the new version; every other session is now stale.
+      if (ctx.state.authMethod === "session") signIn(c, { ...user, passwordHash, sessionVersion });
+      return { status: "password-changed" };
+    },
+  });
+
+  const accountRoutes: RouteDef[] = [...(verification === "off" ? [] : [verifyRequestRoute, verifyRoute]), forgotRoute, resetRoute, changeRoute];
+
   async function userFromToken(token: string, env: Env): Promise<StoredUser | null> {
     if (!token.startsWith(prefix) || token.length > 200) return null;
     const digest = hex(await sha256(token));
@@ -307,6 +601,24 @@ export function auth(opts: AuthOptions = {}) {
       if (si === -1 || si > ai) {
         throw errors.config("MIU_E_AUTH_SESSION_REQUIRED", "auth() needs session() earlier in plugins", "Use miu({ plugins: [session(), auth()] }).");
       }
+      dev = app.dev;
+      const hasMail = app.plugins.some((p) => p.name === "mail");
+      if (!opts.mailer && !hasMail && verification === "off") return;
+      if (!opts.mailer && !hasMail) throw mailerMissing();
+      const missing = ACCOUNT_STORE_METHODS.filter((m) => typeof users[m] !== "function");
+      if (missing.length) {
+        throw errors.config(
+          "MIU_E_AUTH_STORE_UNSUPPORTED",
+          `The ${users.kind} user store lacks ${missing.join(", ")}, needed for email verification and password reset`,
+          "Use memoryUserStore() or dbUserStore(db), or implement those UserStore methods in your store.",
+        );
+      }
+      if (opts.appUrl !== undefined && !/^https?:\/\/[^\s/]+/i.test(opts.appUrl)) {
+        throw errors.config("MIU_E_AUTH_APP_URL_INVALID", `appUrl ${JSON.stringify(opts.appUrl)} is not an http(s) URL`, 'Pass auth({ appUrl: "https://app.example.com" }).');
+      }
+      // On Workers env arrives per request, so APP_URL is checked when the first link is built.
+      if (!dev && !opts.appUrl && app.runtime !== "workerd" && !processEnv().APP_URL) throw appUrlMissing();
+      app.add(accountRoutes);
     },
     async onRequest(ctx) {
       const header = ctx.headers.get("authorization");
@@ -317,10 +629,13 @@ export function auth(opts: AuthOptions = {}) {
         ctx.state.authMethod = "token";
         return;
       }
-      const userId = getSession(ctx)?.get<string>("userId");
+      const s = getSession(ctx);
+      const userId = s?.get<string>("userId");
       if (typeof userId === "string") {
         const user = await users.findUserById(userId, ctx.env);
-        if (user) {
+        // A password reset/change bumps sessionVersion, which signs out sessions from before it.
+        const current = user && (s!.get<number>("sv") ?? 0) === (user.sessionVersion ?? 0);
+        if (user && current && !(verification === "required" && user.emailVerifiedAt == null)) {
           ctx.user = publicUser(user);
           ctx.state.authMethod = "session";
         }
@@ -333,11 +648,41 @@ export function auth(opts: AuthOptions = {}) {
         password: { algorithm: pw.algorithm ?? "auto (argon2id on Bun, else pbkdf2)", iterations: pw.iterations },
         register: opts.register !== false,
         turnstile: opts.turnstile ? { enabled: true, secretKey: opts.turnstile.secretKey ? "(set)" : "env.TURNSTILE_SECRET_KEY" } : false,
-        rateLimit: limiter ? { limiter: limiter.kind, login: loginLimits, register: registerLimits, ipFrom: rl?.trustProxyHeader ?? "ctx.ip" } : false,
+        rateLimit: limiter
+          ? { limiter: limiter.kind, login: loginLimits, register: registerLimits, passwordReset: resetLimits, verifyEmail: verifyLimits, ipFrom: rl?.trustProxyHeader ?? "ctx.ip" }
+          : false,
+        emailVerification: verification,
+        mailer: opts.mailer ? "custom" : "ctx.mail (when mail() is in plugins)",
+        appUrl: opts.appUrl ?? "env.APP_URL (request origin in dev)",
       };
     },
     cloudflare(): CloudflareNeeds {
       return users.cloudflare?.() ?? {};
     },
+  });
+}
+
+function mailerMissing() {
+  return errors.config(
+    "MIU_E_AUTH_MAILER_MISSING",
+    "Email verification and password reset need a way to send email",
+    "Add mail({ transport, from }) from @miujs/mail to plugins, or pass auth({ mailer: { send } }).",
+  );
+}
+
+function appUrlMissing() {
+  return errors.config(
+    "MIU_E_AUTH_APP_URL_MISSING",
+    "No public app URL for links in account emails",
+    'Pass auth({ appUrl: "https://your-app.example" }) or set the APP_URL env var. Links are never built from the Host header in production (it can be forged).',
+  );
+}
+
+function emailUnverified(base: string) {
+  return errors.custom({
+    code: "MIU_E_AUTH_EMAIL_UNVERIFIED",
+    status: 403,
+    message: "Confirm your email address before signing in",
+    fix: `Open the link in the confirmation email we sent. To get a new one, POST { "email" } to ${base}/verify-email/request.`,
   });
 }

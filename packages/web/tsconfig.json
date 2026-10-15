@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "@miujs/web" },
+  "include": ["src/**/*.ts", "test/**/*.ts", "test/**/*.tsx"]
+}

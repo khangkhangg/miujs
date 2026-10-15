@@ -176,6 +176,42 @@ Bun. See [bench/README.md](bench/README.md) for the latest numbers and method.
 - **API tokens:** shown once and stored as SHA-256 hashes. Passwords use argon2id on Bun, otherwise
   PBKDF2 (600k iterations). Legacy bcrypt and Django hashes are upgraded on the next login.
 
+## Roadmap
+
+MiuJS grows in four phases. Each phase ends with a starter template (`miu new --template ...`)
+that runs end to end. The full plan is in the
+[spec](https://claude.ai/code/artifact/cea50b68-c0e3-4821-a540-fb6b0f4903fc).
+
+| Phase | Status | What it adds |
+| --- | --- | --- |
+| **1. Foundations** | In progress | `@miujs/files` (uploads, signed URLs, resumable uploads, R2), `@miujs/web` (static files, HTML/JSX without a build, htmx, Vite, security headers), `@miujs/access` (roles, per-record policies, organizations, invites), `@miujs/audit` (tamper-evident audit log), `@miujs/mail` (+ email verification and password reset), `@miujs/workflows` (durable automation) |
+| **2. Admin + CRM kit** | Planned | Define a resource once and get tables, API, MCP tools, lifecycle events and an admin UI. Pipelines, tasks, search, CSV import/export, and a visual workflow builder |
+| **3. Game kit** | Planned | Room timers on Durable Object alarms, matchmaking and lobbies, join codes, leaderboards, achievements, Unity/Godot clients |
+| **4. 3D tour kit** | Planned | 360° tiling and 3D model compression jobs, hotspots and floor plans, live guided tours, viewing analytics. Healthcare building blocks: field encryption, consent, retention |
+
+### Automation workflows
+
+Workflows are durable: a run survives restarts and deploys while it sleeps or waits for an event.
+
+```ts
+export const followUp = defineWorkflow("contact-follow-up", {
+  trigger: on("contact.created"),
+  input: t.object({ contactId: t.string(), email: t.string() }),
+  run: async ({ input, step }) => {
+    const lead = await step.run("enrich", () => enrich(input.email));   // journaled, retried
+    await step.sleep("wait-a-day", "1d");
+    const reply = await step.waitForEvent("reply", { event: "email.replied", match: { "data.contactId": input.contactId }, timeout: "3d" });
+    if (!reply) await step.run("follow-up", () => sendFollowUp(lead));
+  },
+});
+```
+
+- **Triggers:** events, cron schedules, signed webhooks, or a manual start.
+- **Control:** approvals, retries, cancel and retry-from-failed-step, and run history.
+- **AI agents:** MCP tools so agents can start and inspect runs.
+- **No-code:** the same engine runs JSON-defined workflows, which phase 2's visual builder will
+  produce.
+
 ## Known limitations (0.1)
 
 - **Cloudflare:** never deployed to a real account. Durable Objects, D1, KV and Queues are tested
