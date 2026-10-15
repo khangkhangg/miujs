@@ -10,7 +10,8 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit -p .",
-    "bench": "bun bench/run.ts"
+    "bench": "bun bench/run.ts",
+    "smoke": "bun scripts/runtime-smoke.ts && node scripts/runtime-smoke.ts && deno run -A scripts/runtime-smoke.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.4.3",

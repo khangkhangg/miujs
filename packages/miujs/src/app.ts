@@ -648,7 +648,7 @@ export class App {
       const s = g.Bun.serve({ port, hostname, fetch: this.fetch, websocket: bunWebSocket, maxRequestBodySize: this.maxRequestBodySize });
       server = { port: s.port, url: String(s.url), stop: async () => void s.stop(true) };
     } else if (this.runtime === "deno") {
-      const s = g.Deno.serve({ port, hostname, onListen() {} }, (r: Request) => this.fetch(r));
+      const s = g.Deno.serve({ port, hostname, onListen() {} }, (r: Request, info: unknown) => this.fetch(r, info));
       server = { port: s.addr.port, url: `http://${hostname ?? "localhost"}:${s.addr.port}/`, stop: () => s.shutdown() };
     } else if (this.runtime === "node") {
       // A variable specifier keeps bundlers (wrangler/esbuild) from pulling node:http into Workers builds.

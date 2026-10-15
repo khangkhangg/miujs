@@ -217,9 +217,10 @@ export const followUp = defineWorkflow("contact-follow-up", {
 - **Cloudflare:** never deployed to a real account. Durable Objects, D1, KV and Queues are tested
   against in-test fakes, and every package bundles for a Workers target. Pending `after`/`tick`
   room timers are lost when a Durable Object hibernates.
-- **Deno and Node** adapters exist. The Node adapter is tested under Bun's `node:http`; neither
-  has run on a real Deno or Node yet. On Node, published packages will need prebuilt JS, because
-  Node won't strip types inside `node_modules`.
+- **Deno and Node:** `bun run smoke` runs the same HTTP checks on Bun, Node 24 and Deno 2 (routing,
+  validation, body limits, cookies, `ctx.ip`, MCP, `waitUntil`); all pass. The full test suite runs on
+  Bun only. Published packages will need prebuilt JS for Node, because Node won't strip types inside
+  `node_modules`.
 - **Speed:** level with Elysia on validated bodies, 20–30% behind on trivial routes
   ([bench](bench/README.md)).
 - Not built yet: JSX responses, Drizzle integration, a SQLite queue adapter, deploy targets
