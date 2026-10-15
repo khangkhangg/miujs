@@ -268,7 +268,8 @@ describe("workflows manage: wake a run now", () => {
         const wake = action(list(section(s.wf), "runs").rowActions, "wakeNow");
         const { id } = await s.wf.start("nap2", {});
         await s.settle();
-        expect(String(await wake.run({ id }, ctx()))).toMatch(/woke/i);
+        // The public client wakes the same way: once.
+        expect(await s.wf.wakeNow(id)).toMatchObject({ runId: id, woke: true });
         expect(String(await wake.run({ id }, ctx()))).toMatch(/nothing to do/i);
         await s.settle();
         expect(String(await wake.run({ id }, ctx()))).toMatch(/completed; nothing to do/i);

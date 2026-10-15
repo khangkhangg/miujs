@@ -20,7 +20,7 @@ declare module "miujs" {
     events: WorkflowEvents;
   }
   interface Services {
-    /** Durable workflows from `@miujs/workflows`: start, emit, getRun, listRuns, cancel, retry, decide. */
+    /** Durable workflows from `@miujs/workflows`: start, emit, getRun, listRuns, cancel, retry, wakeNow, decide. */
     workflows: WorkflowsService;
   }
 }
@@ -226,6 +226,13 @@ export function workflows(opts: WorkflowsOptions) {
     retry(id: string, env: Env = defaultEnv()): Promise<RunRecord> {
       return engine.retry(id, env);
     },
+    /**
+     * Wake a sleeping or event-waiting run now: a sleep ends, a wait times out (returns null).
+     * Idempotent; approvals are refused (MIU_E_CONFLICT) so they cannot be skipped.
+     */
+    wakeNow(id: string, env: Env = defaultEnv()) {
+      return engine.wakeNow(id, env);
+    },
     /** Decide a pending approval as `user` (checked against the step's approvers). */
     decide(runId: string, step: string, user: { id: string; roles?: string[]; name?: string; email?: string }, decision: "approve" | "reject", comment?: string, env: Env = defaultEnv()) {
       return engine.decide(runId, step, user, decision, comment, env);
@@ -306,4 +313,4 @@ export function workflows(opts: WorkflowsOptions) {
 export type WorkflowsPlugin = ReturnType<typeof workflows>;
 
 /** `app.service("workflows")`: start runs and emit events from code outside requests. */
-export type WorkflowsService = Pick<WorkflowsPlugin, "start" | "emit" | "getRun" | "listRuns" | "cancel" | "retry" | "decide" | "register" | "unregister" | "has" | "onUnknown">;
+export type WorkflowsService = Pick<WorkflowsPlugin, "start" | "emit" | "getRun" | "listRuns" | "cancel" | "retry" | "wakeNow" | "decide" | "register" | "unregister" | "has" | "onUnknown">;
