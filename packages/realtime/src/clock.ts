@@ -14,6 +14,16 @@ export const systemClock: Clock = {
   clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
 };
 
+/**
+ * Let (or stop letting) a clock timer keep the process alive. Housekeeping timers (empty-room
+ * disposal, reconnect grace) are unref'd so a script or a stopped server can exit; a no-op for
+ * handles without ref/unref (FakeClock ids, Workers).
+ */
+export function setTimerRef(handle: unknown, keepAlive: boolean): void {
+  const h = handle as { ref?: () => unknown; unref?: () => unknown } | null;
+  if (h && typeof h === "object") (keepAlive ? h.ref : h.unref)?.call(h);
+}
+
 interface FakeTimer {
   id: number;
   at: number;

@@ -210,15 +210,44 @@ export class QueueCore {
     });
     const matches: MatchSpec[] = [];
     const need = this.matchSize;
-    const order = [...this.waiting].sort((a, b) => a.joinedAt - b.joinedAt || a.seq - b.seq);
+    const byAge = (a: Waiting, b: Waiting) => a.joinedAt - b.joinedAt || a.seq - b.seq;
+    const order = [...this.waiting].sort(byAge);
     const used = new Set<Waiting>();
+    // Per region, players sorted by rating (stable, so equal ratings stay oldest first). Each
+    // anchor then walks outwards from its own position instead of filtering and sorting the whole
+    // queue: O(n log n) per run instead of O(n² log n), with the same picks.
+    const lists = new Map<string | undefined, Waiting[]>();
+    for (const w of order) {
+      const l = lists.get(w.region);
+      if (l) l.push(w);
+      else lists.set(w.region, [w]);
+    }
+    const pos = new Map<Waiting, number>();
+    for (const l of lists.values()) {
+      l.sort((a, b) => a.rating - b.rating);
+      l.forEach((w, i) => pos.set(w, i));
+    }
     for (const anchor of order) {
       if (used.has(anchor)) continue;
       const win = this.window(anchor, now);
-      const picks = order
-        .filter((w) => w !== anchor && !used.has(w) && w.region === anchor.region && Math.abs(w.rating - anchor.rating) <= win)
-        .sort((a, b) => Math.abs(a.rating - anchor.rating) - Math.abs(b.rating - anchor.rating) || a.joinedAt - b.joinedAt || a.seq - b.seq)
-        .slice(0, need - 1);
+      const list = lists.get(anchor.region)!;
+      const at = pos.get(anchor)!;
+      const picks: Waiting[] = [];
+      let lo = at - 1;
+      let hi = at + 1;
+      while (picks.length < need - 1) {
+        while (lo >= 0 && used.has(list[lo])) lo--;
+        while (hi < list.length && used.has(list[hi])) hi++;
+        const d = Math.min(lo >= 0 ? anchor.rating - list[lo].rating : Infinity, hi < list.length ? list[hi].rating - anchor.rating : Infinity);
+        if (!(d <= win)) break;
+        // Everyone at exactly this distance, from both sides, oldest first (the original tie-break).
+        const tier: Waiting[] = [];
+        for (; lo >= 0 && (used.has(list[lo]) || anchor.rating - list[lo].rating === d); lo--) if (!used.has(list[lo])) tier.push(list[lo]);
+        for (; hi < list.length && (used.has(list[hi]) || list[hi].rating - anchor.rating === d); hi++) if (!used.has(list[hi])) tier.push(list[hi]);
+        tier.sort(byAge);
+        for (const w of tier) picks.push(w);
+      }
+      picks.length = Math.min(picks.length, need - 1);
       if (picks.length < need - 1) continue;
       const group = [anchor, ...picks];
       for (const w of group) used.add(w);

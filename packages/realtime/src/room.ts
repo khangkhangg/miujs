@@ -4,9 +4,9 @@
 // wall clock directly, so it runs the same in-process, on Workers and under a FakeClock.
 
 import { errors, isMiuError, validate, type MiuSocket, type Schema } from "miujs";
-import { systemClock, type Clock } from "./clock.ts";
+import { setTimerRef, systemClock, type Clock } from "./clock.ts";
 import type { InitContext, Player, Role, Room, RoomStorage, RoomType } from "./define.ts";
-import { diff } from "./diff.ts";
+import { diff, type PatchOp } from "./diff.ts";
 import { TokenBucket } from "./limiter.ts";
 import { decode as msgpackDecode, encode as msgpackEncode } from "./msgpack.ts";
 import { MemoryStorage } from "./storage.ts";
@@ -142,8 +142,53 @@ function randomId(bytes: number): string {
   return s;
 }
 
+/**
+ * Deep copy. Plain objects, arrays and primitives (all room state, which is schema-validated
+ * JSON) are copied by hand, several times faster than structuredClone; anything else (Date, Map,
+ * typed arrays, class instances in `secret`) falls back to structuredClone.
+ */
 function clone<T>(v: T): T {
-  return v === undefined ? v : structuredClone(v);
+  if (typeof v !== "object" || v === null) return v;
+  if (Array.isArray(v)) {
+    const out = new Array(v.length);
+    for (let i = 0; i < v.length; i++) out[i] = clone(v[i]);
+    return out as T;
+  }
+  const proto = Object.getPrototypeOf(v);
+  if (proto !== Object.prototype && proto !== null) return structuredClone(v);
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(v)) {
+    const x = clone((v as Record<string, unknown>)[k]);
+    if (k === "__proto__") Object.defineProperty(out, k, { value: x, enumerable: true, writable: true, configurable: true });
+    else out[k] = x;
+  }
+  return out as T;
+}
+
+/**
+ * Bring `doc` (the last-sent state) up to date with `ops` from `diff(doc, state)`, copying only
+ * the changed subtrees instead of the whole state. Returns the new root.
+ */
+function applyCloned(doc: unknown, ops: readonly PatchOp[]): unknown {
+  let root = doc;
+  for (const op of ops) {
+    if (op.path === "") {
+      root = op.op === "remove" ? undefined : clone(op.value);
+      continue;
+    }
+    const segs = op.path.slice(1).split("/");
+    let parent = root as Record<string, unknown>;
+    for (let i = 0; i < segs.length - 1; i++) parent = parent[unescapeSeg(segs[i])] as Record<string, unknown>;
+    const last = unescapeSeg(segs[segs.length - 1]);
+    if (op.op === "remove") delete parent[last];
+    else if (last === "__proto__") Object.defineProperty(parent, last, { value: clone(op.value), enumerable: true, writable: true, configurable: true });
+    else parent[last] = clone(op.value);
+  }
+  return root;
+}
+
+function unescapeSeg(seg: string): string {
+  return seg.indexOf("~") === -1 ? seg : seg.replace(/~1/g, "/").replace(/~0/g, "~");
 }
 
 /** Wire encodings a client can pick with `?enc=`. */
@@ -201,6 +246,8 @@ export class RoomInstance<S = any, X = any> {
   /** Clock-mode wake-up for the earliest named timer / grace deadline. */
   private wake: unknown = null;
   private wakeAt: number | null = null;
+  /** Whether `wake` keeps the process alive (only while named timers are pending). */
+  private wakeRef = true;
   private draining = false;
   private hostKey: string;
   private closed = false;
@@ -710,9 +757,9 @@ export class RoomInstance<S = any, X = any> {
   private flush(): void {
     if (this.closed) return;
     const ops = diff(this.sent, this.state);
-    if (this.def.view) return this.flushViews(ops.length > 0);
+    if (this.def.view) return this.flushViews(ops);
     if (ops.length) {
-      this.sent = clone(this.state);
+      this.sent = applyCloned(this.sent, ops) as S;
       const patch = frame({ t: "patch", ops });
       for (const seat of this.seats.values()) {
         if (seat.socket && !this.fresh.has(seat.socket.id)) this.deliver(seat.socket, patch);
@@ -727,8 +774,9 @@ export class RoomInstance<S = any, X = any> {
   }
 
   /** Interest management: each player gets `view(state, player)`, diffed against what they last saw. */
-  private flushViews(changed: boolean): void {
-    if (changed) this.sent = clone(this.state);
+  private flushViews(ops: PatchOp[]): void {
+    const changed = ops.length > 0;
+    if (changed) this.sent = applyCloned(this.sent, ops) as S;
     if (changed || this.fresh.size) {
       for (const seat of this.seats.values()) {
         const sock = seat.socket;
@@ -796,7 +844,13 @@ export class RoomInstance<S = any, X = any> {
   private rearm(): void {
     if (this.durable || this.draining || this.closed) return;
     const due = this.nextDue();
-    if (due === this.wakeAt) return;
+    // Named timers are game logic and keep the process alive; reconnect grace alone is
+    // housekeeping and must not (a stopped server with players in grace should still exit).
+    const keepAlive = this.pending.size > 0;
+    if (due === this.wakeAt) {
+      if (this.wake !== null && keepAlive !== this.wakeRef) setTimerRef(this.wake, (this.wakeRef = keepAlive));
+      return;
+    }
     if (this.wake !== null) this.clock.clearTimeout(this.wake);
     this.wake = null;
     this.wakeAt = due;
@@ -806,6 +860,8 @@ export class RoomInstance<S = any, X = any> {
       this.wakeAt = null;
       this.runDue().catch((err) => (this.hooks.onError ?? defaultOnError)(err, `${this.type}/${this.id} timers`));
     }, due - this.clock.now());
+    this.wakeRef = keepAlive;
+    if (!keepAlive) setTimerRef(this.wake, false);
   }
 
   private notDurable(what: string): never {

@@ -27,9 +27,28 @@ export function createCode(): string {
 export class MemoryCodeStore implements CodeStore {
   private map = new Map<string, { target: CodeTarget; expires: number }>();
   private clock: Clock;
+  /** Sweep expired codes once the map reaches this size (amortized O(1) per claim). */
+  private sweepAt = 256;
 
   constructor(clock: Clock) {
     this.clock = clock;
+  }
+
+  /** Codes held, live or expired-but-not-yet-swept. */
+  get size(): number {
+    return this.map.size;
+  }
+
+  /** Release a code before it expires (its target is gone). */
+  delete(code: string): boolean {
+    return this.map.delete(code);
+  }
+
+  /** Forget expired codes. Codes nobody looks up again would otherwise stay forever. */
+  sweep(): void {
+    const now = this.clock.now();
+    for (const [k, e] of this.map) if (e.expires <= now) this.map.delete(k);
+    this.sweepAt = Math.max(256, this.map.size * 2);
   }
 
   async get(code: string): Promise<CodeTarget | null> {
@@ -44,6 +63,7 @@ export class MemoryCodeStore implements CodeStore {
 
   async claim(code: string, target: CodeTarget, ttlMs: number): Promise<boolean> {
     if (await this.get(code)) return false;
+    if (this.map.size >= this.sweepAt) this.sweep();
     this.map.set(code, { target: { ...target }, expires: this.clock.now() + ttlMs });
     return true;
   }

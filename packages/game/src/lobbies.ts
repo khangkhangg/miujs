@@ -126,7 +126,7 @@ export function lobbies(opts: LobbiesOptions) {
   let secret: string | null = null;
   const key = () => (secret ??= gameSecret(opts.secret));
   const store = (env?: Env) => storeFor(source, env ?? lastEnv, { clock, achievements: opts.achievements });
-  registerResultSink(opts.room, (m, r, env) => store(env).reportResult(m, r));
+  const unregisterSink = registerResultSink(opts.room, (m, r, env) => store(env).reportResult(m, r));
 
   const memoryCodes = new MemoryCodeStore(clock);
   const codeStore = (ctx: Context): CodeStore => {
@@ -134,13 +134,24 @@ export function lobbies(opts: LobbiesOptions) {
     return kv && typeof kv.put === "function" ? new KvCodeStore(kv, "miu:lobby:") : memoryCodes;
   };
 
+  // Local lobbies in creation order (a Map keeps insertion order and set() on an existing key does
+  // not move it), so expiry stops at the first lobby that is still young.
   const local = new Map<string, LobbyCore>();
+  const forget = (id: string, core: LobbyCore) => {
+    local.delete(id);
+    memoryCodes.delete(core.view().code);
+  };
   const localHost: LobbyHost = {
     async exec(id, req) {
       const now = clock.now();
-      for (const [k, l] of local) if (now - l.createdAt >= codeTtl) local.delete(k);
+      for (const [k, l] of local) {
+        if (now - l.createdAt < codeTtl) break;
+        forget(k, l);
+      }
       const { core, reply } = execLobby(local.get(id) ?? null, req, now);
-      local.set(id, core);
+      // A lobby everyone left is gone for good (nobody can rejoin a lobby with no members to start it).
+      if (core.view().members.length === 0) forget(id, core);
+      else local.set(id, core);
       return reply;
     },
   };
@@ -270,6 +281,11 @@ export function lobbies(opts: LobbiesOptions) {
       if (opts.codes) needs.kv = [opts.codes];
       if (isD1Ref(source)) needs.d1 = [source.binding];
       return needs;
+    },
+    /** Shutdown: forget local lobbies and unregister this plugin's result sink. */
+    stop(): void {
+      for (const [id, core] of [...local]) forget(id, core);
+      unregisterSink();
     },
     [INTERNAL]: { clock },
   });

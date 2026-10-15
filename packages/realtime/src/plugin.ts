@@ -258,6 +258,13 @@ function roomsPlugin(opts: RoomsOptions) {
     /** The in-process registry (Bun/Deno/Node). */
     registry,
     createRoom,
+    /**
+     * Close every in-process room and clear every room timer (`after`, `tick`, named timers,
+     * reconnect grace, empty-room disposal). Call it after `server.stop()` on shutdown.
+     */
+    stop(): void {
+      registry.closeAll();
+    },
     /** Route prefix, e.g. `/rooms` (rooms live at `${path}/:type/:id`). */
     path: prefix,
     onRequest(ctx: Context) {

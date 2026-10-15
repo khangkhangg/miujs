@@ -88,9 +88,18 @@ type Sink = (matchId: string, result: Result, env: Record<string, unknown>) => P
 const sinks = new Map<string, Sink[]>();
 const options = new Map<string, GameRoomOptions>();
 
-/** @internal Called by matchmaker()/lobbies() for the room types they create. */
-export function registerResultSink(roomType: string, fn: Sink): void {
+/**
+ * @internal Called by matchmaker()/lobbies() for the room types they create. Returns the
+ * unregister function their `stop()` calls, so plugins made and dropped (tests, hot reload) do not
+ * pile up here with their stores.
+ */
+export function registerResultSink(roomType: string, fn: Sink): () => void {
   sinks.set(roomType, [...(sinks.get(roomType) ?? []), fn]);
+  return () => {
+    const rest = (sinks.get(roomType) ?? []).filter((x) => x !== fn);
+    if (rest.length) sinks.set(roomType, rest);
+    else sinks.delete(roomType);
+  };
 }
 
 /** The explicit `report` option, else every registered sink in turn until one knows the match. */
@@ -265,14 +274,24 @@ export function gameRoom<S, X = undefined, C extends Record<string, Schema<any>>
     },
     onJoinRequest: (ctx) => {
       const ticket = ctx.params.ticket;
+      let admitted: { seat: Seat; fresh: boolean } | null = null;
       if (ticket !== undefined) {
-        admit(ctx.room, ctx.player.id, ticket, ctx.now);
-        const g = gameOf(ctx.room)!;
-        g.pending = [...(g.pending ?? []), ctx.player.id];
+        admitted = admit(ctx.room, ctx.player.id, ticket, ctx.now);
       } else if (!(opts.spectators && ctx.player.role === "spectator")) {
         throw gameErrors.ticketRequired();
       }
-      def.onJoinRequest?.({ ...ctx, room: facade(ctx.room) as any });
+      // The room's own hook may still refuse the join: record the seat as pending only once it
+      // accepts, so a refused join leaves no seat or pending entry behind.
+      try {
+        def.onJoinRequest?.({ ...ctx, room: facade(ctx.room) as any });
+      } catch (err) {
+        if (admitted?.fresh) delete gameOf(ctx.room)!.seats[ctx.player.id];
+        throw err;
+      }
+      if (admitted) {
+        const g = gameOf(ctx.room)!;
+        g.pending = [...(g.pending ?? []), ctx.player.id];
+      }
     },
     onJoin: async (ctx) => {
       const g = gameOf(ctx.room)!;

@@ -5,8 +5,13 @@
 const enc = new TextEncoder();
 const dec = new TextDecoder("utf-8", { fatal: true });
 
+/** Strings up to this many UTF-16 units are tried as ASCII by hand before TextEncoder/Decoder. */
+const SHORT = 64;
+/** A scratch buffer larger than this is not kept between encode() calls. */
+const KEEP_MAX = 64 * 1024;
+
 class Writer {
-  buf: Uint8Array<ArrayBuffer> = new Uint8Array(64);
+  buf: Uint8Array<ArrayBuffer> = new Uint8Array(256);
   view = new DataView(this.buf.buffer);
   len = 0;
 
@@ -23,11 +28,22 @@ class Writer {
     this.ensure(1);
     this.buf[this.len++] = x;
   }
-  head(tag: number, size: number, put: (v: DataView, at: number) => void): void {
-    this.ensure(1 + size);
+  u8u8(tag: number, x: number): void {
+    this.ensure(2);
+    this.buf[this.len++] = tag;
+    this.buf[this.len++] = x;
+  }
+  u16(tag: number, x: number): void {
+    this.ensure(3);
     this.buf[this.len] = tag;
-    put(this.view, this.len + 1);
-    this.len += 1 + size;
+    this.view.setUint16(this.len + 1, x);
+    this.len += 3;
+  }
+  u32(tag: number, x: number): void {
+    this.ensure(5);
+    this.buf[this.len] = tag;
+    this.view.setUint32(this.len + 1, x);
+    this.len += 5;
   }
   bytes(b: Uint8Array): void {
     this.ensure(b.length);
@@ -38,26 +54,67 @@ class Writer {
 
 function writeLen(w: Writer, n: number, fix: number | null, fixMax: number, t8: number | null, t16: number, t32: number): void {
   if (fix !== null && n <= fixMax) w.u8(fix | n);
-  else if (t8 !== null && n < 0x100) w.head(t8, 1, (v, at) => v.setUint8(at, n));
-  else if (n < 0x10000) w.head(t16, 2, (v, at) => v.setUint16(at, n));
-  else w.head(t32, 4, (v, at) => v.setUint32(at, n));
+  else if (t8 !== null && n < 0x100) w.u8u8(t8, n);
+  else if (n < 0x10000) w.u16(t16, n);
+  else w.u32(t32, n);
 }
 
 function writeNumber(w: Writer, x: number): void {
-  if (!Number.isSafeInteger(x)) return w.head(0xcb, 8, (v, at) => v.setFloat64(at, x));
+  if (!Number.isSafeInteger(x)) {
+    w.ensure(9);
+    w.buf[w.len] = 0xcb;
+    w.view.setFloat64(w.len + 1, x);
+    w.len += 9;
+    return;
+  }
   if (x >= 0) {
     if (x < 0x80) w.u8(x);
-    else if (x < 0x100) w.head(0xcc, 1, (v, at) => v.setUint8(at, x));
-    else if (x < 0x10000) w.head(0xcd, 2, (v, at) => v.setUint16(at, x));
-    else if (x < 0x100000000) w.head(0xce, 4, (v, at) => v.setUint32(at, x));
-    else w.head(0xcf, 8, (v, at) => v.setBigUint64(at, BigInt(x)));
+    else if (x < 0x100) w.u8u8(0xcc, x);
+    else if (x < 0x10000) w.u16(0xcd, x);
+    else if (x < 0x100000000) w.u32(0xce, x);
+    else {
+      w.ensure(9);
+      w.buf[w.len] = 0xcf;
+      w.view.setBigUint64(w.len + 1, BigInt(x));
+      w.len += 9;
+    }
   } else {
     if (x >= -32) w.u8(x & 0xff);
-    else if (x >= -0x80) w.head(0xd0, 1, (v, at) => v.setInt8(at, x));
-    else if (x >= -0x8000) w.head(0xd1, 2, (v, at) => v.setInt16(at, x));
-    else if (x >= -0x80000000) w.head(0xd2, 4, (v, at) => v.setInt32(at, x));
-    else w.head(0xd3, 8, (v, at) => v.setBigInt64(at, BigInt(x)));
+    else if (x >= -0x80) w.u8u8(0xd0, x & 0xff);
+    else if (x >= -0x8000) w.u16(0xd1, x & 0xffff);
+    else if (x >= -0x80000000) w.u32(0xd2, x >>> 0);
+    else {
+      w.ensure(9);
+      w.buf[w.len] = 0xd3;
+      w.view.setBigInt64(w.len + 1, BigInt(x));
+      w.len += 9;
+    }
   }
+}
+
+function writeString(w: Writer, s: string): void {
+  const n = s.length;
+  if (n <= SHORT) {
+    let ascii = true;
+    for (let i = 0; i < n; i++) {
+      if (s.charCodeAt(i) >= 0x80) {
+        ascii = false;
+        break;
+      }
+    }
+    if (ascii) {
+      writeLen(w, n, 0xa0, 31, 0xd9, 0xda, 0xdb);
+      w.ensure(n);
+      const buf = w.buf;
+      let at = w.len;
+      for (let i = 0; i < n; i++) buf[at++] = s.charCodeAt(i);
+      w.len = at;
+      return;
+    }
+  }
+  const b = enc.encode(s);
+  writeLen(w, b.length, 0xa0, 31, 0xd9, 0xda, 0xdb);
+  w.bytes(b);
 }
 
 function write(w: Writer, x: unknown): void {
@@ -67,11 +124,8 @@ function write(w: Writer, x: unknown): void {
       return w.u8(x ? 0xc3 : 0xc2);
     case "number":
       return writeNumber(w, x);
-    case "string": {
-      const b = enc.encode(x);
-      writeLen(w, b.length, 0xa0, 31, 0xd9, 0xda, 0xdb);
-      return w.bytes(b);
-    }
+    case "string":
+      return writeString(w, x);
     case "object": {
       if (x instanceof Uint8Array) {
         writeLen(w, x.length, null, 0, 0xc4, 0xc5, 0xc6);
@@ -79,14 +133,19 @@ function write(w: Writer, x: unknown): void {
       }
       if (Array.isArray(x)) {
         writeLen(w, x.length, 0x90, 15, null, 0xdc, 0xdd);
-        for (const v of x) write(w, v);
+        for (let i = 0; i < x.length; i++) write(w, x[i]);
         return;
       }
-      const keys = Object.keys(x).filter((k) => (x as Record<string, unknown>)[k] !== undefined);
-      writeLen(w, keys.length, 0x80, 15, null, 0xde, 0xdf);
-      for (const k of keys) {
-        write(w, k);
-        write(w, (x as Record<string, unknown>)[k]);
+      const o = x as Record<string, unknown>;
+      const keys = Object.keys(o);
+      let n = 0;
+      for (let i = 0; i < keys.length; i++) if (o[keys[i]] !== undefined) n++;
+      writeLen(w, n, 0x80, 15, null, 0xde, 0xdf);
+      for (let i = 0; i < keys.length; i++) {
+        const v = o[keys[i]];
+        if (v === undefined) continue;
+        writeString(w, keys[i]);
+        write(w, v);
       }
       return;
     }
@@ -95,11 +154,18 @@ function write(w: Writer, x: unknown): void {
   }
 }
 
+/** Reused between calls (encode is synchronous and not re-entrant), so small frames allocate once. */
+let scratch: Writer | null = null;
+
 /** Encode a JSON-like value (plus `Uint8Array`) as MessagePack. */
 export function encode(value: unknown): Uint8Array<ArrayBuffer> {
-  const w = new Writer();
+  const w = scratch ?? new Writer();
+  scratch = null; // a throw below leaves no half-written writer behind
+  w.len = 0;
   write(w, value);
-  return w.buf.slice(0, w.len);
+  const out = w.buf.slice(0, w.len);
+  if (w.buf.length <= KEEP_MAX) scratch = w;
+  return out;
 }
 
 class Reader {
@@ -121,7 +187,19 @@ class Reader {
 
 function readStr(r: Reader, n: number): string {
   const at = r.need(n);
-  return dec.decode(r.buf.subarray(at, at + n));
+  const buf = r.buf;
+  if (n <= SHORT) {
+    let s = "";
+    let i = at;
+    const end = at + n;
+    for (; i < end; i++) {
+      const c = buf[i];
+      if (c >= 0x80) break;
+      s += String.fromCharCode(c);
+    }
+    if (i === end) return s;
+  }
+  return dec.decode(buf.subarray(at, at + n));
 }
 
 function readArray(r: Reader, n: number): unknown[] {
@@ -135,8 +213,11 @@ function readMap(r: Reader, n: number): Record<string, unknown> {
   for (let i = 0; i < n; i++) {
     const k = read(r);
     if (typeof k !== "string" && typeof k !== "number") throw new TypeError("MessagePack map keys must be strings or numbers");
+    const key = String(k);
+    const v = read(r);
     // defineProperty so a "__proto__" key stays plain data.
-    Object.defineProperty(out, String(k), { value: read(r), enumerable: true, writable: true, configurable: true });
+    if (key === "__proto__") Object.defineProperty(out, key, { value: v, enumerable: true, writable: true, configurable: true });
+    else out[key] = v;
   }
   return out;
 }

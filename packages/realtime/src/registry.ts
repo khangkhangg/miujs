@@ -3,7 +3,7 @@
 // the registry acts as their coordinator (aggregate + publish).
 
 import type { MiuSocket } from "miujs";
-import { systemClock, type Clock } from "./clock.ts";
+import { setTimerRef, systemClock, type Clock } from "./clock.ts";
 import type { RoomType } from "./define.ts";
 import { jsonEqual } from "./diff.ts";
 import { RoomInstance, type JoinParams, type RoomHooks, type RoomInfo } from "./room.ts";
@@ -28,6 +28,8 @@ export class LocalRooms {
   private env?: () => Record<string, unknown>;
   /** Sharded rooms, by `type:id`: creation data and the last published aggregate. */
   private sharded = new Map<string, { data?: unknown; aggregate?: unknown; publishing: boolean }>();
+  /** Sharded rooms made with create() that nobody joined yet: their entry is dropped after `emptyMs`. */
+  private shardExpiry = new Map<string, unknown>();
 
   constructor(roomTypes: readonly RoomType<any, any, any>[], opts: LocalRoomsOptions = {}) {
     for (const r of roomTypes) this.types.set(r.type, r);
@@ -46,7 +48,7 @@ export class LocalRooms {
   }
 
   /** The room `type:id`, created if needed. `null` when the type is unknown. */
-  open(type: string, id: string, data?: unknown, extra: { tokenPrefix?: string; onChange?: () => void } = {}): RoomInstance | null {
+  open(type: string, id: string, data?: unknown, extra: { tokenPrefix?: string; onChange?: () => void; onClose?: () => void } = {}): RoomInstance | null {
     const key = `${type}:${id}`;
     const existing = this.rooms.get(key);
     if (existing && !existing.isClosed) return existing;
@@ -66,6 +68,7 @@ export class LocalRooms {
           const h = this.disposing.get(inst);
           if (h) this.clock.clearTimeout(h);
           this.disposing.delete(inst);
+          extra.onClose?.();
         },
         onError: this.onError,
       },
@@ -92,6 +95,7 @@ export class LocalRooms {
     const def = this.types.get(type);
     if (def && shardConfig(def)) {
       this.shardEntry(type, id).data = data; // each shard is built with it on first join
+      if (!this.shards(type, id).length) this.expireShardEntry(type, id);
       return null;
     }
     const inst = this.open(type, id, data);
@@ -128,9 +132,17 @@ export class LocalRooms {
     return [...this.rooms.values()].map((r) => r.info());
   }
 
-  /** Close every room (server shutdown). */
+  /** Close every room and clear every registry timer (server shutdown). */
   closeAll(): void {
     for (const r of [...this.rooms.values()]) r.close("server shutting down");
+    for (const [r, h] of this.disposing) {
+      this.clock.clearTimeout(h);
+      if (!r.isClosed) r.close("server shutting down");
+    }
+    this.disposing.clear();
+    for (const h of this.shardExpiry.values()) this.clock.clearTimeout(h);
+    this.shardExpiry.clear();
+    this.sharded.clear();
   }
 
   private shardEntry(type: string, id: string) {
@@ -144,7 +156,20 @@ export class LocalRooms {
     const existing = this.get(type, shardId(id, n));
     if (existing && !existing.isClosed) return existing;
     const entry = this.shardEntry(type, id);
-    const inst = this.open(type, shardId(id, n), entry.data, { tokenPrefix: shardTokenPrefix(n), onChange: () => this.coordinate(type, id, cfg) });
+    const key = `${type}:${id}`;
+    const pendingExpiry = this.shardExpiry.get(key);
+    if (pendingExpiry !== undefined) {
+      this.clock.clearTimeout(pendingExpiry);
+      this.shardExpiry.delete(key);
+    }
+    const inst = this.open(type, shardId(id, n), entry.data, {
+      tokenPrefix: shardTokenPrefix(n),
+      onChange: () => this.coordinate(type, id, cfg),
+      // The last shard closed: forget the coordinator entry, as a disposed plain room is forgotten.
+      onClose: () => {
+        if (!this.shards(type, id).length) this.sharded.delete(key);
+      },
+    });
     if (inst && cfg.publish && entry.aggregate !== undefined) {
       const agg = entry.aggregate;
       void inst.update((room) => cfg.publish!({ room, aggregate: agg }), "shards.publish");
@@ -174,6 +199,20 @@ export class LocalRooms {
       this.disposing.delete(room);
       if (room.isEmpty && room.connections === 0) room.close("room empty");
     }, this.emptyMs);
+    setTimerRef(h, false); // housekeeping: never keeps the process alive on its own
     this.disposing.set(room, h);
+  }
+
+  /** Drop a create()d sharded room's entry after `emptyMs` unless a shard opened by then. */
+  private expireShardEntry(type: string, id: string): void {
+    const key = `${type}:${id}`;
+    const old = this.shardExpiry.get(key);
+    if (old !== undefined) this.clock.clearTimeout(old);
+    const h = this.clock.setTimeout(() => {
+      this.shardExpiry.delete(key);
+      if (!this.shards(type, id).length) this.sharded.delete(key);
+    }, this.emptyMs);
+    setTimerRef(h, false);
+    this.shardExpiry.set(key, h);
   }
 }

@@ -66,6 +66,9 @@ export interface RoomClient<S = any> {
   close(): void;
 }
 
+/** Messages kept for sending while (re)connecting. */
+const MAX_QUEUED = 1024;
+
 const RESERVED = new Set(["name", "role", "hostKey", "resume", "enc"]);
 
 /** Close codes after which reconnecting would not help. */
@@ -88,6 +91,8 @@ export function connect<S = any>(url: string, opts: ConnectOptions = {}): RoomCl
   let everJoined = false;
   let welcomedSock: WebSocket | null = null;
   let closedByUser = false;
+  /** Closed for good: nothing will be sent any more, so send() drops instead of queueing. */
+  let ended = false;
   let attempt = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let resolveReady!: (c: RoomClient<S>) => void;
@@ -172,6 +177,8 @@ export function connect<S = any>(url: string, opts: ConnectOptions = {}): RoomCl
       emit("close", { code: e.code, reason: e.reason, willReconnect });
       if (!willReconnect) {
         ws = null;
+        ended = true;
+        queue.length = 0;
         rejectReady(new Error(`Room connection closed (${e.code} ${e.reason})`));
         return;
       }
@@ -215,10 +222,16 @@ export function connect<S = any>(url: string, opts: ConnectOptions = {}): RoomCl
       const f = { t: "msg", type, data };
       const msg = packed ? msgpackEncode(f) : JSON.stringify(f);
       if (ws && joined && ws.readyState === 1) ws.send(msg);
-      else queue.push(msg);
+      else if (!ended) {
+        // Bounded while (re)connecting: the oldest messages go first.
+        if (queue.length >= MAX_QUEUED) queue.shift();
+        queue.push(msg);
+      }
     },
     close() {
       closedByUser = true;
+      ended = true;
+      queue.length = 0;
       if (timer) clearTimeout(timer);
       if (ws && ws.readyState <= 1) ws.close(1000, "bye");
       else emit("close", { code: 1000, reason: "bye", willReconnect: false });

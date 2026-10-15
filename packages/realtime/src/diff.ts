@@ -12,6 +12,7 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 
 function escape(key: string): string {
+  if (key.indexOf("~") === -1 && key.indexOf("/") === -1) return key; // the common case: no regex, no copy
   return key.replace(/~/g, "~0").replace(/\//g, "~1");
 }
 
@@ -41,13 +42,16 @@ export function jsonEqual(a: unknown, b: unknown): boolean {
 
 /** Ops that turn `prev` into `next`. */
 export function diff(prev: unknown, next: unknown, path = "", out: PatchOp[] = []): PatchOp[] {
+  if (prev === next) return out;
   if (isObject(prev) && isObject(next)) {
     for (const k of Object.keys(prev)) {
-      const p = `${path}/${escape(k)}`;
-      if (!Object.prototype.hasOwnProperty.call(next, k) || next[k] === undefined) {
-        if (prev[k] !== undefined) out.push({ op: "remove", path: p });
+      const pv = prev[k];
+      const nv = next[k];
+      if (pv === nv) continue; // unchanged primitive or shared subtree: no work, no path string
+      if (nv === undefined || !Object.prototype.hasOwnProperty.call(next, k)) {
+        if (pv !== undefined) out.push({ op: "remove", path: `${path}/${escape(k)}` });
       } else {
-        diff(prev[k], next[k], p, out);
+        diff(pv, nv, `${path}/${escape(k)}`, out);
       }
     }
     for (const k of Object.keys(next)) {

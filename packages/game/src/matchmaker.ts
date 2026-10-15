@@ -21,7 +21,7 @@
 
 import { definePlugin, route, t, type App, type CloudflareNeeds, type Context, type Env, type MiuSocket } from "miujs";
 import type { DatabaseSource } from "@miujs/db";
-import { systemClock, type Clock } from "@miujs/realtime";
+import { setTimerRef, systemClock, type Clock } from "@miujs/realtime";
 import type { AchievementSet } from "./achievements.ts";
 import { durableHost, type MatchHost, type NamespaceLike } from "./cloudflare.ts";
 import { defaultDatabase, isD1Ref } from "./db.ts";
@@ -176,6 +176,16 @@ class LocalHost implements MatchHost {
       this.wakeAt = null;
       for (const q of this.cores.keys()) this.pump(q);
     }, due - now);
+    // Queue upkeep (widening, time-outs, status expiry) never keeps the process alive by itself:
+    // a running server already does, and a stopped one should exit.
+    setTimerRef(this.wake, false);
+  }
+
+  /** Clear the wake-up timer (shutdown). */
+  stop(): void {
+    if (this.wake !== null) this.inner.clock.clearTimeout(this.wake);
+    this.wake = null;
+    this.wakeAt = null;
   }
 }
 
@@ -270,7 +280,9 @@ export function matchmaker(opts: MatchmakerOptions) {
     return store(env).reportResult(matchId, result);
   }
   // Rooms report with their own env (room.env: D1 on Workers), so this works inside a Durable Object.
-  for (const cfg of Object.values(opts.queues)) registerResultSink(cfg.room, (m, r, env) => reportResult(m, r, env));
+  const unregister = Object.values(opts.queues).map((cfg) => registerResultSink(cfg.room, (m, r, env) => reportResult(m, r, env)));
+  /** Long-polls waiting on a status; stop() answers them. */
+  const waiting = new Set<() => void>();
 
   const queueParam = t.object({ queue: t.string({ maxLength: 64 }) });
   const routes = [
@@ -320,16 +332,22 @@ export function matchmaker(opts: MatchmakerOptions) {
         if (wait > 0 && h instanceof LocalHost && (status.state === "queued" || status.state === "matching")) {
           status = await new Promise<QueueStatus>((resolve) => {
             let timer: unknown = null;
-            const unsub = h.subscribe(q, ctx.user.id, (s) => {
-              if (s.state === "queued" || s.state === "matching") return;
+            const done = () => {
               clock.clearTimeout(timer);
               unsub();
+              waiting.delete(timeout);
+            };
+            const unsub = h.subscribe(q, ctx.user.id, (s) => {
+              if (s.state === "queued" || s.state === "matching") return;
+              done();
               resolve(s);
             });
-            timer = clock.setTimeout(() => {
-              unsub();
+            const timeout = () => {
+              done();
               void h.status(q, ctx.user.id).then(resolve);
-            }, wait);
+            };
+            timer = clock.setTimeout(timeout, wait);
+            waiting.add(timeout);
           });
         }
         return { queue: q, status: await inner.present(status, ctx.user.id) };
@@ -423,6 +441,15 @@ export function matchmaker(opts: MatchmakerOptions) {
     },
     /** Apply a match result (server side only). */
     reportResult,
+    /**
+     * Shutdown: clear the local queue timer, answer pending long-polls and unregister this
+     * matchmaker's result sinks. Call it after `server.stop()`.
+     */
+    stop(): void {
+      local?.stop();
+      for (const finish of [...waiting]) finish();
+      for (const off of unregister.splice(0)) off();
+    },
     /** The store for profiles, ratings and matches (pass `env` on Workers). */
     store,
     [INTERNAL]: inner,
