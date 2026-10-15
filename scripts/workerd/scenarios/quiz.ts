@@ -52,7 +52,8 @@ export async function run(dev: Dev, ctx: SuiteContext) {
     bob.send("answer", { choice: 1 });
     await waitFor(() => ann.state?.phase === "reveal" && host.state?.phase === "reveal", 5000, "reveal after everyone answered");
     eq(ann.state.reveal.correct, 0, "correct choice");
-    check(ann.state.players[ann.me!.id].score > 0 && bob.state.players[bob.me!.id].score === 0, "scores");
+    // Players get a slim view (examples/quiz/room.ts quizView): their own row as `me`, no roster.
+    check(ann.state.me.score > 0 && bob.state.me.score === 0 && Object.keys(host.state.players).length === 2, "scores");
     host.send("next");
     await waitFor(() => bob.state?.phase === "question" && bob.state.round === 1, 5000, "second question");
     for (const x of [host, ann, bob]) x.close();
@@ -79,8 +80,8 @@ export async function run(dev: Dev, ctx: SuiteContext) {
     }
     const players: P[] = [];
     const memBefore = workerdMemoryMb();
-    // Each join changes shared state (players, leaderboard), so every seated player gets a patch:
-    // joining N players sends ~N²/2 frames. Batch times show that cost growing.
+    // A join changes only the host's view (players see themselves, not the roster), and joins are
+    // coalesced per 50 ms presence window, so seating N players sends ~2N frames to the players.
     const batchMs: number[] = [];
     let lastFrame = performance.now();
     host.on("state", () => void (lastFrame = performance.now()));
@@ -122,8 +123,7 @@ export async function run(dev: Dev, ctx: SuiteContext) {
       batchMs.push(Math.round(performance.now() - b0));
     }
     const joinMs = performance.now() - joinStart;
-    // Joins fan out ~N²/2 patches (each join changes players + leaderboard for everyone). Let that
-    // backlog drain before timing, or the broadcast would queue behind it.
+    // Let any join backlog drain before timing, or the broadcast would queue behind it.
     await waitFor(() => performance.now() - lastFrame > 1500, 600_000, "join patches to drain", 100);
     const drainedMs = performance.now() - joinStart;
     const joinFrames = frames;

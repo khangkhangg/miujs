@@ -30,13 +30,17 @@ export const quizState = t.object({
   question: t.nullable(t.object({ text: t.string(), choices: t.array(t.string()) })),
   /** When the current question closes (ms since epoch, server clock). */
   deadline: t.nullable(t.number()),
-  /** Ids of players who answered the current question. */
-  answered: t.array(t.string()),
+  /** Players who answered the current question (a record, so each answer is a one-key patch). */
+  answered: t.record(t.boolean()),
   /** Filled at reveal: the correct choice and how many picked each choice. */
   reveal: t.nullable(t.object({ correct: t.integer(), counts: t.array(t.integer()) })),
   players: t.record(t.object({ name: t.string(), score: t.number(), gained: t.number() })),
+  /** Built at each reveal and at the end (empty in the lobby, where every score is 0). */
   leaderboard: t.array(scoreRow),
 });
+
+/** How many leaderboard rows a player's phone gets (the host screen gets them all). */
+export const TOP = 10;
 
 interface Secret {
   questions: Question[];
@@ -48,6 +52,60 @@ interface Secret {
 
 type QuizState = Infer<typeof quizState>;
 type QuizRoom = Room<QuizState, Secret>;
+
+/** Leaderboard position by player id, computed once per leaderboard (it is replaced, never mutated). */
+const ranks = new WeakMap<object, Map<string, number>>();
+function rankOf(board: QuizState["leaderboard"], id: string): number | null {
+  let m = ranks.get(board);
+  if (!m) ranks.set(board, (m = new Map(board.map((r, i) => [r.id, i + 1]))));
+  return m.get(id) ?? null;
+}
+
+/** The top rows, one array per leaderboard (shared by every player's view). */
+const tops = new WeakMap<object, QuizState["leaderboard"]>();
+function topOf(board: QuizState["leaderboard"]): QuizState["leaderboard"] {
+  if (board.length <= TOP) return board;
+  let top = tops.get(board);
+  if (!top) tops.set(board, (top = board.slice(0, TOP)));
+  return top;
+}
+
+type PlayerView = ReturnType<typeof playerView>;
+function playerView(s: QuizState, id: string) {
+  const p = s.players[id];
+  return {
+    phase: s.phase,
+    round: s.round,
+    total: s.total,
+    question: s.question,
+    deadline: s.deadline,
+    reveal: s.reveal,
+    leaderboard: topOf(s.leaderboard),
+    me: p ? { name: p.name, score: p.score, gained: p.gained, answered: s.answered[id] === true, rank: rankOf(s.leaderboard, id) } : null,
+  };
+}
+
+/** Last view per player, per roster object (the engine keeps unchanged parts of the state identical). */
+const seen = new WeakMap<object, Map<string, { inputs: unknown[]; view: PlayerView }>>();
+
+/**
+ * What one client sees. The host (and spectators: a big screen) get the whole state. A player's
+ * phone gets the question and only their own row, so a join or an answer changes the host's view
+ * and the answering player's, not everyone's: seating N players costs O(N) frames, not O(N²).
+ * A player whose inputs did not change gets the very same object back, which the engine skips
+ * without diffing (an answer then costs O(1) per other player).
+ */
+export function quizView(s: QuizState, player: { id: string; role: string }): QuizState | PlayerView {
+  if (player.role !== "player") return s;
+  const inputs = [s.phase, s.round, s.total, s.question, s.deadline, s.reveal, s.leaderboard, s.players[player.id], s.answered[player.id]];
+  let byId = seen.get(s.players);
+  if (!byId) seen.set(s.players, (byId = new Map()));
+  const last = byId.get(player.id);
+  if (last && last.inputs.every((x, i) => x === inputs[i])) return last.view;
+  const view = playerView(s, player.id);
+  byId.set(player.id, { inputs, view });
+  return view;
+}
 
 function leaderboard(state: QuizState) {
   return Object.entries(state.players)
@@ -71,7 +129,7 @@ function ask(room: QuizRoom, now: number) {
   s.phase = "question";
   s.question = { text: q.text, choices: [...q.choices] };
   s.deadline = now + questionMs;
-  s.answered = [];
+  s.answered = {};
   s.reveal = null;
   room.secret.answers = {};
   for (const p of Object.values(s.players)) p.gained = 0;
@@ -115,7 +173,8 @@ export function createQuiz(questions: Question[], opts: { questionMs?: number } 
       answer: t.object({ choice: t.integer({ min: 0 }) }),
       next: t.object({}),
     },
-    init: () => ({ phase: "lobby" as const, round: -1, total: questions.length, question: null, deadline: null, answered: [], reveal: null, players: {}, leaderboard: [] }),
+    init: () => ({ phase: "lobby" as const, round: -1, total: questions.length, question: null, deadline: null, answered: {}, reveal: null, players: {}, leaderboard: [] }),
+    view: quizView,
     secret: (): Secret => ({ questions, questionMs, answers: {}, deadlineTimer: null }),
     timers: {
       // The question deadline. `round` guards against a stale timer from an earlier question.
@@ -125,13 +184,14 @@ export function createQuiz(questions: Question[], opts: { questionMs?: number } 
     },
     onJoin: ({ room, player }) => {
       if (player.role !== "player") return;
+      // Only the roster changes: no leaderboard rebuild (every score is 0 until the first reveal).
       room.state.players[player.id] = { name: player.name, score: 0, gained: 0 };
-      room.state.leaderboard = leaderboard(room.state);
     },
     onLeave: ({ room, player }) => {
-      delete room.state.players[player.id];
-      room.state.answered = room.state.answered.filter((id) => id !== player.id);
-      room.state.leaderboard = leaderboard(room.state);
+      const s = room.state;
+      delete s.players[player.id];
+      delete s.answered[player.id];
+      if (s.leaderboard.some((r) => r.id === player.id)) s.leaderboard = s.leaderboard.filter((r) => r.id !== player.id);
     },
     on: {
       start: ({ room, sender, now }) => {
@@ -155,7 +215,7 @@ export function createQuiz(questions: Question[], opts: { questionMs?: number } 
           throw errors.custom({ code: "MIU_E_QUIZ_BAD_CHOICE", status: 400, message: `Choice ${msg.choice} does not exist`, fix: `Pick 0-${s.question!.choices.length - 1}.` });
         }
         room.secret.answers[sender.id] = { choice: msg.choice, at: now };
-        s.answered = [...s.answered, sender.id];
+        s.answered[sender.id] = true;
         if (Object.keys(s.players).every((id) => room.secret.answers[id])) reveal(room);
       },
       next: ({ room, sender, now }) => {

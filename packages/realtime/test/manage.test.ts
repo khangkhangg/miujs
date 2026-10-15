@@ -40,7 +40,7 @@ test("manage() returns one 'rooms' section with status, a rooms list and actions
   expect(typeof section.status).toBe("function");
   expect(section.lists!.map((l) => l.name)).toEqual(["rooms"]);
   expect(section.lists![0].rowActions!.map((a) => a.name)).toEqual(["broadcast", "kick", "close"]);
-  expect(section.actions!.map((a) => a.name)).toEqual(["broadcastRoom", "kickMember", "closeRoom"]);
+  expect(section.actions!.map((a) => a.name)).toEqual(["broadcastRoom", "kickMember", "closeRoom", "roomStorage"]);
   for (const a of [...section.actions!, ...section.lists![0].rowActions!]) expect(a.name).toMatch(/^[a-z][a-zA-Z0-9_]*$/);
   expect(action(section.lists![0].rowActions, "close").danger).toBe(true);
   expect(action(section.lists![0].rowActions, "kick").danger).toBe(true);

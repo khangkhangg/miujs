@@ -263,3 +263,74 @@ describe("realtime lets the process exit", () => {
     expect(clock.pending).toBe(0);
   });
 });
+
+describe("presence batching and coalesced persistence stay healthy", () => {
+  const lobby = defineRoom("lobby", {
+    state: t.object({ names: t.record(t.string()) }),
+    rateLimit: false,
+    reconnectMs: 100,
+    init: () => ({ names: {} }),
+    onJoin: ({ room, player }) => void (room.state.names[player.id] = player.name),
+    onLeave: ({ room, player }) => void delete room.state.names[player.id],
+  });
+
+  test("join storms inside presence windows do not leak (ahead sockets, rollback points)", async () => {
+    const clock = new FakeClock(0);
+    const reg = new LocalRooms([lobby], { clock, emptyMs: 500 });
+    const room = reg.route("lobby", "storm", {})!;
+    room.connect({ id: "host", data: undefined, send() {}, close() {} }, { name: "Host" }); // stays, so the room lives on
+    const r = await leakCheck("presence storm", () => {
+      const socks = [fakeSocket(), fakeSocket(), fakeSocket()];
+      for (const s of socks) room.connect(s, { name: "p" });
+      for (const s of socks) reg.disconnected(room, s);
+      clock.advance(200); // window + grace
+    }, { perRound: 1000 });
+    expect(r.leaking, describeLeak(r)).toBe(false);
+  }, 60_000);
+
+  test("Durable Object snapshot writes (coalesced, chunked) do not leak", async () => {
+    const { createRoomDurableObject } = await import("../src/cloudflare.ts");
+    const clock = new FakeClock(0);
+    const cfSocket = () => {
+      let att: unknown = null;
+      return { send() {}, close() {}, serializeAttachment: (v: unknown) => void (att = v), deserializeAttachment: () => att };
+    };
+    let last: ReturnType<typeof cfSocket> | null = null;
+    const Rooms = createRoomDurableObject([chat], { clock, webSocketPair: () => [{}, (last = cfSocket())] as any, onError: () => {} });
+    const data = new Map<string, unknown>();
+    const state = {
+      acceptWebSocket() {},
+      getWebSockets: () => [],
+      storage: { get: async (k: string) => data.get(k), put: async (k: string, v: unknown) => void data.set(k, v), delete: async (k: string) => data.delete(k) },
+    };
+    const dobj = new Rooms(state as any, {});
+    await dobj.fetch(new Request("https://x/rooms/chat/A?name=Ann", { headers: { upgrade: "websocket" } }));
+    let n = 0;
+    const r = await leakCheck("DO persist", async () => {
+      await dobj.fetch(new Request(`https://x/rooms/chat/A?name=p${n++}`, { headers: { upgrade: "websocket" } }));
+      await dobj.webSocketClose(last as any, 1006, "", false);
+      clock.advance(1_000);
+      await dobj.fetch(new Request("https://miu-room/_miu/stats?type=chat&id=A"));
+      clock.advance(40_000); // grace expires: the seat is gone again
+      await dobj.alarm();
+    }, { warmup: 200, perRound: 300, maxBytesPerIteration: 256 });
+    expect(r.leaking, describeLeak(r)).toBe(false);
+    expect(data.size).toBeLessThan(5);
+  }, 120_000);
+
+  test("a pending presence flush or snapshot write does not keep the process alive", async () => {
+    const r = await exitCheck(`
+      import { createRoomDurableObject, createRoomInstance, defineRoom, t } from "../src/index.ts";
+      const lobby = defineRoom("lobby", { state: t.object({ n: t.integer() }), init: () => ({ n: 0 }), onJoin: ({ room }) => void room.state.n++ });
+      const sock = (id) => ({ id, data: undefined, send() {}, close() {} });
+      const inst = createRoomInstance(lobby, { id: "x" });
+      for (let i = 0; i < 5; i++) inst.connect(sock("s" + i), { name: "p" + i }); // presence flush pending
+      const Rooms = createRoomDurableObject([lobby], { webSocketPair: () => [{}, { send() {}, close() {}, serializeAttachment() {}, deserializeAttachment: () => null }] });
+      const data = new Map();
+      const dobj = new Rooms({ acceptWebSocket() {}, getWebSockets: () => [], storage: { get: async (k) => data.get(k), put: async (k, v) => void data.set(k, v), delete: async (k) => data.delete(k) } }, {});
+      for (let i = 0; i < 3; i++) await dobj.fetch(new Request("https://x/rooms/lobby/A?name=p" + i, { headers: { upgrade: "websocket" } })); // write pending
+    `, 3000, PKG);
+    expect(r.exited, r.stderr).toBe(true);
+    expect(r.code, r.stderr).toBe(0);
+  }, 10_000);
+});

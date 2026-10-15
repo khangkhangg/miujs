@@ -157,11 +157,11 @@ const quiz: Scenario = {
           await Promise.all(
             active.map(async (p) => {
               await sleep(rand(30));
-              const me = p.me!.id;
               const t0 = performance.now();
               p.send("answer", { choice: rand(4) });
               rec.wsFramesOut++;
-              if (await waitFor(() => p.state?.phase === "reveal" || (p.state?.answered ?? []).includes(me), 25_000)) rec.ok("ws answer → ack", performance.now() - t0);
+              // Players see their own view: `me.answered` flips when the room records the answer.
+              if (await waitFor(() => p.state?.phase === "reveal" || p.state?.me?.answered === true, 25_000)) rec.ok("ws answer → ack", performance.now() - t0);
               else rec.err("quiz", "answer never acknowledged");
             }),
           );

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { miu } from "miujs";
 import { FakeClock, KvCodeStore, MemoryCodeStore, allocateCode, createRoomDurableObject, defineRoom, rooms, t } from "../src/index.ts";
+import { loadSnapshot } from "../src/persist.ts";
 import { fakeSocket } from "./helpers.ts";
 
 const lobby = defineRoom("lobby", {
@@ -170,7 +171,7 @@ test("on Cloudflare createRoom() claims the code in KV and initialises the Durab
   const realtime = rooms({ rooms: [lobby], codes: "ROOM_CODES" });
   const { id, code } = await realtime.createRoom("lobby", { data: { title: "Edge" }, env });
   expect(JSON.parse(kv.data.get(`miu:code:${code}`)!)).toEqual({ type: "lobby", id });
-  const snap = objects.get(`lobby:${id}`)!.state.data.get("miu:room") as any;
+  const snap = (await loadSnapshot(objects.get(`lobby:${id}`)!.state.storage)) as any;
   expect(snap.state).toEqual({ title: "Edge" });
 
   const lookup = realtime.routes.find((r) => r.path.endsWith("/code/:code"))!;

@@ -111,12 +111,16 @@ function home() {
   };
 }
 
+// The host screen gets the whole state; a player's phone gets a slim view (room.ts quizView):
+// the question, the top of the leaderboard and `me` (own score, answered, rank), never the roster.
 function board(s) {
-  return `<ol class="board">${s.leaderboard.map((r) => `<li>${esc(r.name)} — <b>${r.score}</b>${r.id === me?.id ? " (you)" : ""}</li>`).join("")}</ol>`;
+  const rank = s.me?.rank, inTop = s.leaderboard.some((r) => r.id === me?.id);
+  return `<ol class="board">${s.leaderboard.map((r) => `<li>${esc(r.name)} — <b>${r.score}</b>${r.id === me?.id ? " (you)" : ""}</li>`).join("")}</ol>`
+    + (rank && !inTop ? `<p class="muted">You are #${rank}</p>` : "");
 }
 
 function choices(s, clickable) {
-  const mine = me && s.answered.includes(me.id);
+  const mine = s.me?.answered;
   return `<div class="choices">${s.question.choices.map((c, i) => {
     const cls = s.reveal ? (i === s.reveal.correct ? "right" : "dim") : "";
     const count = s.reveal ? ` (${s.reveal.counts[i]})` : "";
@@ -127,20 +131,20 @@ function choices(s, clickable) {
 function render() {
   clearInterval(timer);
   if (!state || !me) return home();
-  const s = state, host = me.role === "host", players = Object.keys(s.players).length;
+  const s = state, host = me.role === "host", players = s.players ? Object.keys(s.players).length : 0;
   let body = "";
   if (s.phase === "lobby") {
     body = host
       ? `<div class="card"><p class="muted">Join at ${esc(location.host)} with code</p><div class="code">${esc(code)}</div>
          <p>${players} player(s): ${Object.values(s.players).map((p) => esc(p.name)).join(", ") || "<span class='muted'>waiting…</span>"}</p>
          <button id="start" ${players ? "" : "disabled"}>Start</button></div>`
-      : `<div class="card"><h2>You're in, ${esc(me.name)}!</h2><p class="muted">Waiting for the host to start… (${players} players)</p></div>`;
+      : `<div class="card"><h2>You're in, ${esc(me.name)}!</h2><p class="muted">Waiting for the host to start…</p></div>`;
   } else if (s.phase === "question" || s.phase === "reveal") {
-    const mine = s.players[me.id];
+    const mine = s.me;
     body = `<div class="card"><span class="timer" id="timer"></span>
       <p class="muted">Question ${s.round + 1} / ${s.total}</p><h2>${esc(s.question.text)}</h2>
       ${choices(s, !host)}
-      <p class="muted">${s.answered.length} / ${players} answered</p>
+      ${s.players ? `<p class="muted">${Object.keys(s.answered).length} / ${players} answered</p>` : mine?.answered && !s.reveal ? `<p class="muted">Answer locked in.</p>` : ""}
       ${s.phase === "reveal" && mine ? `<p>${mine.gained ? `Correct! +${mine.gained}` : "Not this time."} Score: <b>${mine.score}</b></p>` : ""}
       ${s.phase === "reveal" ? board(s) : ""}
       ${host && s.phase === "reveal" ? `<button id="next">${s.round + 1 < s.total ? "Next question" : "Show results"}</button>` : ""}</div>`;

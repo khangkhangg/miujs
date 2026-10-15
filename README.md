@@ -293,7 +293,7 @@ that runs end to end. The full plan is in the
 | **4. 3D tour kit** | Done (preview) | 360° tiling and 3D model compression jobs, hotspots and floor plans, live guided tours, viewing analytics. Healthcare building blocks: field encryption, consent, retention |
 | **5. Hardening** | Done | Leak and exit tests for every package, soak tests over HTTP and WebSockets, memory caps for password hashing, faster body reads, `app.close()` |
 | **6. Traffic and operations** | Done (preview) | `@miujs/bots` (done): bot, AI crawler and location detection with block / partial / cached / full. Admin System area (done): every package shows its status, lists, settings and actions in the admin and as MCP tools |
-| **7. Release readiness** | Done (preview) | Example apps run on Cloudflare's runtime locally (`bun run workerd`, 69 scenarios), npm packages verified on Node, Deno, Bun and a Workers bundle, Postgres over Hyperdrive (`@miujs/db/postgres`, [guide](docs/postgres.md)), per-route fast paths, CI benchmark gate |
+| **7. Release readiness** | Done (preview) | Example apps run on Cloudflare's runtime locally (`bun run workerd`, 70 scenarios), npm packages verified on Node, Deno, Bun and a Workers bundle, Postgres over Hyperdrive (`@miujs/db/postgres`, [guide](docs/postgres.md)), per-route fast paths, CI benchmark gate |
 | **Next** | Needs accounts | First deploy to a real Cloudflare account (edge bot score and geo, CPU limits, Queues at scale), first npm publish (needs the `@miujs` scope and the `miujs` name) |
 
 ### Automation workflows

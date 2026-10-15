@@ -64,9 +64,13 @@ test("a full game with a host and 3 players: scoring, phases, leaderboard, no ea
   inst.connect(ann, { name: "Ann" });
   inst.connect(bob, { name: "Bob" });
   inst.connect(cat, { name: "Cat" });
+  clock.advance(50); // joins reach the host in one batch per 50 ms presence window
   expect(host.me.role).toBe("host");
   expect(host.view.phase).toBe("lobby");
   expect(Object.keys(host.view.players)).toHaveLength(3); // the host does not play
+  // Players get a slim view: themselves, not the roster.
+  expect(ann.view.players).toBeUndefined();
+  expect(ann.view.me).toEqual({ name: "Ann", score: 0, gained: 0, answered: false, rank: null });
 
   // Only the host can start.
   say(ann, "start");
@@ -87,14 +91,16 @@ test("a full game with a host and 3 players: scoring, phases, leaderboard, no ea
   say(cat, "answer", { choice: 9 });
   expect(cat.errors.at(-1).code).toBe("MIU_E_QUIZ_BAD_CHOICE");
   expect(cat.view.phase).toBe("question");
-  expect(cat.view.answered.sort()).toEqual([ann.me.id, bob.me.id].sort());
+  expect(Object.keys(host.view.answered).sort()).toEqual([ann.me.id, bob.me.id].sort());
+  expect([ann.view.me.answered, cat.view.me.answered]).toEqual([true, false]);
   say(cat, "answer", { choice: 0 });
   // Everyone answered → reveal right away.
   expect(cat.view.phase).toBe("reveal");
   expect(cat.view.reveal).toEqual({ correct: 1, counts: [1, 2, 0] });
-  expect(cat.view.players[ann.me.id]).toMatchObject({ score: 1000, gained: 1000 });
-  expect(cat.view.players[bob.me.id]).toMatchObject({ score: 750, gained: 750 });
-  expect(cat.view.players[cat.me.id]).toMatchObject({ score: 0, gained: 0 });
+  expect(host.view.players[ann.me.id]).toMatchObject({ score: 1000, gained: 1000 });
+  expect(host.view.players[bob.me.id]).toMatchObject({ score: 750, gained: 750 });
+  expect(cat.view.me).toMatchObject({ score: 0, gained: 0, rank: 3 });
+  expect(ann.view.me).toMatchObject({ score: 1000, gained: 1000, rank: 1 });
 
   // Only the host moves on.
   say(bob, "next");
@@ -123,8 +129,59 @@ test("a full game with a host and 3 players: scoring, phases, leaderboard, no ea
       { id: cat.me.id, name: "Cat", score: 0 },
     ]);
   }
-  // Each client's view matches the server's state exactly.
-  expect(ann.view).toEqual(JSON.parse(JSON.stringify(inst.room.state)));
+  // The host's view is the server's state exactly.
+  expect(host.view).toEqual(JSON.parse(JSON.stringify(inst.room.state)));
+});
+
+test("seating players fans out to the host only, not to every player (no O(N²) join frames)", () => {
+  const { clock, inst } = setup();
+  const host = client();
+  inst.connect(host, { name: "Host" });
+  const players: Client[] = [];
+  for (let i = 0; i < 200; i++) {
+    const c = client();
+    inst.connect(c, { name: `p${i}` });
+    players.push(c);
+    if (i % 20 === 19) clock.advance(10);
+  }
+  clock.advance(100);
+  expect(Object.keys(host.view.players)).toHaveLength(200);
+  // Each player got welcome + state and nothing else while others joined.
+  for (const p of players) expect(p.frames.map((f) => f.t)).toEqual(["welcome", "state"]);
+  expect(host.frames.length).toBeLessThan(30);
+});
+
+test("an answer reaches only the host and the player who answered", () => {
+  const { clock, inst, say } = setup();
+  const host = client();
+  inst.connect(host, { name: "Host" });
+  const [ann, bob, cat] = [client(), client(), client()];
+  for (const [c, name] of [[ann, "Ann"], [bob, "Bob"], [cat, "Cat"]] as const) inst.connect(c, { name });
+  clock.advance(50);
+  say(host, "start");
+  const before = [host, ann, bob, cat].map((c) => c.frames.length);
+  say(ann, "answer", { choice: 1 });
+  expect([host, ann, bob, cat].map((c, i) => c.frames.length - before[i])).toEqual([1, 1, 0, 0]);
+  expect(host.view.answered).toEqual({ [ann.me.id]: true });
+});
+
+test("leaving players drop out of the host's roster; the leaderboard is only built when scores exist", () => {
+  const { clock, inst, say } = setup();
+  const host = client();
+  const ann = client();
+  const bob = client();
+  inst.connect(host, { name: "Host" });
+  inst.connect(ann, { name: "Ann" });
+  inst.connect(bob, { name: "Bob" });
+  clock.advance(50);
+  expect(host.view.leaderboard).toEqual([]);
+  inst.room.kick(bob.me.id);
+  clock.advance(50);
+  expect(Object.keys(host.view.players)).toEqual([ann.me.id]);
+  say(host, "start");
+  say(ann, "answer", { choice: 1 });
+  expect(host.view.leaderboard).toEqual([{ id: ann.me.id, name: "Ann", score: 1000 }]);
+  expect(ann.view.leaderboard).toEqual([{ id: ann.me.id, name: "Ann", score: 1000 }]);
 });
 
 test("answers sent outside a question are rejected", () => {

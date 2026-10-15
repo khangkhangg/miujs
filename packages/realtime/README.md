@@ -76,6 +76,12 @@ export const guess = defineRoom("guess", {
 
 The `room` handle offers `state`, `secret`, `players`, `player(id)`, `broadcast(event, data, { except, to })`, `send(playerId, event, data)`, `schedule(name, delayMs, data)` / `cancel(timerId)`, `after(ms, fn)`, `tick(hz, fn)`, `now()`, `storage` and `close(reason)`. Named timers (`schedule`) are persisted and survive Durable Object hibernation; `after` and `tick` are closures and only work in local rooms. A `view(state, player)` function sends each player their own view of the state (hidden hands, fog of war).
 
+### Large rooms
+
+Joins and leaves are cheap by default. The state changes they cause (`onJoin`, `onLeave`, kicks, grace expiry) reach the other members as one patch per `presenceBatchMs` window (default 50 ms; the first change after a quiet period goes out at once). A joiner's first `state` always includes their own join, and a message, timer or event flushes pending changes first, so ordering holds. Seating N players therefore sends about N frames per window instead of a patch to everyone per join (N²/2 frames). `presenceBatchMs: 0` patches everyone on every join and leave, as before.
+
+To stop broadcasting presence at all, keep the roster out of what players see: a `view` that gives the host the whole state and each player only their own row means a join changes the host's view and nobody else's. `examples/quiz` does this. Seating 1,000 players there sends about 2,000 frames instead of 500,000.
+
 ## Client SDK
 
 `@miujs/realtime/client` works anywhere with a `WebSocket` (browsers, Bun, Deno, Node 22+). It applies patches, reconnects with a resume token and queues messages while reconnecting.
@@ -187,6 +193,12 @@ export default miu({ name: "chat", plugins: [rooms({ rooms: [chat] })] });
 
 The object uses the WebSocket hibernation API. State, players, resume tokens and named timers are persisted to Durable Object storage, and an alarm wakes the object for the next timer.
 
+Persistence is coalesced and split:
+
+- **Coalesced.** The first change after a quiet period is written at once. Later changes are written at most once per `persistMs` (default 1000 ms). A pending write keeps the object awake, so it cannot hibernate with unwritten state. New or cancelled timers, alarms, the last socket closing, `createRoom` and operator actions are always written at once. A crash or redeploy can lose at most one window. `persistMs: 0` writes after every event.
+- **Split.** Game state, members and `secret` are stored apart, and a section is only rewritten when it changed. A message that changes the state does not rewrite the member list. Sections over 16 KB are split into 60 000-character chunks (under the 128 KiB per-value limit of KV-backed objects; SQLite-backed objects allow 2 MB). The room size is therefore no longer capped by one value. Chunks are written before the header that points to them, so a crash mid-write leaves the previous snapshot readable. Snapshots stored by older versions (one key) still load.
+- **Never silent.** A snapshot bigger than `maxSnapshotBytes` (default 16 MiB) is not written (`MIU_E_ROOM_STATE_TOO_LARGE`). A failed storage write is logged as `MIU_E_ROOM_PERSIST_FAILED` and retried after `persistMs`. Both are counted, and the room keeps running from memory. The admin action `roomStorage` shows the last snapshot size, write counts and failures.
+
 ## Options
 
 `rooms(options)`:
@@ -219,6 +231,7 @@ The object uses the WebSocket hibernation API. State, players, resume tokens and
 | `maxMessageBytes` | `number` | `16384` | Largest inbound frame; bigger frames close the socket (1009). |
 | `maxPlayers` | `number` | unlimited | Max non-spectator players. |
 | `reconnectMs` | `number` | `30000` | How long a disconnected player keeps their seat. |
+| `presenceBatchMs` | `number` | `50` | Coalesce the patches caused by joins and leaves into one per window. `0` sends them at once. |
 
 The `room` handle also has `room.kick(playerId, code?)` and `room.env`.
 
@@ -227,7 +240,7 @@ The `room` handle also has `room.kick(playerId, code?)` and `room.env`.
 
 `connect(url, options)` from `@miujs/realtime/client`: `name`, `role` (default `"player"`), `hostKey`, `resume`, `reconnect` (default on: `minDelayMs` 250, `maxDelayMs` 5000, `maxAttempts` Infinity; `false` turns it off), `encoding` (`"json"` or `"msgpack"`, default `"json"`), `WebSocket` (default: the global one).
 
-`shardedRoom(room, options)`: `shardSize` (required), `maxShards` (default `64`), `aggregate(shards)`, `publish({ room, aggregate })`. `createRoomDurableObject(types, options)`: `binding` (default `"MIU_ROOMS"`), `clock`.
+`shardedRoom(room, options)`: `shardSize` (required), `maxShards` (default `64`), `aggregate(shards)`, `publish({ room, aggregate })`. `createRoomDurableObject(types, options)`: `binding` (default `"MIU_ROOMS"`), `clock`, `persistMs` (default `1000`; `0` writes after every event), `maxSnapshotBytes` (default 16 MiB), `onError(err, where)` (default `console.error`) for persistence failures.
 
 ## Errors
 
@@ -242,6 +255,9 @@ The `room` handle also has `room.kick(playerId, code?)` and `room.env`.
 - `MIU_E_ROOM_CODE_UNKNOWN` / `MIU_E_ROOM_CODE_RATE_LIMITED`: join code not found, or too many lookups.
 - `MIU_E_ROOM_TIMER_NOT_DURABLE`: `after()` or `tick()` was used in a Durable Object; use `schedule()`.
 - `MIU_E_ROOM_SHARD_SIZE`: `shardedRoom` got a bad `shardSize`.
+- `MIU_E_ROOM_STATE_TOO_LARGE`: a Durable Object room's snapshot is over `maxSnapshotBytes`. It is not written; the room keeps running from memory.
+- `MIU_E_ROOM_PERSIST_FAILED`: Durable Object storage refused a snapshot write. It is logged, counted and retried.
+- `MIU_E_ROOM_SNAPSHOT_CORRUPT`: a stored snapshot chunk is missing. Close the room to start over.
 - `MIU_E_WS_EXPECTED`: plain HTTP request to the WebSocket URL (426).
 
 See [all error codes](../../docs/errors.md), e.g. [`MIU_E_ROOM_FULL`](../../docs/errors.md#miu_e_room_full).
@@ -277,6 +293,7 @@ On Bun, Deno and Node rooms run in process (`LocalRooms`); nothing else is neede
 - **List** `rooms`: type, id, members, connected, in grace, age and a truncated preview of the public state (never `secret`, resume tokens or host keys). Filter by type, search by id. Empty on Cloudflare.
 - **Row actions**: `broadcast` (`{ event, message? }`), `kick` (`{ member }`, danger) and `close` (`{ reason? }`, danger).
 - **Actions** `broadcastRoom`, `kickMember`, `closeRoom`: the same, by `type` and `id`. On Cloudflare they are forwarded to the room's Durable Object, so they work there too. Closing a room that is not open, or kicking a member who already left, is a no-op with a message.
+- **Action** `roomStorage` (`{ type, id }`): a Durable Object room's last persisted snapshot size and key count, writes, unchanged skips, failures and the last error. In-process rooms are not persisted, and the action says so.
 
 ## Links
 

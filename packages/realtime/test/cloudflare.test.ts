@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { FakeClock, createRoomDurableObject, defineRoom, t } from "../src/index.ts";
 import { decode, encode } from "../src/msgpack.ts";
+import { loadSnapshot } from "../src/persist.ts";
 
 const chat = defineRoom("chat", {
   state: t.object({ lines: t.array(t.string()) }),
@@ -65,7 +66,10 @@ function fakeState() {
 }
 
 const pair = () => [new CfSocket(), new CfSocket()] as const;
-const MiuRooms = createRoomDurableObject([chat], { webSocketPair: pair as any, clock: new FakeClock() });
+const cfClock = new FakeClock();
+const MiuRooms = createRoomDurableObject([chat], { webSocketPair: pair as any, clock: cfClock });
+/** Wait for snapshot writes in flight (the stats endpoint answers after them). */
+const settle = (dobj: { fetch(r: Request): Promise<Response> }, type = "chat", id = "ABC") => dobj.fetch(new Request(`https://miu-room/_miu/stats?type=${type}&id=${id}`));
 
 function upgrade(path: string) {
   return new Request(`https://app.example${path}`, { headers: { upgrade: "websocket" } });
@@ -89,7 +93,11 @@ test("messages run handlers, broadcast patches and persist state to storage", as
   const ws = state.sockets[0];
   await dobj.webSocketMessage(ws as any, JSON.stringify({ t: "msg", type: "say", data: { text: "hi" } }));
   expect(ws.last()).toEqual({ t: "patch", ops: [{ op: "replace", path: "/lines", value: ["Ann: hi"] }] });
-  expect((state.data.get("miu:room") as any).state).toEqual({ lines: ["Ann: hi"] });
+  // Writes are coalesced: the join was written at once, the message lands at the end of the window.
+  expect((await loadSnapshot(state.storage))!.state).toEqual({ lines: [] });
+  cfClock.advance(1_000);
+  await settle(dobj);
+  expect((await loadSnapshot(state.storage))!.state).toEqual({ lines: ["Ann: hi"] });
 });
 
 test("after hibernation a new instance restores state and re-attaches live sockets", async () => {
@@ -99,6 +107,8 @@ test("after hibernation a new instance restores state and re-attaches live socke
   const ws = state.sockets[0];
   const me = ws.last("welcome").me;
   await first.webSocketMessage(ws as any, JSON.stringify({ t: "msg", type: "say", data: { text: "one" } }));
+  cfClock.advance(1_000); // the coalesced write lands (a pending write keeps a real object awake)
+  await settle(first);
 
   const woken = new MiuRooms(state as any, {}); // evicted from memory, sockets kept open
   await woken.webSocketMessage(ws as any, JSON.stringify({ t: "msg", type: "say", data: { text: "two" } }));
@@ -216,7 +226,7 @@ test("alarm() on a woken object runs due timers, patches live sockets, then re-a
   expect(state.alarm).toBe(1_500);
   clock.advance(300);
   await new Rooms(state as any, {}).alarm();
-  expect((state.data.get("miu:room") as any).state.log).toEqual(["ring:200@1200", "ring:500@1500"]);
+  expect(((await loadSnapshot(state.storage)) as any).state.log).toEqual(["ring:200@1200", "ring:500@1500"]);
   expect(state.alarm).toBeNull();
 });
 
@@ -234,7 +244,7 @@ test("the reconnect grace period is an alarm: a seat expires even if the object 
   clock.advance(10_000);
   await new Rooms(state as any, {}).alarm();
   expect(ann.last()).toEqual({ t: "patch", ops: [{ op: "replace", path: "/log", value: ["left:Bob"] }] });
-  expect((state.data.get("miu:room") as any).players.map((p: any) => p.name)).toEqual(["Ann"]);
+  expect((await loadSnapshot(state.storage))!.players.map((p: any) => p.name)).toEqual(["Ann"]);
   expect(state.alarm).toBeNull();
 });
 

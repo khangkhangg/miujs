@@ -167,24 +167,46 @@ function clone<T>(v: T): T {
 
 /**
  * Bring `doc` (the last-sent state) up to date with `ops` from `diff(doc, state)`, copying only
- * the changed subtrees instead of the whole state. Returns the new root.
+ * the changed subtrees and the objects on their paths instead of the whole state. `doc` itself is
+ * never changed. Returns the new root.
  */
 function applyCloned(doc: unknown, ops: readonly PatchOp[]): unknown {
   let root = doc;
+  const fresh = new Set<object>();
   for (const op of ops) {
     if (op.path === "") {
       root = op.op === "remove" ? undefined : clone(op.value);
+      if (root && typeof root === "object") fresh.add(root);
       continue;
     }
     const segs = op.path.slice(1).split("/");
-    let parent = root as Record<string, unknown>;
-    for (let i = 0; i < segs.length - 1; i++) parent = parent[unescapeSeg(segs[i])] as Record<string, unknown>;
+    // Copy-on-write: every object on the path is copied (once per call), never changed in place,
+    // so a subtree that keeps its identity also kept its content. Views and diffs rely on that.
+    let parent = (root = own(root as Record<string, unknown>, fresh));
+    for (let i = 0; i < segs.length - 1; i++) {
+      const k = unescapeSeg(segs[i]);
+      const child = own(parent[k] as Record<string, unknown>, fresh);
+      if (child !== parent[k]) setKey(parent, k, child);
+      parent = child;
+    }
     const last = unescapeSeg(segs[segs.length - 1]);
     if (op.op === "remove") delete parent[last];
-    else if (last === "__proto__") Object.defineProperty(parent, last, { value: clone(op.value), enumerable: true, writable: true, configurable: true });
-    else parent[last] = clone(op.value);
+    else setKey(parent, last, clone(op.value));
   }
   return root;
+}
+
+/** A shallow copy of `o` that this `applyCloned` call may change (the copy itself, if made here). */
+function own(o: Record<string, unknown>, fresh: Set<object>): Record<string, unknown> {
+  if (fresh.has(o)) return o;
+  const c = { ...o }; // spread defines own keys (a "__proto__" key stays a plain key)
+  fresh.add(c);
+  return c;
+}
+
+function setKey(o: Record<string, unknown>, k: string, v: unknown): void {
+  if (k === "__proto__") Object.defineProperty(o, k, { value: v, enumerable: true, writable: true, configurable: true });
+  else o[k] = v;
 }
 
 function unescapeSeg(seg: string): string {
@@ -233,6 +255,17 @@ export class RoomInstance<S = any, X = any> {
   private conns = new Map<string, Conn>();
   /** Sockets that joined but have not yet received the full state. */
   private fresh = new Set<string>();
+  /**
+   * Sockets that joined inside a presence window and got a state newer than `sent`: socket id →
+   * the state they were sent. The next flush sends each a patch from there.
+   */
+  private ahead = new Map<string, unknown>();
+  /** Committed state not yet broadcast (presence window open): the rollback point. */
+  private committed: S | null = null;
+  /** Trailing presence flush (see `presenceBatchMs`). */
+  private flushTimer: unknown = null;
+  /** When a patch last went out to the members. */
+  private lastFlushAt = -Infinity;
   /** Sockets closed for abuse; late frames from them are ignored. */
   private kicked = new WeakSet<MiuSocket>();
   /** Per-player view as last sent (rooms with `view`). */
@@ -241,6 +274,7 @@ export class RoomInstance<S = any, X = any> {
   private timers = new Set<unknown>();
   /** Named timers in scheduling order. */
   private pending = new Map<string, TimerEntry>();
+  private timersRev = 0;
   private durable: boolean;
   private tokenPrefix: string;
   /** Clock-mode wake-up for the earliest named timer / grace deadline. */
@@ -405,6 +439,7 @@ export class RoomInstance<S = any, X = any> {
     const conn = this.conns.get(socket.id);
     this.conns.delete(socket.id);
     this.fresh.delete(socket.id);
+    this.ahead.delete(socket.id);
     if (!conn?.playerId) return;
     const seat = this.seats.get(conn.playerId);
     if (!seat || seat.socket !== socket) return;
@@ -413,15 +448,19 @@ export class RoomInstance<S = any, X = any> {
     this.startGrace(seat);
   }
 
-  snapshot(): RoomSnapshot {
+  /**
+   * Everything needed to rebuild the room. `copy: false` returns the live state and secret
+   * (cheaper, for a caller that serializes the snapshot right away and never keeps it).
+   */
+  snapshot(copy = true): RoomSnapshot {
     return {
       v: 1,
       type: this.type,
       id: this.id,
       createdAt: this.createdAt,
       hostKey: this.hostKey,
-      state: clone(this.state),
-      secret: clone(this.secret),
+      state: copy ? clone(this.state) : this.state,
+      secret: copy ? clone(this.secret) : this.secret,
       players: [...this.seats.values()].map((s) => {
         const { id, name, role, joinedAt } = s.player;
         const p: RoomSnapshot["players"][number] = { id, name, role, joinedAt, token: s.token };
@@ -458,6 +497,7 @@ export class RoomInstance<S = any, X = any> {
         }
         if (!timer) break;
         this.pending.delete(timer.id);
+        this.timersRev++;
         const handler = this.def.timers?.[timer.name];
         if (!handler) {
           (this.hooks.onError ?? defaultOnError)(new Error(`no timer handler "${timer.name}" (declared timers: ${Object.keys(this.def.timers ?? {}).join(", ") || "none"})`), `${this.type}/${this.id} timers`);
@@ -482,6 +522,11 @@ export class RoomInstance<S = any, X = any> {
   /** Player id for a socket, if it joined. */
   playerOf(socket: MiuSocket): string | null {
     return this.conns.get(socket.id)?.playerId ?? null;
+  }
+
+  /** Changes whenever a named timer is scheduled, cancelled or run (transports persist those at once). */
+  get timersVersion(): number {
+    return this.timersRev;
   }
 
   get isClosed(): boolean {
@@ -532,6 +577,9 @@ export class RoomInstance<S = any, X = any> {
     this.pending.clear();
     if (this.wake !== null) this.clock.clearTimeout(this.wake);
     this.wake = null;
+    if (this.flushTimer !== null) this.clock.clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    this.ahead.clear();
     for (const c of this.conns.values()) safeClose(c.socket, 1000, reason);
     this.conns.clear();
     this.hooks.onClose?.();
@@ -547,6 +595,7 @@ export class RoomInstance<S = any, X = any> {
       this.error(sock, { code: "MIU_E_ROOM_KICKED", message: "You were removed from the room", fix: "Join another room; this seat and its resume token are gone." });
       this.conns.delete(sock.id);
       this.fresh.delete(sock.id);
+      this.ahead.delete(sock.id);
       safeClose(sock, code, reason);
       seat.socket = null;
     }
@@ -571,6 +620,7 @@ export class RoomInstance<S = any, X = any> {
           const old = seat.socket;
           this.conns.delete(old.id);
           this.fresh.delete(old.id);
+          this.ahead.delete(old.id);
           safeClose(old, 4001, "replaced by a newer connection");
         }
         this.cancelGrace(seat);
@@ -629,8 +679,8 @@ export class RoomInstance<S = any, X = any> {
     conn.playerId = player.id;
     this.welcome(seat, false);
     const onJoin = this.def.onJoin;
-    if (onJoin) this.run(() => onJoin({ room: this.room, player, now: this.clock.now() }), "onJoin");
-    else this.flush();
+    if (onJoin) this.run(() => onJoin({ room: this.room, player, now: this.clock.now() }), "onJoin", undefined, undefined, true);
+    else this.flushLazy();
   }
 
   private welcome(seat: Seat, resumed: boolean): void {
@@ -667,8 +717,8 @@ export class RoomInstance<S = any, X = any> {
       }
     }
     const onLeave = this.def.onLeave;
-    if (onLeave) this.run(() => onLeave({ room: this.room, player: seat.player, now: this.clock.now() }), "onLeave");
-    else this.flush();
+    if (onLeave) this.run(() => onLeave({ room: this.room, player: seat.player, now: this.clock.now() }), "onLeave", undefined, undefined, true);
+    else this.flushLazy();
     if (this.seats.size === 0) this.hooks.onEmpty?.();
   }
 
@@ -708,11 +758,15 @@ export class RoomInstance<S = any, X = any> {
     return this.run(() => handler({ room: this.room, sender: seat.player, msg: checked.value, now: this.clock.now() }), `on.${type}`, socket, reqId);
   }
 
-  /** Runs user code, then validates and broadcasts the state change. Rolls back on failure. */
-  private run(fn: () => unknown, where: string, socket?: MiuSocket, reqId?: unknown): void | Promise<void> {
+  /**
+   * Runs user code, then validates and broadcasts the state change. Rolls back on failure.
+   * `presence` (joins and leaves): the broadcast may wait for the presence window.
+   */
+  private run(fn: () => unknown, where: string, socket?: MiuSocket, reqId?: unknown, presence = false): void | Promise<void> {
     if (this.closed) return;
+    const done = () => (presence ? this.flushLazy() : this.flush());
     const fail = (err: unknown) => {
-      this.state = clone(this.sent);
+      this.state = this.rollbackPoint();
       if (isMiuError(err)) {
         if (socket) this.error(socket, { code: err.code, message: err.message, fix: err.fix, details: err.details }, reqId);
         return;
@@ -727,56 +781,162 @@ export class RoomInstance<S = any, X = any> {
       result = fn();
     } catch (err) {
       fail(err);
-      this.flush();
+      done();
       return;
     }
-    this.commit(where, socket, reqId);
+    this.commit(where, socket, reqId, presence);
     if (isThenable(result)) {
       return result.then(
-        () => this.commit(where, socket, reqId),
+        () => this.commit(where, socket, reqId, presence),
         (err) => {
           fail(err);
-          this.flush();
+          done();
         },
       );
     }
   }
 
-  private commit(where: string, socket?: MiuSocket, reqId?: unknown): void {
+  /** A copy of the last committed state: what a failed handler rolls back to. */
+  private rollbackPoint(): S {
+    return clone(this.committed ?? this.sent);
+  }
+
+  private commit(where: string, socket?: MiuSocket, reqId?: unknown, presence = false): void {
     if (this.closed) return;
-    const issues = this.checkState();
+    // Only what changed since the last commit needs checking (that state was already valid).
+    const from = this.committed ?? this.sent;
+    const ops = diff(from, this.state);
+    const issues = ops.length ? this.checkState(ops) : null;
     if (issues) {
-      this.state = clone(this.sent);
+      this.state = this.rollbackPoint();
       (this.hooks.onError ?? defaultOnError)(new Error(`state invalid: ${issues}`), `${this.type}/${this.id} ${where}`);
       if (socket) {
         this.error(socket, { code: "MIU_E_ROOM_STATE_INVALID", message: `The ${where} handler left state that does not match the schema: ${issues}`, fix: "Fix the handler or the room's state schema; the change was rolled back." }, reqId);
       }
     }
-    this.flush();
+    // The diff against `sent` is the patch flush() needs: reuse it instead of diffing twice.
+    const patch = !issues && from === this.sent ? ops : undefined;
+    if (presence) this.flushLazy(patch);
+    else this.flush(patch);
   }
 
-  private checkState(): string | null {
+  /**
+   * Validate the state. With `ops` (changes since the last valid state) and an object schema,
+   * only the top-level fields they touch are checked, so a message costs O(change), not O(state).
+   */
+  private checkState(ops?: readonly PatchOp[]): string | null {
+    const shape = (this.def.state as { shape?: Record<string, Schema & { isOptional?: boolean }> }).shape;
+    const state = this.state as Record<string, unknown>;
+    if (ops && shape && state && typeof state === "object" && !Array.isArray(state)) {
+      const keys = new Set<string>();
+      for (const op of ops) {
+        if (op.path === "") return this.checkState();
+        const end = op.path.indexOf("/", 1);
+        keys.add(unescapeSeg(end < 0 ? op.path.slice(1) : op.path.slice(1, end)));
+      }
+      const issues: string[] = [];
+      for (const k of keys) {
+        // A key outside the shape: the full check decides (as it always did).
+        if (!Object.prototype.hasOwnProperty.call(shape, k)) return this.checkState();
+        const v = state[k];
+        if (v === undefined) {
+          if (!shape[k].isOptional) issues.push(`${k} is required`);
+          continue;
+        }
+        const r = validate(shape[k], v, { path: k });
+        if (!r.ok) for (const i of r.issues) issues.push(`${i.path || k} ${i.message}`);
+      }
+      return issues.length ? issues.slice(0, 5).join("; ") : null;
+    }
     const r = validate(this.def.state, this.state);
     return r.ok ? null : r.issues.slice(0, 5).map((i) => `${i.path || "state"} ${i.message}`).join("; ");
   }
 
   /** Send pending state changes: a patch to everyone, or full state to sockets that just joined. */
-  private flush(): void {
+  private flush(pre?: PatchOp[]): void {
     if (this.closed) return;
-    const ops = diff(this.sent, this.state);
+    this.committed = null;
+    if (this.flushTimer !== null) {
+      this.clock.clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    const ops = pre ?? diff(this.sent, this.state);
+    if (ops.length) this.lastFlushAt = this.clock.now();
     if (this.def.view) return this.flushViews(ops);
     if (ops.length) {
       this.sent = applyCloned(this.sent, ops) as S;
       const patch = frame({ t: "patch", ops });
       for (const seat of this.seats.values()) {
-        if (seat.socket && !this.fresh.has(seat.socket.id)) this.deliver(seat.socket, patch);
+        const sock = seat.socket;
+        if (sock && !this.fresh.has(sock.id) && !this.ahead.has(sock.id)) this.deliver(sock, patch);
       }
       this.hooks.onChange?.();
+    }
+    if (this.ahead.size) {
+      // Joined inside the presence window with a newer state than `sent` had: catch them up.
+      const byBase = new Map<unknown, Frame | null>();
+      for (const [sid, base] of this.ahead) {
+        const c = this.conns.get(sid);
+        if (!c) continue;
+        let f = byBase.get(base);
+        if (f === undefined) {
+          const d = diff(base, this.sent);
+          byBase.set(base, (f = d.length ? frame({ t: "patch", ops: d }) : null));
+        }
+        if (f) this.deliver(c.socket, f);
+      }
+      this.ahead.clear();
     }
     if (this.fresh.size) {
       const full = frame({ t: "state", state: this.sent });
       for (const c of this.conns.values()) if (this.fresh.has(c.socket.id)) this.deliver(c.socket, full);
       this.fresh.clear();
+    }
+  }
+
+  /**
+   * Flush for joins and leaves (see `presenceBatchMs`): at once when no patch went out within the
+   * window, else later in one batch. Sockets that just joined get the current state right away.
+   */
+  private flushLazy(pre?: PatchOp[]): void {
+    if (this.closed) return;
+    const ms = this.def.presenceBatchMs ?? 50;
+    const now = this.clock.now();
+    if (!(ms > 0) || (this.flushTimer === null && now - this.lastFlushAt >= ms)) return this.flush(pre);
+    // The rollback point for the window, and the state this join's sockets are sent. Never
+    // changed afterwards (a full copy measured faster here than diff + copy-on-write).
+    const base = (this.committed = clone(this.state));
+    if (this.fresh.size) {
+      const full = this.def.view ? null : frame({ t: "state", state: base });
+      for (const c of this.conns.values()) {
+        const sid = c.socket.id;
+        if (!this.fresh.has(sid)) continue;
+        if (full) {
+          this.deliver(c.socket, full);
+          this.ahead.set(sid, base);
+          continue;
+        }
+        const seat = c.playerId ? this.seats.get(c.playerId) : undefined;
+        if (!seat) continue;
+        let v: unknown;
+        try {
+          v = this.def.view!(base, seat.player); // `base` is never changed: no copy needed
+        } catch (err) {
+          (this.hooks.onError ?? defaultOnError)(err, `${this.type}/${this.id} view(${seat.player.id})`);
+          continue;
+        }
+        this.write(c.socket, { t: "state", state: v });
+        this.views.set(seat.player.id, v);
+      }
+      this.fresh.clear();
+    }
+    if (this.flushTimer === null) {
+      this.flushTimer = this.clock.setTimeout(() => {
+        this.flushTimer = null;
+        this.flush();
+      }, Math.max(0, this.lastFlushAt + ms - now));
+      // Housekeeping: never keeps a process alive on its own.
+      setTimerRef(this.flushTimer, false);
     }
   }
 
@@ -792,7 +952,9 @@ export class RoomInstance<S = any, X = any> {
         if (!changed && !isFresh) continue;
         let v: unknown;
         try {
-          v = clone(this.def.view!(this.sent, seat.player));
+          // Not copied: `sent` is copy-on-write, so parts of it a view hands out never change
+          // underneath, and unchanged parts keep their identity (diff skips them for free).
+          v = this.def.view!(this.sent, seat.player);
         } catch (err) {
           (this.hooks.onError ?? defaultOnError)(err, `${this.type}/${this.id} view(${seat.player.id})`);
           continue;
@@ -837,12 +999,14 @@ export class RoomInstance<S = any, X = any> {
     const entry: TimerEntry = { id, at, name };
     if (data !== undefined) entry.data = clone(data);
     this.pending.set(id, entry);
+    this.timersRev++;
     this.rearm();
     return id;
   }
 
   private cancelTimer(id: string): boolean {
     const had = this.pending.delete(id);
+    if (had) this.timersRev++;
     if (had) this.rearm();
     return had;
   }

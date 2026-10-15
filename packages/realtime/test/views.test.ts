@@ -34,6 +34,7 @@ function setup() {
   const [ann, bob] = [fakeSocket(), fakeSocket()];
   inst.connect(ann, { name: "Ann" });
   inst.connect(bob, { name: "Bob" });
+  clock.advance(50); // let the presence window close
   const id = (s: FakeSocket) => s.last("welcome").me.id;
   const say = (s: FakeSocket, type: string, data: unknown) => inst.receive(s, JSON.stringify({ t: "msg", type, data }));
   return { clock, inst, ann, bob, id, say };
@@ -133,4 +134,34 @@ test("describe() (agents, MCP) still shows the full server state", () => {
   const { inst, ann, say } = setup();
   say(ann, "draw", { card: "2♣" });
   expect(Object.values(inst.describe().state.hands)).toContainEqual(["2♣"]);
+});
+
+test("a view may hand out parts of the state: in-place changes to them still reach every player", () => {
+  const board = defineRoom("board", {
+    state: t.object({ cells: t.object({ a: t.string(), b: t.string() }), meta: t.object({ turn: t.integer() }) }),
+    client: { set: t.object({ cell: t.enum(["a", "b"] as const), v: t.string() }), turn: t.object({}) },
+    init: () => ({ cells: { a: "", b: "" }, meta: { turn: 0 } }),
+    // Returns references into the state (no copies): the engine must not let later changes
+    // mutate what it remembers each player saw.
+    view: (s, p) => (p.role === "host" ? s : { cells: s.cells, turn: s.meta.turn }),
+    on: {
+      set: ({ room, msg }) => void (room.state.cells[msg.cell] = msg.v),
+      turn: ({ room }) => void room.state.meta.turn++,
+    },
+  });
+  const clock = new FakeClock(0);
+  const inst = createRoomInstance(board, { id: "B", clock });
+  const [host, ann] = [fakeSocket(), fakeSocket()];
+  inst.connect(host, { name: "Host" });
+  clock.advance(100);
+  inst.connect(ann, { name: "Ann" });
+  const say = (s: FakeSocket, type: string, data: unknown = {}) => inst.receive(s, JSON.stringify({ t: "msg", type, data }));
+  for (let i = 0; i < 3; i++) {
+    say(ann, "set", { cell: "a", v: `x${i}` });
+    say(host, "turn");
+    say(host, "set", { cell: "b", v: `y${i}` });
+  }
+  clock.advance(100);
+  expect(view(host)).toEqual(JSON.parse(JSON.stringify(inst.room.state)));
+  expect(view(ann)).toEqual({ cells: { a: "x2", b: "y2" }, turn: 3 });
 });

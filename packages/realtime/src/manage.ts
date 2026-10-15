@@ -5,6 +5,7 @@
 
 import { errors, t, type Context, type ManageAction, type ManageSection, type ManageStat, type ManageValue } from "miujs";
 import type { Clock } from "./clock.ts";
+import type { PersistStats } from "./persist.ts";
 import type { LocalRooms } from "./registry.ts";
 import type { RoomInstance } from "./room.ts";
 import { parseShardId } from "./shard.ts";
@@ -97,6 +98,26 @@ export function roomsManage(d: RoomsManageDeps): ManageSection[] {
     return String(((await res.json()) as { message?: string }).message ?? "Done.");
   }
 
+  /** Persistence stats of one room (Durable Objects; in-process rooms are not persisted). */
+  async function storage(ctx: Context, type: string, id: string): Promise<string> {
+    check(type, id);
+    const label = `${type}:${id}`;
+    const ns = d.namespace(ctx);
+    if (!ns) return `Room ${label} runs in this process: its state lives in memory and is not persisted.`;
+    const url = `https://miu-room/_miu/stats?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`;
+    const res = await ns.get(ns.idFromName(label)).fetch(new Request(url));
+    if (!res.ok) {
+      throw errors.custom({ code: "MIU_E_ROOM_ADMIN_FAILED", status: 502, message: `The Durable Object for ${label} answered ${res.status}`, fix: "Pass the same rooms to createRoomDurableObject() and rooms({ rooms })." });
+    }
+    const body = (await res.json()) as { room: { players: number } | null; persist: PersistStats; persistMs: number; maxSnapshotBytes: number };
+    const p = body.persist;
+    const n = (x: number) => x.toLocaleString("en-US");
+    const when = p.lastAt === null ? "never" : new Date(p.lastAt).toISOString();
+    let msg = `Room ${label}${body.room ? ` (${n(body.room.players)} members)` : " (not loaded)"}: last persisted ${n(p.lastBytes)} bytes in ${n(p.lastKeys)} keys at ${when}; ${n(p.writes)} writes (${n(p.bytesWritten)} bytes), ${n(p.skipped)} unchanged, ${n(p.failures)} failures. Writes are coalesced to one per ${n(body.persistMs)} ms; limit ${n(body.maxSnapshotBytes)} bytes.`;
+    if (p.lastError) msg += ` Last error ${p.lastError.code}: ${p.lastError.message}`;
+    return msg;
+  }
+
   /** `type:id` from a list row id (the id itself may contain ":shardN"). */
   function split(rowId: unknown): { type: string; id: string } {
     const s = String(rowId ?? "");
@@ -156,6 +177,13 @@ export function roomsManage(d: RoomsManageDeps): ManageSection[] {
       input: t.object({ ...where, ...closeFields }),
       danger: true,
       run: (i, ctx) => operate(ctx, i.type, i.id, { op: "close", reason: i.reason }),
+    },
+    {
+      name: "roomStorage",
+      title: "Room storage",
+      description: "How big a Durable Object room's persisted snapshot is, how often it is written, and whether writes fail.",
+      input: t.object(where),
+      run: (i, ctx) => storage(ctx, i.type, i.id),
     },
   ];
 

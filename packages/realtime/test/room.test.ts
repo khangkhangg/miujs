@@ -74,12 +74,14 @@ test("join sends welcome then full state; first joiner is host", () => {
   ]);
 });
 
-test("onJoin changes are broadcast to existing players as a patch", () => {
-  const { inst } = setup();
+test("onJoin changes are broadcast to existing players as a patch (after the presence window)", () => {
+  const { inst, clock } = setup();
   const a = fakeSocket();
   inst.connect(a, { name: "Ann" });
   a.take();
   inst.connect(fakeSocket(), { name: "Bob" });
+  expect(a.take()).toEqual([]); // a join right after another waits for the 50 ms presence window
+  clock.advance(50);
   expect(a.take()).toEqual([{ t: "patch", ops: [{ op: "replace", path: "/names", value: ["Ann", "Bob"] }] }]);
 });
 
@@ -93,11 +95,12 @@ test("a join frame works when the query had no name", () => {
 });
 
 test("typed messages run handlers and broadcast a minimal patch", () => {
-  const { inst } = setup();
+  const { inst, clock } = setup();
   const a = fakeSocket();
   const b = fakeSocket();
   inst.connect(a, { name: "Ann" });
   inst.connect(b, { name: "Bob" });
+  clock.advance(50);
   a.take();
   b.take();
   send(inst, a, "inc", { by: 2 });
@@ -118,6 +121,7 @@ test("send() and broadcast() deliver events", () => {
   const b = fakeSocket();
   inst.connect(a, { name: "Ann" });
   inst.connect(b, { name: "Bob" });
+  clock.advance(50);
   a.take();
   b.take();
   send(inst, b, "ping");
@@ -238,6 +242,7 @@ test("after the grace period the player is removed and onLeave runs", () => {
   inst.connect(a, { name: "Ann" });
   inst.connect(b, { name: "Bob" });
   const token = b.last("welcome").resumeToken;
+  clock.advance(50);
   a.take();
   inst.disconnect(b);
   clock.advance(30_000);
@@ -413,4 +418,35 @@ test("snapshot() and restore() round-trip players, tokens and state", () => {
   const a2 = fakeSocket();
   copy.connect(a2, { resume: token });
   expect(a2.last("welcome")).toMatchObject({ resumed: true, me: { name: "Ann", role: "host" } });
+});
+
+test("state checks after a handler cover nested, removed and replaced fields", () => {
+  const shaped = defineRoom("shaped", {
+    state: t.object({ n: t.number(), opt: t.optional(t.string()), scores: t.record(t.object({ s: t.number() })) }),
+    client: { nested: t.object({}), drop: t.object({}), dropOpt: t.object({}), root: t.object({}), ok: t.object({}) },
+    init: () => ({ n: 0, opt: "x", scores: { a: { s: 1 } } }),
+    on: {
+      nested: ({ room }) => void ((room.state.scores.a as any).s = "nope"),
+      drop: ({ room }) => void delete (room.state as any).n,
+      dropOpt: ({ room }) => void delete room.state.opt,
+      root: ({ room }) => void (room.state = { n: "bad" } as any),
+      ok: ({ room }) => void (room.state.scores.b = { s: 2 }),
+    },
+  });
+  const errs: unknown[] = [];
+  const inst = createRoomInstance(shaped, { id: "S", clock: new FakeClock(0), hooks: { onError: (e) => errs.push(e) } });
+  const a = fakeSocket();
+  inst.connect(a, { name: "Ann" });
+  const run = (type: string) => {
+    inst.receive(a, JSON.stringify({ t: "msg", type, data: {} }));
+    return a.last();
+  };
+  expect(run("nested")).toMatchObject({ code: "MIU_E_ROOM_STATE_INVALID", message: expect.stringContaining("scores.a.s") });
+  expect(run("drop")).toMatchObject({ code: "MIU_E_ROOM_STATE_INVALID", message: expect.stringContaining("n is required") });
+  expect(run("root")).toMatchObject({ code: "MIU_E_ROOM_STATE_INVALID" });
+  expect(inst.room.state).toEqual({ n: 0, opt: "x", scores: { a: { s: 1 } } });
+  expect(run("dropOpt")).toEqual({ t: "patch", ops: [{ op: "remove", path: "/opt" }] });
+  expect(run("ok").t).toBe("patch");
+  expect(inst.room.state.scores).toEqual({ a: { s: 1 }, b: { s: 2 } });
+  expect(errs).toHaveLength(3);
 });

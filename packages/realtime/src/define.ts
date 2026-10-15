@@ -121,6 +121,15 @@ export interface RoomDefinition<S, X, C extends Record<string, Schema<any>>> {
   maxPlayers?: number;
   /** How long a disconnected player keeps their seat. Default 30 000 ms. */
   reconnectMs?: number;
+  /**
+   * Coalesce presence: the state changes made by joins and leaves (`onJoin`, `onLeave`, kicks,
+   * reconnect-grace expiry) reach the other members as at most one patch per window of this many
+   * ms (the first one in a quiet period goes out at once). Seating N players then costs O(N)
+   * frames per window instead of a patch to everyone per join (O(N²)). A joiner's own first
+   * `state` always includes their join. Messages, timers and events flush pending changes first,
+   * so ordering is kept. Default 50; 0 patches everyone on every join and leave.
+   */
+  presenceBatchMs?: number;
 }
 
 export interface RoomType<S = any, X = any, C extends Record<string, Schema<any>> = Record<string, Schema<any>>> {

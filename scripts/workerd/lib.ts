@@ -19,11 +19,23 @@ export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 // tools
 
 /** Node 20+ for wrangler: $NODE, `node` on PATH, or a portable install under %LOCALAPPDATA%\nodejs. */
+/** True for a Node.js binary, false for Bun's `node` shim (or anything that does not run). */
+export function isRealNode(exe: string): boolean {
+  if (/[\\/]bun-node-[^\\/]*[\\/]/.test(exe)) return false;
+  const r = spawnSync(exe, ["-p", "process.versions.bun ? 'bun' : 'node'"], { encoding: "utf8" });
+  return r.status === 0 && r.stdout.trim() === "node";
+}
+
 export function nodeBin(): string {
-  if (process.env.NODE && existsSync(process.env.NODE)) return process.env.NODE;
-  const which = spawnSync(process.platform === "win32" ? "where" : "which", ["node"], { encoding: "utf8" });
-  const found = which.status === 0 ? which.stdout.split(/\r?\n/).find(Boolean) : undefined;
-  if (found) return found.trim();
+  // `bun run <script>` sets NODE and puts Bun's own `node` shim (…/bun-node-<hash>/node) first on PATH. Wrangler
+  // on Bun cannot reach its proxy worker ("getaddrinfo ENOTFOUND dummy" in ProxyController) and
+  // never serves a request, so only accept a binary that really is Node.
+  if (process.env.NODE && existsSync(process.env.NODE) && isRealNode(process.env.NODE)) return process.env.NODE;
+  const which = spawnSync(process.platform === "win32" ? "where" : "which", ["-a", "node"].slice(process.platform === "win32" ? 1 : 0), { encoding: "utf8" });
+  for (const line of which.status === 0 ? which.stdout.split(/\r?\n/) : []) {
+    const exe = line.trim();
+    if (exe && isRealNode(exe)) return exe;
+  }
   const local = process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "nodejs") : "";
   if (local && existsSync(local)) {
     for (const d of readdirSync(local).sort().reverse()) {

@@ -75,6 +75,11 @@ Limits per connection (the room may change them):
 Ordering guarantee: state changes made by the server before it sends an `event` arrive (as a
 `patch`) before that event.
 
+Joins and leaves: your own first `state` already includes your join. Changes caused by *other*
+members joining or leaving may arrive batched, one `patch` per short window (50 ms by default),
+so a join storm costs each member a few patches instead of one per join. Nothing changes for the
+client: apply patches in order as usual.
+
 **Per-player views.** A room may define `view(state, player)`. Then each client's `state` and
 `patch` frames describe *its own* view (e.g. only your hand, or only nearby units), and patches
 are diffed against what that client last saw. Nothing changes for the client: apply them as usual.

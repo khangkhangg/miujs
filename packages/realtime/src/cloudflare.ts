@@ -3,19 +3,25 @@
 // reconnect-grace deadlines are persisted to DO storage, and a DO alarm wakes the object for the
 // earliest timer, so timers survive hibernation and eviction.
 //
+// Persistence is coalesced: the first change in a quiet period is written at once, later ones at
+// most once per `persistMs` (a pending write keeps the object from hibernating). Timer changes,
+// alarms, the last socket closing and operator actions are written at once. Snapshots are split
+// by section and into chunks (persist.ts), and a failed write is logged and retried, never dropped.
+//
 // Sharded room types (`shardedRoom`): the object "type:id" is the coordinator (routes joins,
 // aggregates); each shard is its own object "type:id:shardN".
 //
 //   export const MiuRooms = createRoomDurableObject([quiz]);   // wrangler: binding MIU_ROOMS
 
-import { errors, type MiuSocket } from "miujs";
-import { systemClock, type Clock } from "./clock.ts";
+import { errors, isMiuError, type MiuSocket } from "miujs";
+import { setTimerRef, systemClock, type Clock } from "./clock.ts";
 import type { RoomStorage, RoomType } from "./define.ts";
 import { jsonEqual } from "./diff.ts";
 import { joinParamsFrom, ROOM_ID_RE, type DurableObjectNamespaceLike } from "./plugin.ts";
 import { parseQueryObject } from "./query.ts";
 import { applyRoomOp, type RoomOp } from "./manage.ts";
-import { RoomInstance, type Encoding, type RoomSnapshot } from "./room.ts";
+import { MAX_SNAPSHOT_BYTES, SnapshotStore } from "./persist.ts";
+import { RoomInstance, type Encoding } from "./room.ts";
 import { parseShardId, pickShard, shardConfig, shardId, shardTokenPrefix, type ShardConfig, type ShardInfo } from "./shard.ts";
 
 /** The parts of Cloudflare's hibernatable WebSocket we use. */
@@ -46,6 +52,16 @@ export interface RoomDurableObjectOptions {
   webSocketPair?: () => readonly [unknown, CfWebSocket];
   /** This namespace's binding name, used by shards to reach their coordinator. Default `MIU_ROOMS`. */
   binding?: string;
+  /**
+   * Coalesce snapshot writes: at most one per this many ms (the first change in a quiet period is
+   * written at once; timer changes, alarms and the last socket closing are always written at once).
+   * A crash can lose at most this window. Default 1000; 0 writes after every event.
+   */
+  persistMs?: number;
+  /** Refuse (and log MIU_E_ROOM_STATE_TOO_LARGE) snapshots bigger than this. Default 16 MiB. */
+  maxSnapshotBytes?: number;
+  /** Persistence failures (MiuErrors with a fix) and other background errors. Default console.error. */
+  onError?(err: unknown, where: string): void;
 }
 
 interface Attachment {
@@ -69,7 +85,6 @@ interface Coordinator {
   hasAggregate?: boolean;
 }
 
-const SNAPSHOT_KEY = "miu:room";
 const COORD_KEY = "miu:shards";
 /** Header the Worker sets when forwarding a join to a shard object. */
 export const SHARD_HEADER = "x-miu-shard";
@@ -101,6 +116,9 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
   const known = [...types.keys()];
   const clock = opts.clock ?? systemClock;
   const binding = opts.binding ?? "MIU_ROOMS";
+  const persistMs = opts.persistMs ?? 1_000;
+  const maxSnapshotBytes = opts.maxSnapshotBytes ?? MAX_SNAPSHOT_BYTES;
+  const onError = opts.onError ?? ((err: unknown, where: string) => console.error(`[miujs/realtime] ${where}:`, err));
   const makePair =
     opts.webSocketPair ??
     (() => {
@@ -121,10 +139,20 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
     private reported = "";
     private reporting: Promise<void> | null = null;
     private applied: { value: unknown } | null = null;
+    private store: SnapshotStore;
+    /** Coalesced snapshot writes: trailing timer, last write time, the write chain. */
+    private saveTimer: unknown = null;
+    private lastSaveAt = -Infinity;
+    private saving: Promise<void> = Promise.resolve();
+    /** `timersVersion` of the room when its snapshot was last written. */
+    private savedTimers = -1;
+    /** Events in progress (their end persists; `onChange` only persists outside of them). */
+    private busy = 0;
 
     constructor(state: DurableObjectStateLike, env: unknown) {
       this.ctx = state;
       this.env = env as Record<string, unknown> | undefined;
+      this.store = new SnapshotStore(state.storage, maxSnapshotBytes);
     }
 
     async fetch(req: Request): Promise<Response> {
@@ -153,7 +181,12 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
         if (join.enc === "msgpack") att.enc = "msgpack";
         server.serializeAttachment(att);
         const sock = this.wrap(server, att);
-        inst.connect(sock, join);
+        this.busy++;
+        try {
+          inst.connect(sock, join);
+        } finally {
+          this.busy--;
+        }
         this.sync(server, sock, att);
         await this.persist();
         return new Response(null, { status: 101, webSocket: client } as ResponseInit);
@@ -169,7 +202,12 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
       const inst = await this.load(att.type, att.id, true);
       if (!inst) return;
       const sock = this.wrap(ws, att);
-      await inst.receive(sock, message);
+      this.busy++;
+      try {
+        await inst.receive(sock, message);
+      } finally {
+        this.busy--;
+      }
       this.sync(ws, sock, att);
       await this.persist();
     }
@@ -180,8 +218,14 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
       const inst = await this.load(att.type, att.id, false);
       const sock = this.sockets.get(ws);
       this.sockets.delete(ws);
-      if (inst && sock) inst.disconnect(sock);
-      await this.persist();
+      this.busy++;
+      try {
+        if (inst && sock) inst.disconnect(sock);
+      } finally {
+        this.busy--;
+      }
+      // The last socket is gone: the object may hibernate or be evicted soon, so write now.
+      await this.persist(!inst || inst.connections === 0);
     }
 
     async webSocketError(ws: CfWebSocket, _err: unknown): Promise<void> {
@@ -192,8 +236,13 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
     async alarm(): Promise<void> {
       const inst = await this.load("", "", false);
       if (!inst) return;
-      await inst.runDue();
-      await this.persist();
+      this.busy++;
+      try {
+        await inst.runDue();
+      } finally {
+        this.busy--;
+      }
+      await this.persist(true);
     }
 
     // ---- internal endpoints (Worker → object, shard ↔ coordinator) ----------------------
@@ -214,7 +263,7 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
             await this.ctx.storage.put(COORD_KEY, c);
           } else {
             await this.load(type, id, true, body.data ?? undefined);
-            await this.persist();
+            await this.persist(true);
           }
           return Response.json({ type, id });
         }
@@ -230,8 +279,14 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
           const inst = await this.load(type, id, false);
           if (!inst && op.op !== "close") return errors.custom({ code: "MIU_E_ROOM_NOT_FOUND", status: 404, message: "No active room here", fix: "Check the room type and id." }).toResponse();
           const message = applyRoomOp(inst, `${type}:${id}`, op);
-          await this.persist();
+          await this.persist(true);
           return Response.json({ message });
+        }
+        case "/_miu/stats": {
+          // rooms().manage() "Room storage": what this room's snapshot costs and whether writes fail.
+          const inst = def ? await this.load(type, id, false) : null;
+          await this.saving;
+          return Response.json({ room: inst ? inst.info() : null, persist: this.store.stats, persistMs, maxSnapshotBytes });
         }
         case "/_miu/shard/assign": {
           if (!cfg) break;
@@ -357,7 +412,8 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
     }
 
     private async doLoad(type: string, id: string, create: boolean, data?: unknown): Promise<RoomInstance | null> {
-      const snap = (await this.ctx.storage.get(SNAPSHOT_KEY)) as RoomSnapshot | undefined;
+      await this.saving; // a close may still be deleting the old snapshot
+      const snap = (await this.store.load()) ?? undefined;
       const def = types.get(snap?.type ?? type);
       if (!def || (!snap && !create)) return null;
       const instId = snap?.id ?? id;
@@ -383,12 +439,19 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
         env: this.env ?? {},
         tokenPrefix: sh ? shardTokenPrefix(sh.shard) : undefined,
         hooks: {
-          onChange: () => void this.persist().catch(() => {}),
+          // State changed outside an event (a coalesced presence flush): persist it too.
+          onChange: () => {
+            if (this.busy === 0) void this.persist();
+          },
           onEmpty: () => {
             if (inst.connections === 0) inst.close("room empty");
           },
           onClose: () => {
-            void this.ctx.storage.delete(SNAPSHOT_KEY).catch(() => {});
+            if (this.saveTimer !== null) clock.clearTimeout(this.saveTimer);
+            this.saveTimer = null;
+            this.savedTimers = -1;
+            // Chained after any write in flight, so that write cannot land after the delete.
+            this.saving = this.saving.then(() => this.store.wipe()).catch((err) => onError(err, `${inst.type}:${inst.id} close`));
             this.armed = null;
             void this.ctx.storage.deleteAlarm?.().catch(() => {});
           },
@@ -405,19 +468,71 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
       return inst;
     }
 
-    private async persist(): Promise<void> {
+    /**
+     * After an event: arm the alarm for the earliest timer, write the snapshot (coalesced, unless
+     * `urgent` or timers or the alarm changed), and report to the coordinator (shards).
+     */
+    private async persist(urgent = false): Promise<void> {
       const inst = this.inst;
       if (!inst || inst.isClosed) return;
-      await this.ctx.storage.put(SNAPSHOT_KEY, inst.snapshot());
       // The snapshot holds pending timers and grace deadlines; the alarm wakes us for the earliest.
       const due = inst.nextDue();
       if (due !== this.armed) {
         this.armed = due;
+        urgent = true;
         const s = this.ctx.storage;
         if (due === null) await s.deleteAlarm?.();
         else await s.setAlarm?.(due);
       }
+      if (inst.timersVersion !== this.savedTimers) urgent = true;
+      const now = clock.now();
+      if (urgent || !(persistMs > 0) || (this.saveTimer === null && now - this.lastSaveAt >= persistMs)) await this.writeNow();
+      else this.saveLater(this.lastSaveAt + persistMs - now);
       await this.report(inst).catch(() => {});
+    }
+
+    private saveLater(ms: number): void {
+      if (this.saveTimer !== null) return;
+      this.saveTimer = clock.setTimeout(() => {
+        this.saveTimer = null;
+        void this.writeNow();
+      }, Math.max(0, ms));
+      setTimerRef(this.saveTimer, false);
+    }
+
+    /** Write the snapshot now, after any write in flight. Never rejects: failures are logged and retried. */
+    private writeNow(): Promise<void> {
+      if (this.saveTimer !== null) clock.clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+      this.lastSaveAt = clock.now();
+      const run = this.saving.then(() => this.write());
+      this.saving = run;
+      return run;
+    }
+
+    private async write(): Promise<void> {
+      const inst = this.inst;
+      if (!inst || inst.isClosed) return;
+      const label = `${inst.type}:${inst.id}`;
+      const timers = inst.timersVersion;
+      try {
+        await this.store.write(inst.snapshot(false), label, clock.now());
+        this.savedTimers = timers;
+      } catch (err) {
+        const e = isMiuError(err)
+          ? err
+          : errors.custom({
+              code: "MIU_E_ROOM_PERSIST_FAILED",
+              status: 500,
+              message: `Could not persist room ${label}: ${err instanceof Error ? err.message : String(err)}`,
+              fix: "The room keeps running from memory and retries the write. Check Durable Object storage limits; a room secret holding non-JSON values (Map, Date, class instances) is stored as one value, so keep it plain JSON (then it is split across keys) or small.",
+            });
+        const st = this.store.stats;
+        st.failures++;
+        st.lastError = { code: e.code, message: e.message, at: clock.now() };
+        onError(e, `${label} persist`);
+        this.saveLater(persistMs > 0 ? persistMs : 1_000);
+      }
     }
   };
 }

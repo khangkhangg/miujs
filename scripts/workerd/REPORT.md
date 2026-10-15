@@ -24,7 +24,7 @@ Results go to `scripts/workerd/.out/` (`results.json`, each app's generated `wra
 
 On Windows, workerd needs the Visual C++ runtime. If it is missing, `lib.ts` copies Microsoft's DLLs from an installed Office/ClickToRun next to `workerd.exe`, inside `scripts/workerd/node_modules` only. There is no tour example in the repo, so `@miujs/tour` is not covered.
 
-## Results: 69 passed, 0 failed, 0 skipped
+## Results: 70 passed, 0 failed, 0 skipped
 | App | Scenarios | Result |
 |---|---|---|
 | all 7 | config generation; `wrangler dev --local` starts | pass |
@@ -42,9 +42,10 @@ On Windows, workerd needs the Visual C++ runtime. If it is missing, `lib.ts` cop
 | Core bundle < 60 KB gzip | **16.2 KB** (44.7 KB minified) | +session+auth+cache 45.0; api 59.1; arena 59.7; quiz 39.5; kitchen 62.2; **crm 168.9** |
 | Cold start (core+auth+session+cache) | ready p50 1,331 ms; **first request p50 29.8 ms** (max 31.3); warm p50 2.9 ms | core only: first 14.4 / warm 1.8 ms; api with D1 migrations: first 28.3 ms |
 | D1 CRUD with session | **p50 5.9 / p95 8.0 / p99 9.3 ms** | 600 sequential requests |
-| Quiz broadcast, 1,000 players | host action **p50 42 / p95 61 ms**; DO alarm p50 128 / p95 139 ms after the deadline | after the join backlog drained; Bun: p95 27 ms |
-| Seating 1,000 players | 198 s, 501,500 frames | server cost ~1 ms per join; the rest is delivery through the local proxy to one client process (Bun: 61 s) |
-| Memory | workerd RSS 153 → **1,387 MB** with 1,000 WebSockets | whole local runtime, not one isolate |
+| Quiz broadcast, 1,000 players | host action **p50 25.7 / p95 36.8 ms** (was 42 / 61); DO alarm p50 128 / p95 144 ms after the deadline | presence batched, players get a per-player view |
+| Seating 1,000 players | **2.6 s, 2,000 frames** (was 198 s, 501,500 frames) | join/leave changes reach other members as one patch per 50 ms window |
+| Memory | workerd RSS 153 → **1,295 MB** with 1,000 WebSockets (was 1,387) | whole local runtime, not one isolate |
+| Room DO snapshot writes, 1,000 players | **13 writes, 1.2 MB** (was 2,002 full writes, 301.6 MB) | coalesced per second, sections rewritten only when changed, chunked under the value limit; measured on Bun with the real DO class and a counting storage |
 | PBKDF2 600k | register 257 ms, login 246 ms (wall) | CPU limits are not enforced locally |
 
 ## Bugs fixed
@@ -60,11 +61,14 @@ On Windows, workerd needs the Visual C++ runtime. If it is missing, `lib.ts` cop
    - `MIU_GAME_SECRET` listed as a secret
    - `cloudflare:workers` stand-ins so Workflow/DO entry files load
 
+## Fixed after the first run
+- **Quiz join fan-out was O(N²) frames.** Presence changes are batched (`presenceBatchMs`, default 50) and quiz players get their own view instead of the roster.
+- **The room DO wrote its full snapshot on every message** and failed silently past the 2 MB value limit (near 9k players). Writes are now coalesced (`persistMs`, default 1000), split into sections that are rewritten only when changed and chunked under the value limit. Failures are logged as `MIU_E_ROOM_PERSIST_FAILED` and retried, and snapshots over `maxSnapshotBytes` raise `MIU_E_ROOM_STATE_TOO_LARGE`. At 10k players: 3.04 MB in 53 keys, 0 failures.
+- **`createCloudflareWorkflow` without `base` failed on workerd.** It now loads `WorkflowEntrypoint` from `cloudflare:workers` on workerd.
+- **The harness ran wrangler on Bun's `node` shim under `bun run`**, which broke wrangler's local proxy (`getaddrinfo ENOTFOUND dummy`). `nodeBin()` now rejects Bun's shim.
+
 ## Not fixed
-- Quiz join fan-out is O(N²) frames.
-- The room DO persists its full snapshot per message (219 KB at 1k players, 1.1 MB at 5k; the 2 MB limit is near 9k, where persist fails silently).
-- PBKDF2 at 600k iterations costs ~250 ms CPU per hash.
-- `createCloudflareWorkflow` without `base` fails on workerd ("worker is not an actor").
+- PBKDF2 at 600k iterations costs ~250 ms CPU per hash. `@miujs/auth` now warns on workerd and declares `[limits] cpu_ms` for `miu deploy cloudflare`; on the Free plan (10 ms) use fewer iterations, passkeys or OAuth.
 
 ## Needs a real Cloudflare account
 - Edge bot score / verified bots / JA3-JA4 / geo (locally a placeholder: score 99, US; overridden per request with `MF-CF-Blob`).
