@@ -21,6 +21,8 @@ export interface ListQuery {
   /** Default 50, capped at 1000. */
   limit?: number;
   offset?: number;
+  /** Count all matches for `total` (default true). Pass false when only the page is needed: total is -1. */
+  count?: boolean;
 }
 
 export interface ListResult<T> {

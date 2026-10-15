@@ -139,9 +139,9 @@ export function sqlRepository<T extends Doc>(
       const offset = Math.max(0, Math.floor(query.offset ?? 0)) || 0;
       const [rows, count] = await Promise.all([
         exec.all(`SELECT ${COLS} FROM ${table}${w.sql}${order} LIMIT ? OFFSET ?`, [...w.params, limit, offset]),
-        exec.first(`SELECT COUNT(*) AS n FROM ${table}${w.sql}`, w.params),
+        query.count === false ? undefined : exec.first(`SELECT COUNT(*) AS n FROM ${table}${w.sql}`, w.params),
       ]);
-      return { items: rows.map((r) => toDoc<T>(r)), total: Number(count?.n ?? 0) };
+      return { items: rows.map((r) => toDoc<T>(r)), total: query.count === false ? -1 : Number(count?.n ?? 0) };
     },
 
     async get(id) {

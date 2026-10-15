@@ -120,12 +120,12 @@ class RpcError extends Error {
 export function mcp(opts: McpOptions = {}): Middleware {
   const path = opts.path ?? "/mcp";
   const forward = (opts.forwardHeaders ?? ["authorization", "cookie", "x-api-key"]).map((h) => h.toLowerCase());
-  let cache: { app: AppLike; count: number; tools: ToolBinding[] } | undefined;
-  const getTools = (app: AppLike) => {
+  let cache: { app: AppLike; count: number; tools: ToolBinding[]; listJson?: string } | undefined;
+  const getCache = (app: AppLike) => {
     if (!cache || cache.app !== app || cache.count !== app.routes.length) {
       cache = { app, count: app.routes.length, tools: bindings(app) };
     }
-    return cache.tools;
+    return cache;
   };
 
   return async (c, next) => {
@@ -154,8 +154,16 @@ export function mcp(opts: McpOptions = {}): Middleware {
     }
     if (msg.id === undefined) return c.newResponse(null, 202); // notification
 
+    const cached = getCache(c.app);
+    if (msg.method === "tools/list") {
+      // The tool list only changes when routes do: serialize it once, not on every call.
+      cached.listJson ??= JSON.stringify({ tools: cached.tools.map((b) => b.tool) });
+      return c.newResponse(`{"jsonrpc":"2.0","id":${JSON.stringify(msg.id)},"result":${cached.listJson}}`, 200, {
+        "content-type": "application/json; charset=utf-8",
+      });
+    }
     try {
-      const result = await dispatch(c, msg, getTools(c.app), forward, opts);
+      const result = await dispatch(c, msg, cached.tools, forward, opts);
       return c.json({ jsonrpc: "2.0", id: msg.id, result });
     } catch (e) {
       if (e instanceof RpcError) return c.json(rpcError(msg.id, e.code, e.message));

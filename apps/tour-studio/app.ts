@@ -66,8 +66,7 @@ export async function openData(
 ): Promise<Data> {
   mkdirSync(dataDir, { recursive: true });
   const db = await openDatabase(`${dataDir}/app.sqlite`);
-  // openDatabase() enables WAL but keeps SQLite's default synchronous=FULL (an fsync per commit); NORMAL is the
-  // usual WAL setting (durable across app crashes, may lose the last commits on power loss). Opt-in here.
+  // openDatabase() uses WAL + synchronous=NORMAL; SQLITE_SYNCHRONOUS=FULL opts back into an fsync per commit.
   if (opts.synchronous) db.exec(`PRAGMA synchronous = ${opts.synchronous}`);
   return {
     db,

@@ -41,6 +41,12 @@ export interface TourKitOptions {
   loginPath?: string;
   /** CSP `frame-ancestors` for the public viewer, e.g. "*" to allow embedding anywhere. Default "'self'". */
   frameAncestors?: string;
+  /**
+   * How long a public tour bundle may be served from this instance's cache (ms, default 5000). Edits made
+   * through the kit invalidate it immediately; the TTL only bounds staleness for writes that bypass the kit
+   * (e.g. editing scenes in the admin) or happen on another instance. 0 disables the cache.
+   */
+  bundleCacheMs?: number;
 }
 
 export const DEFAULT_VIEW: TourView = { yaw: 0, pitch: 0, fov: 75 };
@@ -57,7 +63,17 @@ const TAGS = ["tours"];
  * All state lives in the given repositories and blob store, so it scales out with their drivers.
  */
 export function tourKit(opts: TourKitOptions): Miu {
-  const { tours, scenes, hotspots, files } = opts;
+  const { tours, files } = opts;
+  // Scene/hotspot writes go through these wrappers so the owning tour's updatedAt (the public bundle's
+  // version) moves and this instance's cached bundle is dropped.
+  const bundleCache = new Map<string, { version: string | undefined; at: number; body: string; etag: string }>();
+  const bundleCacheMs = opts.bundleCacheMs ?? 5000;
+  const touch = async (tourId: string) => {
+    bundleCache.delete(tourId);
+    await tours.update(tourId, {});
+  };
+  const scenes = touching(opts.scenes, touch);
+  const hotspots = touching(opts.hotspots, touch);
   const base = normalizeBase(opts.basePath);
   const maxBytes = opts.maxUploadBytes ?? DEFAULT_MAX_BYTES;
   const maxScenes = opts.maxScenes ?? 200;
@@ -105,9 +121,9 @@ export function tourKit(opts: TourKitOptions): Miu {
     return { hotspot, tour: await tourFor(c, hotspot.tourId) };
   };
 
-  const scenesOf = async (tourId: string) => (await scenes.list({ where: { tourId }, sort: "order", limit: MAX_LIMIT })).items;
-  const hotspotsOf = async (tourId: string) => (await hotspots.list({ where: { tourId }, sort: "createdAt", limit: MAX_LIMIT })).items;
-  const bySlug = async (slug: string) => (await tours.list({ where: { slug }, limit: 1 })).items[0];
+  const scenesOf = async (tourId: string) => (await scenes.list({ where: { tourId }, sort: "order", limit: MAX_LIMIT, count: false })).items;
+  const hotspotsOf = async (tourId: string) => (await hotspots.list({ where: { tourId }, sort: "createdAt", limit: MAX_LIMIT, count: false })).items;
+  const bySlug = async (slug: string) => (await tours.list({ where: { slug }, limit: 1, count: false })).items[0];
 
   const slugTaken = (slug: string) => new HttpError(409, `The slug "${slug}" is taken`, { code: "slug_taken" });
 
@@ -432,8 +448,16 @@ export function tourKit(opts: TourKitOptions): Miu {
   }, async (c) => {
     const tour = await bySlug(c.params.slug);
     if (!tour || tour.status !== "published") throw new HttpError(404, "No published tour with that slug", { code: "tour_not_found" });
-    const body = JSON.stringify(await publicBundle(tour));
-    const etag = `"${await shortHash(body)}"`;
+    let hit = bundleCache.get(tour.id);
+    if (!hit || hit.version !== tour.updatedAt || Date.now() - hit.at > bundleCacheMs) {
+      const body = JSON.stringify(await publicBundle(tour));
+      hit = { version: tour.updatedAt, at: Date.now(), body, etag: `"${await shortHash(body)}"` };
+      if (bundleCacheMs > 0) {
+        if (bundleCache.size >= 500) bundleCache.delete(bundleCache.keys().next().value!);
+        bundleCache.set(tour.id, hit);
+      }
+    }
+    const { body, etag } = hit;
     const headers = { etag, "cache-control": "public, max-age=60", vary: "accept-encoding" };
     if (etagMatch(c.req.headers.get("if-none-match"), etag)) return new Response(null, { status: 304, headers });
     return new Response(body, { headers: { ...headers, "content-type": "application/json; charset=utf-8" } });
@@ -521,4 +545,28 @@ function etagMatch(header: string | null, etag: string): boolean {
     const x = v.trim();
     return x === "*" || x.replace(/^W\//, "") === bare;
   });
+}
+
+/** Delegating repository that calls `touch(tourId)` after every write, for bundle versioning. */
+function touching<T extends { id: string; tourId: string }>(repo: Repository<T>, touch: (tourId: string) => Promise<void>): Repository<T> {
+  return {
+    list: (q) => repo.list(q),
+    get: (id) => repo.get(id),
+    async create(data, o) {
+      const doc = await repo.create(data, o);
+      await touch(doc.tourId);
+      return doc;
+    },
+    async update(id, patch, o) {
+      const doc = await repo.update(id, patch, o);
+      if (doc) await touch(doc.tourId);
+      return doc;
+    },
+    async delete(id) {
+      const doc = await repo.get(id);
+      const ok = await repo.delete(id);
+      if (ok && doc) await touch(doc.tourId);
+      return ok;
+    },
+  };
 }

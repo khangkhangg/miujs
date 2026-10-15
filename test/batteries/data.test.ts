@@ -89,6 +89,14 @@ export function repositoryContract(name: string, make: () => Repository<Scene> |
       expect(await repo.update("missing", { title: "Z" }, { unique: ["title"] })).toBeUndefined();
     });
 
+    test("list({ count: false }) skips counting and reports total as -1", async () => {
+      const repo = await make();
+      for (let i = 0; i < 3; i++) await repo.create({ title: `s${i}`, tourId: "t", order: i });
+      const r = await repo.list({ where: { tourId: "t" }, sort: "order", limit: 2, count: false });
+      expect(r.items.map((s) => s.title)).toEqual(["s0", "s1"]);
+      expect(r.total).toBe(-1);
+    });
+
     test("returned objects are copies (mutating them does not change stored data)", async () => {
       const repo = await make();
       const s = await repo.create({ title: "A", tourId: "t", order: 0 });

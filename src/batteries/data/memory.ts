@@ -50,7 +50,8 @@ export function memoryRepository<T extends Doc>(opts: MemoryRepositoryOptions<T>
         items.sort((a, b) => compare((a as Record<string, unknown>)[field], (b as Record<string, unknown>)[field]) * (desc ? -1 : 1));
       }
       const offset = Math.max(0, query.offset ?? 0);
-      return { total: items.length, items: items.slice(offset, offset + clampLimit(query.limit)).map(copy) };
+      const page = items.slice(offset, offset + clampLimit(query.limit)).map(copy);
+      return { total: query.count === false ? -1 : items.length, items: page };
     },
     async get(id) {
       const d = docs.get(id);
