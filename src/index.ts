@@ -39,3 +39,7 @@ export { redisStore, toRedisLike, fromIoredis, fromNodeRedis, redisScript } from
 export type { RedisLike, IoredisLike, NodeRedisLike, AnyRedisClient, RedisScript, RedisStoreOptions } from "./batteries/store/redis.ts";
 export { redisQueueDriver } from "./batteries/queue/redis.ts";
 export type { RedisQueueOptions } from "./batteries/queue/redis.ts";
+
+// Data repositories and blob storage (shared by the admin and tour kits)
+export * from "./batteries/data/index.ts";
+export * from "./batteries/files/index.ts";
