@@ -358,3 +358,21 @@ describe("any / unknown / isSchema / validate", () => {
     expect(validate(s, { a: "1", b: "x" }, { coerce: true })).toEqual({ ok: true, value: { a: 1, b: "x" } });
   });
 });
+
+describe("t.string({ secret: true })", () => {
+  test("marks the JSON Schema writeOnly with format password, or keeps the given format", () => {
+    expect(t.string({ secret: true }).json).toEqual({ type: "string", writeOnly: true, format: "password" });
+    expect(t.string({ secret: true, format: "url" }).json).toEqual({ type: "string", writeOnly: true, format: "url" });
+    expect(t.string().json).toEqual({ type: "string" });
+    expect(t.string({ secret: false }).json).toEqual({ type: "string" });
+  });
+
+  test("validates exactly like a plain string with the same options", () => {
+    const s = t.string({ secret: true, minLength: 3 });
+    expect(validate(s, "abcd")).toEqual({ ok: true, value: "abcd" });
+    expect(validate(s, "ab").ok).toBe(false);
+    expect(validate(s, 5).ok).toBe(false);
+    expect(validate(t.string({ secret: true }), "any value at all")).toEqual({ ok: true, value: "any value at all" });
+    expect(validate(t.string({ secret: true, format: "url" }), "nope").ok).toBe(false);
+  });
+});

@@ -95,15 +95,15 @@ describe("verify.ts", () => {
     expect(r.declarations).toBe(2);
   });
 
-  test("classifyDomErrors: missing DOM names are pending (miujs) or failures (others); the rest are failures", () => {
+  test("classifyDomErrors: with no pending packages, a missing DOM name in any package is a failure; the rest are failures", () => {
     const r = classifyDomErrors([
       "node_modules/miujs/dist/types/app.d.ts(35,15): error TS2304: Cannot find name 'HeadersInit'.",
       "node_modules/@miujs/web/dist/types/html.d.ts(20,15): error TS2304: Cannot find name 'HeadersInit'.",
       "node_modules/@miujs/auth/dist/types/jose.d.ts(19,32): error TS2749: 'CryptoKey' refers to a value, but is being used as a type here.",
       "app.ts(3,1): error TS2322: Type 'string' is not assignable to type 'number'.",
     ]);
-    expect(r.pending).toEqual(["miujs/dist/types/app.d.ts:35 HeadersInit"]);
-    expect(r.unexpected).toEqual(["@miujs/web/dist/types/html.d.ts:20 HeadersInit", "@miujs/auth/dist/types/jose.d.ts:19 CryptoKey"]);
+    expect(r.pending).toEqual([]);
+    expect(r.unexpected).toEqual(["miujs/dist/types/app.d.ts:35 HeadersInit", "@miujs/web/dist/types/html.d.ts:20 HeadersInit", "@miujs/auth/dist/types/jose.d.ts:19 CryptoKey"]);
     expect(r.other).toHaveLength(1);
   });
 

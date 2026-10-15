@@ -78,6 +78,11 @@ export interface StringOptions extends Common {
   /** A RegExp, or a pattern string (compiled once with `new RegExp`, which Workers allow). */
   pattern?: RegExp | string;
   format?: "uuid" | "email" | "url" | "date" | "date-time";
+  /**
+   * A secret (API key, password, connection string): the JSON Schema gets `writeOnly: true` and
+   * `format: "password"` (unless `format` is set), so admin screens and logs redact it. Validation is unchanged.
+   */
+  secret?: boolean;
 }
 
 /** The parser of every unconstrained `t.string()`; `isPlainStringObject` recognizes it by identity. */
@@ -106,6 +111,10 @@ function string(opts: StringOptions = {}): Schema<string> {
   const pattern = typeof opts.pattern === "string" ? new RegExp(opts.pattern) : opts.pattern;
   if (pattern) json.pattern = pattern.source;
   if (opts.format) json.format = opts.format;
+  if (opts.secret) {
+    json.writeOnly = true;
+    json.format ??= "password";
+  }
   const format = opts.format ? FORMATS[opts.format] : undefined;
   const { minLength, maxLength } = opts;
   if (minLength === undefined && maxLength === undefined && !pattern && !format) return schema("string", json, parsePlainString, opts);

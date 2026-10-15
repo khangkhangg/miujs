@@ -49,6 +49,22 @@ describe("Cloudflare AI and Vectorize bindings", () => {
   });
 });
 
+describe("Cloudflare Hyperdrive bindings", () => {
+  test("inspect() merges them, deduped by binding", async () => {
+    const app = miu({
+      plugins: [
+        definePlugin({ name: "pg", cloudflare: () => ({ hyperdrive: [{ binding: "PG", id: "abc", localConnectionString: "postgres://localhost/db" }] }) }),
+        definePlugin({ name: "pg2", cloudflare: () => ({ hyperdrive: [{ binding: "PG", id: "abc", localConnectionString: "postgres://localhost/db" }, { binding: "MY" }] }) }),
+      ],
+    });
+    await app.ready();
+    expect(app.inspect().cloudflare.hyperdrive).toEqual([
+      { binding: "PG", id: "abc", localConnectionString: "postgres://localhost/db" },
+      { binding: "MY" },
+    ]);
+  });
+});
+
 describe("schema wrappers and dates", () => {
   test("optional, nullable and default expose the inner schema", () => {
     const inner = t.string({ format: "email" });

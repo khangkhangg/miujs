@@ -1,5 +1,5 @@
 import { RequestContext, pathOf, type Context, type PlatformInfo, type RouteInfo, type Services, type TrustProxy } from "./context.ts";
-import { MiuError, errors, isMiuError } from "./errors.ts";
+import { MiuError, errors, isMiuError, type HeadersLike } from "./errors.ts";
 import { createLogger, type LogLevel, type Logger } from "./logger.ts";
 import { createMcpHandler, buildRouteTool, routeToolRequest, type McpOptions } from "./mcp.ts";
 import { generateOpenApi, type DescribedRoute, type OpenApiInfo } from "./openapi.ts";
@@ -36,7 +36,7 @@ export interface CallInput {
   params?: Record<string, unknown>;
   query?: Record<string, unknown>;
   body?: unknown;
-  headers?: HeadersInit;
+  headers?: HeadersLike;
 }
 
 export interface TestResponse {
@@ -61,7 +61,7 @@ export interface AppTool {
   annotations: Record<string, boolean>;
   /** The route name the tool calls. */
   route: string;
-  call(args?: Record<string, unknown>, opts?: { headers?: HeadersInit; env?: unknown; origin?: string }): Promise<{ ok: boolean; status: number; body: unknown; text: string }>;
+  call(args?: Record<string, unknown>, opts?: { headers?: HeadersLike; env?: unknown; origin?: string }): Promise<{ ok: boolean; status: number; body: unknown; text: string }>;
 }
 
 export interface RouteTest {
@@ -846,7 +846,7 @@ export class App {
       .filter((r) => r.def.config.mcp !== false)
       .map((r) => {
         const rt = buildRouteTool(r);
-        const call = async (args: Record<string, unknown> = {}, opts: { headers?: HeadersInit; env?: unknown; origin?: string } = {}) => {
+        const call = async (args: Record<string, unknown> = {}, opts: { headers?: HeadersLike; env?: unknown; origin?: string } = {}) => {
           const req = routeToolRequest(rt, args, opts.origin ?? "http://localhost", new Headers(opts.headers));
           const res = await this.dispatch(req, opts.env ?? this.staticEnv, this.basePlatform);
           const text = await res.text();
@@ -1013,6 +1013,7 @@ export class App {
       ratelimits: byBinding(all.flatMap((n) => n.ratelimits ?? [])),
       ai: all.find((n) => n.ai)?.ai,
       vectorize: byBinding(all.flatMap((n) => n.vectorize ?? [])),
+      hyperdrive: byBinding(all.flatMap((n) => n.hyperdrive ?? [])),
       kv: uniq(all.flatMap((n) => n.kv ?? [])),
       d1: uniq(all.flatMap((n) => n.d1 ?? [])),
       r2: uniq(all.flatMap((n) => n.r2 ?? [])),

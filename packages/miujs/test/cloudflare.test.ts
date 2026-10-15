@@ -23,6 +23,7 @@ test("inspect() merges the Cloudflare bindings plugins need", async () => {
     ratelimits: [],
     ai: undefined,
     vectorize: [],
+    hyperdrive: [],
   });
 });
 

@@ -194,3 +194,12 @@ describe("/_miu/openapi.json", () => {
     expect(await (await get(app, "/_miu/openapi.json")).json()).toEqual(app.openapi());
   });
 });
+
+describe("secret strings in OpenAPI", () => {
+  test("a secret body field is writeOnly with format password", async () => {
+    const app = miu({ logLevel: "silent", routes: [route.post("/keys", { name: "setKey", body: t.object({ apiKey: t.string({ secret: true }) }), handler: () => ({}) })] });
+    await app.ready();
+    const op = (app.openapi() as any).paths["/keys"].post;
+    expect(op.requestBody.content["application/json"].schema.properties.apiKey).toEqual({ type: "string", writeOnly: true, format: "password" });
+  });
+});

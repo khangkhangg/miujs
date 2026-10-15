@@ -76,7 +76,7 @@ All under `<basePath>/_admin/system` (default `/api/_admin/system`), signed-in u
 | `GET /:plugin/:section/lists/:list?cursor&limit&search&filters` | One page `{ rows, next }`; `limit` defaults to 25 and is capped at 100; `filters` is JSON like `{"state":"failed"}` checked against the list's options |
 | `POST /:plugin/:section/actions/:action` | Body is the action's input; returns `{ ok: true, result }` |
 | `POST /:plugin/:section/lists/:list/:id/actions/:action` | Same, with `{ id }` merged into the validated input |
-| `GET / PUT /:plugin/:section/settings` | Read (secrets shown as `"[REDACTED]"`) or replace the settings; sending `"[REDACTED]"` back keeps a secret unchanged. Secrets are decided by the schema: a string field with `format: "password"`, `writeOnly: true` or `"x-secret": true` in its JSON schema, or a string field named like one (password, secret, token, apiKey, …Key). Numbers, booleans, enums and dates never are, so `minPasswordLength` or `maxTokens` stay visible |
+| `GET / PUT /:plugin/:section/settings` | Read (secrets shown as `"[REDACTED]"`) or replace the settings; sending `"[REDACTED]"` back keeps a secret unchanged. Secrets are decided by the schema: a string field with `format: "password"`, `writeOnly: true` or `"x-secret": true` in its JSON schema (`t.string({ secret: true })` sets the first two), or a string field named like one (password, secret, token, apiKey, …Key). Numbers, booleans, enums and dates never are, so `minPasswordLength` or `maxTokens` stay visible |
 
 Path segments and row ids are URL-encoded (ids such as `chat:42` work). Unknown plugins, sections, lists and actions return 404 with `MIU_E_ADMIN_SYSTEM_*` codes and a fix; invalid input returns 400 `MIU_E_VALIDATION`.
 

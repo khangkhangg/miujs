@@ -73,3 +73,12 @@ describe("redactBySchema", () => {
     expect(redactBySchema({ a: "x" }, { type: "object", additionalProperties: { type: "string", format: "password" } })).toEqual({ a: R });
   });
 });
+
+describe("t.string({ secret: true })", () => {
+  test("is a secret whatever the field name", () => {
+    expect(isSecretField("webhook", t.string({ secret: true }).json)).toBe(true);
+    expect(isSecretField("webhook", t.string({ secret: true, format: "url" }).json)).toBe(true);
+    expect(isSecretField("webhook", t.string().json)).toBe(false);
+    expect(redactBySchema({ dsn: "postgres://u:p@h/db" }, t.object({ dsn: t.optional(t.string({ secret: true })) }).json)).toEqual({ dsn: R });
+  });
+});

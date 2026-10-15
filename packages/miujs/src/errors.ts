@@ -6,6 +6,9 @@ import type { Issue } from "./schema.ts";
  */
 export const DOCS_BASE = "https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#";
 
+/** Headers in any form `new Headers()` accepts, without needing the DOM lib's `HeadersInit`. */
+export type HeadersLike = Headers | Record<string, string> | [string, string][];
+
 export interface MiuErrorInit {
   /** Stable machine-readable code, e.g. `MIU_E_NOT_FOUND`. Never reworded once released. */
   code: string;
@@ -44,7 +47,7 @@ export class MiuError extends Error {
     return { error };
   }
 
-  toResponse(headers?: HeadersInit): Response {
+  toResponse(headers?: HeadersLike): Response {
     const h = new Headers(headers);
     h.set("content-type", "application/json; charset=utf-8");
     return new Response(JSON.stringify(this.toJSON()), { status: this.status, headers: h });

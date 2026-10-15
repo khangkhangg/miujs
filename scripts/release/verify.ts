@@ -291,7 +291,7 @@ export function splitTscOutput(out: string) {
  * Packages whose public types still use DOM-only names (reported as a warning, not a failure).
  * Empty this list once they are fixed: then any DOM-only name in any package fails the check.
  */
-export const DOM_LIB_PENDING: readonly string[] = ["miujs"];
+export const DOM_LIB_PENDING: readonly string[] = [];
 
 /**
  * Splits our tsc errors (from splitTscOutput) into: a missing global type in one of our .d.ts files

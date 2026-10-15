@@ -69,7 +69,7 @@ Other route options: `name`, `description`, `tags`, `mcp: false`, `permission` (
 
 ## Schemas
 
-`t.string({ minLength, maxLength, pattern, format })`, `t.number({ min, max })`, `t.integer()`, `t.boolean()`, `t.date()`, `t.literal(v)`, `t.enum([...])`, `t.array(item, { min, max })`, `t.object(shape)`, `t.record(value)`, `t.union([...])`, `t.optional(s)`, `t.default(s, value)`, `t.nullable(s)`, `t.any()`, `t.unknown()`. String formats: `uuid`, `email`, `url`, `date`, `date-time`.
+`t.string({ minLength, maxLength, pattern, format, secret })`, `t.number({ min, max })`, `t.integer()`, `t.boolean()`, `t.date()`, `t.literal(v)`, `t.enum([...])`, `t.array(item, { min, max })`, `t.object(shape)`, `t.record(value)`, `t.union([...])`, `t.optional(s)`, `t.default(s, value)`, `t.nullable(s)`, `t.any()`, `t.unknown()`. String formats: `uuid`, `email`, `url`, `date`, `date-time`. `secret: true` marks an API key, password or connection string: the JSON Schema gets `writeOnly: true` and `format: "password"` (unless `format` is set), so admin screens and audit logs redact it; validation is unchanged.
 
 <!-- test -->
 ```ts
