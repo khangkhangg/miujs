@@ -80,10 +80,16 @@ function deriveName(method: string, path: string): string {
   return [method.toLowerCase(), ...parts].join("_");
 }
 
+// One issues array is reused while validation passes, so valid requests allocate none. It is
+// taken out while in use (a parse that re-enters `check` gets its own) and given away on failure.
+let spareIssues: Issue[] | null = [];
+
 function check<T>(schema: Schema<T>, value: unknown, where: string, coerce: boolean): T {
-  const issues: Issue[] = [];
+  const issues = spareIssues ?? [];
+  spareIssues = null;
   const out = schema.parse(value, where, issues, coerce);
   if (issues.length) throw errors.validation(where, issues);
+  spareIssues = issues;
   return out;
 }
 
@@ -120,8 +126,13 @@ async function readBody(req: Request): Promise<{ value: unknown; form: boolean }
   return { value: buf.length ? buf : undefined, form: false };
 }
 
-const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
-const TEXT_HEADERS = { "content-type": "text/plain; charset=utf-8" };
+const JSON_TYPE = "application/json; charset=utf-8";
+const TEXT_TYPE = "text/plain; charset=utf-8";
+// Shared `Headers` instances: `new Response()` copies them, and on Bun copying a Headers is
+// ~130 ns cheaper than building one from a plain object on every response.
+const JSON_HEADERS = new Headers({ "content-type": JSON_TYPE });
+const TEXT_HEADERS = new Headers({ "content-type": TEXT_TYPE });
+const TEXT_INIT: ResponseInit = { headers: TEXT_HEADERS };
 
 function levenshtein(a: string, b: string): number {
   const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
@@ -163,6 +174,8 @@ export class App {
   private workers: { queue: WorkersHandler[]; scheduled: WorkersHandler[] } = { queue: [], scheduled: [] };
   private staticEnv: Record<string, unknown>;
   private logRequests: boolean;
+  private basePlatform: PlatformInfo;
+  private serverPlatform: PlatformInfo | null = null;
   private toolCache: { routeTools: ReturnType<typeof buildRouteTool>[]; pluginTools: McpTool[] } | null = null;
 
   constructor(options: MiuOptions = {}) {
@@ -175,6 +188,7 @@ export class App {
     this.logRequests = options.logRequests ?? false;
     this.plugins = options.plugins ?? [];
     this.staticEnv = this.runtime === "workerd" ? {} : processEnv();
+    this.basePlatform = { runtime: this.runtime };
     for (const src of options.routes ?? []) this.collect(src, undefined);
     for (const p of this.plugins) for (const r of p.routes ?? []) this.collect(r, undefined);
   }
@@ -326,6 +340,11 @@ export class App {
   }
 
   private toResponse(result: unknown, ctx: RequestContext, status: number, R: Schema | undefined): Response {
+    // Fast path for the common case, a plain object with no `ctx.set` and no response schema:
+    // it skips the `instanceof` chain below.
+    if (typeof result === "object" && result !== null && Object.getPrototypeOf(result) === Object.prototype && status === 200 && R === undefined && !ctx._hasSet) {
+      return Response.json(result);
+    }
     if (result instanceof Response) return result;
     const hasSet = ctx._hasSet;
     const st = hasSet && ctx.set.status ? ctx.set.status : status;
@@ -334,15 +353,16 @@ export class App {
       return new Response(null, { status: st === 200 ? 204 : st, headers });
     }
     if (typeof result === "string") {
-      if (headers && !headers.has("content-type")) headers.set("content-type", TEXT_HEADERS["content-type"]);
-      return new Response(result, { status: st, headers: headers ?? TEXT_HEADERS });
+      if (!headers) return new Response(result, st === 200 ? TEXT_INIT : { status: st, headers: TEXT_HEADERS });
+      if (!headers.has("content-type")) headers.set("content-type", TEXT_TYPE);
+      return new Response(result, { status: st, headers });
     }
     if (result instanceof Uint8Array || result instanceof ArrayBuffer || result instanceof ReadableStream) {
       return new Response(result as BodyInit, { status: st, headers });
     }
     if (R) check(R, result, "response", false);
     if (!headers && st === 200) return Response.json(result);
-    if (headers && !headers.has("content-type")) headers.set("content-type", JSON_HEADERS["content-type"]);
+    if (headers && !headers.has("content-type")) headers.set("content-type", JSON_TYPE);
     return new Response(JSON.stringify(result), { status: st, headers: headers ?? JSON_HEADERS });
   }
 
@@ -393,15 +413,18 @@ export class App {
    * Deno `(req, info)`.
    */
   fetch = (req: Request, envOrServer?: any, executionContext?: any): Response | Promise<Response> => {
-    const platform: PlatformInfo = { runtime: this.runtime };
-    let env: unknown = this.staticEnv;
     if (this.runtime === "workerd") {
-      env = envOrServer ?? {};
-      platform.executionContext = executionContext;
-    } else if (envOrServer && typeof envOrServer.upgrade === "function") {
-      platform.bunServer = envOrServer;
+      return this.dispatch(req, envOrServer ?? {}, { runtime: this.runtime, executionContext });
     }
-    return this.dispatch(req, env, platform);
+    // Off Workers the platform object only varies with Bun's server, so it is reused, not
+    // allocated per request.
+    let platform = this.basePlatform;
+    if (envOrServer && typeof envOrServer.upgrade === "function") {
+      let sp = this.serverPlatform;
+      if (sp === null || sp.bunServer !== envOrServer) this.serverPlatform = sp = { runtime: this.runtime, bunServer: envOrServer };
+      platform = sp;
+    }
+    return this.dispatch(req, this.staticEnv, platform);
   };
 
   /** Handle a request without the network. Used by tests, MCP tool calls and adapters. */
@@ -426,7 +449,8 @@ export class App {
 
   private after(ctx: RequestContext, res: Response, start: number): Response | Promise<Response> {
     if (ctx._upgraded) return undefined as unknown as Response; // Bun took over the socket.
-    if (ctx._setCookies === null && this.responseHooks.length === 0 && !this.logRequests) return res;    return this.finalize(ctx, res).then((final) => {
+    if (ctx._setCookies === null && this.responseHooks.length === 0 && !this.logRequests) return res;
+    return this.finalize(ctx, res).then((final) => {
       if (this.logRequests) {
         ctx.log.info("request", { route: ctx.route?.name ?? null, status: final.status, ms: Math.round((performance.now() - start) * 100) / 100 });
       }
@@ -436,21 +460,19 @@ export class App {
 
   private route(ctx: RequestContext): Response | Promise<Response> {
     const method = ctx.method;
-    let match = this.routers.get(method)?.find(ctx.path) ?? null;
+    // `lookup` writes path params straight into `ctx.params` (a fresh `{}` per request).
+    let match = this.routers.get(method)?.lookup(ctx.path, ctx.params);
     let head = false;
-    if (!match && method === "HEAD") {
-      match = this.routers.get("GET")?.find(ctx.path) ?? null;
-      head = match !== null;
+    if (match === undefined && method === "HEAD") {
+      match = this.routers.get("GET")?.lookup(ctx.path, ctx.params);
+      head = match !== undefined;
     }
-    if (match) {
-      ctx.params = match.params;
-      ctx.route = match.value.info;
-    }
+    if (match !== undefined) ctx.route = match.info;
     if (this.requestHooks.length) return this.routeWithHooks(ctx, match, head);
     return this.runMatch(ctx, match, head);
   }
 
-  private async routeWithHooks(ctx: RequestContext, match: { value: Compiled } | null, head: boolean): Promise<Response> {
+  private async routeWithHooks(ctx: RequestContext, match: Compiled | undefined, head: boolean): Promise<Response> {
     for (const hook of this.requestHooks) {
       const r = await hook(ctx as unknown as Context);
       if (r instanceof Response) return r;
@@ -458,9 +480,9 @@ export class App {
     return this.runMatch(ctx, match, head);
   }
 
-  private runMatch(ctx: RequestContext, match: { value: Compiled } | null, head: boolean): Response | Promise<Response> {
-    if (!match) return this.notMatched(ctx);
-    const res = match.value.run(ctx);
+  private runMatch(ctx: RequestContext, match: Compiled | undefined, head: boolean): Response | Promise<Response> {
+    if (match === undefined) return this.notMatched(ctx);
+    const res = match.run(ctx);
     if (!head) return res;
     const strip = (r: Response) => new Response(null, { status: r.status, headers: r.headers });
     return res instanceof Promise ? res.then(strip) : strip(res);

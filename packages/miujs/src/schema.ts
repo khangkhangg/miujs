@@ -200,11 +200,20 @@ function object<P extends Shape>(shape: P, opts: Common = {}): ObjectSchema<P> {
   for (const k of keys) properties[k] = shape[k].json;
   const json: JsonSchema = { type: "object", properties };
   if (required.length) json.required = required;
+  // Child paths ("params.id") for the first path this schema is parsed at. A top-level schema
+  // always sees the same path, so it builds no strings per request; other paths join as before.
+  let firstPath: string | undefined;
+  let firstPaths: string[] = [];
   const base = schema<ObjectOf<P>>("object", json, (v, path, issues, coerce) => {
     if (!isPlainObject(v)) {
       issues.push({ path, message: `expected object, got ${typeName(v)}` });
       return v as ObjectOf<P>;
     }
+    if (firstPath === undefined) {
+      firstPath = path;
+      firstPaths = keys.map((k) => join(path, k));
+    }
+    const paths = path === firstPath ? firstPaths : null;
     // Unknown keys are dropped so handlers only ever see declared fields.
     const out: Record<string, unknown> = {};
     for (let i = 0; i < keys.length; i++) {
@@ -212,15 +221,15 @@ function object<P extends Shape>(shape: P, opts: Common = {}): ObjectSchema<P> {
       const s = shape[k];
       const value = v[k];
       if (value === undefined && s.isOptional) {
-        const d = s.parse(undefined, join(path, k), issues, coerce);
+        const d = s.parse(undefined, paths ? paths[i] : join(path, k), issues, coerce);
         if (d !== undefined) out[k] = d;
         continue;
       }
       if (value === undefined) {
-        issues.push({ path: join(path, k), message: "is required" });
+        issues.push({ path: paths ? paths[i] : join(path, k), message: "is required" });
         continue;
       }
-      out[k] = s.parse(value, join(path, k), issues, coerce);
+      out[k] = s.parse(value, paths ? paths[i] : join(path, k), issues, coerce);
     }
     return out as ObjectOf<P>;
   }, opts);

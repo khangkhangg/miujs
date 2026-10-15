@@ -178,3 +178,39 @@ describe("all()", () => {
     expect(router("/b/", "a/:id").all()).toEqual(["/b", "/a/:id"]);
   });
 });
+
+describe("lookup paths", () => {
+  test("a node with many static children (Map lookup) matches like a short one (scan)", () => {
+    const names = Array.from({ length: 12 }, (_, i) => `seg${i}`);
+    const r = router(...names.map((n) => `/${n}/:id`), "/s/:id", "/seg/:id");
+    for (const n of names) expect(r.find(`/${n}/7`)).toEqual({ value: `/${n}/:id`, params: { id: "7" } });
+    expect(r.find("/seg/1")?.value).toBe("/seg/:id");
+    expect(r.find("/se/1")).toBeNull();
+    expect(r.find("/seg12/1")).toBeNull();
+  });
+
+  test("a static segment must match whole, not as a prefix", () => {
+    const r = router("/user/:id", "/users/:id/x");
+    expect(r.find("/users/1")).toBeNull();
+    expect(r.find("/user/1")?.params).toEqual({ id: "1" });
+  });
+
+  test("static paths longer than 255 characters", () => {
+    const long = "/" + "a".repeat(300);
+    const longer = "/" + "b".repeat(400);
+    const r = router(long, longer);
+    expect(r.find(long)?.value).toBe(long);
+    expect(r.find(longer + "/")?.value).toBe(longer);
+    expect(r.find("/" + "a".repeat(299))).toBeNull();
+  });
+
+  test("lookup writes params into the given object and returns the value", () => {
+    const r = router("/users/:id", "/");
+    const params: Record<string, string> = {};
+    expect(r.lookup("/users/9", params)).toBe("/users/:id");
+    expect(params).toEqual({ id: "9" });
+    const none: Record<string, string> = {};
+    expect(r.lookup("/nope/x", none)).toBeUndefined();
+    expect(none).toEqual({});
+  });
+});

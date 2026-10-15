@@ -5,14 +5,23 @@ import { errors } from "./errors.ts";
 
 interface Node<T> {
   statics: Map<string, Node<T>> | null;
+  // The same children as `statics`, as parallel arrays: a short list is scanned in place with
+  // `startsWith`, which avoids slicing and hashing a segment string per request.
+  staticKeys: string[];
+  staticNodes: Node<T>[];
   param: { name: string; node: Node<T> } | null;
   wildcard: { name: string; value: T } | null;
   value: T | undefined;
 }
 
 function node<T>(): Node<T> {
-  return { statics: null, param: null, wildcard: null, value: undefined };
+  return { statics: null, staticKeys: [], staticNodes: [], param: null, wildcard: null, value: undefined };
 }
+
+/** Above this many static children a node uses its Map instead of a linear scan. */
+const SCAN_LIMIT = 8;
+/** Static paths are bucketed by length up to this, so most misses skip the Map lookup. */
+const MAX_LEN = 255;
 
 export interface Match<T> {
   value: T;
@@ -45,6 +54,8 @@ function decode(s: string): string {
 
 export class Router<T> {
   private statics = new Map<string, T>();
+  /** `staticLens[n]` is 1 when some static path has length n (n > MAX_LEN shares the last slot). */
+  private staticLens = new Uint8Array(MAX_LEN + 2);
   private root: Node<T> = node();
   private patterns: string[] = [];
 
@@ -54,6 +65,7 @@ export class Router<T> {
     if (!path.includes(":") && !path.includes("*")) {
       if (this.statics.has(path)) throw errors.config("MIU_E_ROUTE_DUPLICATE", `Route ${path} is defined twice`, "Remove or rename one of the routes.");
       this.statics.set(path, value);
+      this.staticLens[Math.min(path.length, MAX_LEN + 1)] = 1;
       return;
     }
     const segs = path.split("/").slice(1);
@@ -79,7 +91,11 @@ export class Router<T> {
       } else {
         if (!cur.statics) cur.statics = new Map();
         let next = cur.statics.get(seg);
-        if (!next) cur.statics.set(seg, (next = node()));
+        if (!next) {
+          cur.statics.set(seg, (next = node()));
+          cur.staticKeys.push(seg);
+          cur.staticNodes.push(next);
+        }
         cur = next;
       }
     }
@@ -88,38 +104,68 @@ export class Router<T> {
   }
 
   find(path: string): Match<T> | null {
-    const s = this.statics.get(path);
-    if (s !== undefined) return { value: s, params: {} };
-    if (path.length > 1 && path.endsWith("/")) {
-      const t = this.statics.get(path.slice(0, -1));
-      if (t !== undefined) return { value: t, params: {} };
-      path = path.slice(0, -1);
-    }
-    const segs = path.split("/");
     const params: Record<string, string> = {};
-    const value = this.walk(this.root, segs, 1, params);
+    const value = this.lookup(path, params);
     return value === undefined ? null : { value, params };
   }
 
-  private walk(n: Node<T>, segs: string[], i: number, params: Record<string, string>): T | undefined {
-    if (i === segs.length) return n.value;
-    const seg = segs[i];
-    if (n.statics) {
-      const next = n.statics.get(seg);
+  /**
+   * Like `find`, but writes path params into `params` and returns only the value, so the hot
+   * path allocates no match object. Params are written only on a match.
+   */
+  lookup(path: string, params: Record<string, string>): T | undefined {
+    const lens = this.staticLens;
+    const len = path.length;
+    if (lens[len > MAX_LEN ? MAX_LEN + 1 : len] === 1) {
+      const s = this.statics.get(path);
+      if (s !== undefined) return s;
+    }
+    if (len > 1 && path.charCodeAt(len - 1) === 47 /* / */) {
+      path = path.slice(0, -1);
+      if (lens[len - 1 > MAX_LEN ? MAX_LEN + 1 : len - 1] === 1) {
+        const t = this.statics.get(path);
+        if (t !== undefined) return t;
+      }
+    }
+    return this.walk(this.root, path, 1, params);
+  }
+
+  // Walks the path string by index instead of splitting it: `split("/")` allocated an array per
+  // request and was the router's main cost. `start` is where the current segment begins; it
+  // passes the end of the string once every segment is consumed.
+  private walk(n: Node<T>, path: string, start: number, params: Record<string, string>): T | undefined {
+    if (start > path.length) return n.value;
+    let end = path.indexOf("/", start);
+    if (end === -1) end = path.length;
+    const keys = n.staticKeys;
+    if (keys.length !== 0) {
+      let next: Node<T> | undefined;
+      if (keys.length <= SCAN_LIMIT) {
+        const segLen = end - start;
+        for (let i = 0; i < keys.length; i++) {
+          const k = keys[i];
+          if (k.length === segLen && path.startsWith(k, start)) {
+            next = n.staticNodes[i];
+            break;
+          }
+        }
+      } else {
+        next = n.statics!.get(path.slice(start, end));
+      }
       if (next) {
-        const v = this.walk(next, segs, i + 1, params);
+        const v = this.walk(next, path, end + 1, params);
         if (v !== undefined) return v;
       }
     }
-    if (n.param && seg !== "") {
-      const v = this.walk(n.param.node, segs, i + 1, params);
+    if (n.param && end !== start) {
+      const v = this.walk(n.param.node, path, end + 1, params);
       if (v !== undefined) {
-        params[n.param.name] = decode(seg);
+        params[n.param.name] = decode(path.slice(start, end));
         return v;
       }
     }
     if (n.wildcard) {
-      params[n.wildcard.name] = decode(segs.slice(i).join("/"));
+      params[n.wildcard.name] = decode(path.slice(start));
       return n.wildcard.value;
     }
     return undefined;

@@ -113,33 +113,43 @@ export function parseQuery(url: string): Record<string, string | string[]> {
 
 let counter = 0;
 
-/** Concrete context. Lazy fields keep per-request cost low when a handler doesn't use them. */
+/**
+ * Concrete context. Lazy fields keep per-request cost low when a handler doesn't use them.
+ *
+ * Fields are `declare`d so no class-field initializers run: the constructor sets only the
+ * per-request ones, and the defaults of rarely-set fields live on the prototype (below the
+ * class). A smaller object is measurably cheaper to allocate on every request.
+ */
 export class RequestContext {
-  readonly req: Request;
-  readonly method: string;
-  readonly path: string;
-  readonly runtime: string;
-  params: any;
-  body: any = undefined;
-  user: unknown = undefined;
-  env: any;
-  route: RouteInfo | null = null;
-  /** @internal set when Bun took over the connection for a WebSocket. */
-  _upgraded = false;
+  declare readonly req: Request;
+  declare readonly method: string;
+  declare readonly path: string;
+  declare readonly runtime: string;
+  declare params: any;
+  /** Default `undefined` (prototype). */
+  declare body: any;
+  /** Default `undefined` (prototype). */
+  declare user: unknown;
+  declare env: any;
+  /** Default `null` (prototype). */
+  declare route: RouteInfo | null;
+  /** @internal set when Bun took over the connection for a WebSocket. Default `false` (prototype). */
+  declare _upgraded: boolean;
   /** @internal */
-  _platform: PlatformInfo;
+  declare _platform: PlatformInfo;
+  /** @internal Default `null` (prototype). */
+  declare _setCookies: string[] | null;
   /** @internal */
-  _setCookies: string[] | null = null;
-  /** @internal */
-  _baseLog: Logger;
+  declare _baseLog: Logger;
 
-  private _url: URL | undefined;
-  private _query: any;
-  private _cookies: Cookies | undefined;
-  private _set: { status: number; headers: Headers } | undefined;
-  private _state: Record<string, unknown> | undefined;
-  private _requestId: string | undefined;
-  private _log: Logger | undefined;
+  // Lazy: absent until first use, so they read as `undefined`.
+  private declare _url: URL | undefined;
+  private declare _query: any;
+  private declare _cookies: Cookies | undefined;
+  private declare _set: { status: number; headers: Headers } | undefined;
+  private declare _state: Record<string, unknown> | undefined;
+  private declare _requestId: string | undefined;
+  private declare _log: Logger | undefined;
 
   constructor(req: Request, path: string, env: unknown, platform: PlatformInfo, log: Logger) {
     this.req = req;
@@ -218,6 +228,9 @@ export class RequestContext {
     return upgradeImpl(this, handlers);
   }
 }
+
+// Defaults for fields that most requests never set; writing one makes it an own property.
+Object.assign(RequestContext.prototype, { body: undefined, user: undefined, route: null, _upgraded: false, _setCookies: null });
 
 // Set by websocket.ts at module load (avoids an import cycle).
 let upgradeImpl: (ctx: RequestContext, handlers: WebSocketHandlers) => Response = () => {
