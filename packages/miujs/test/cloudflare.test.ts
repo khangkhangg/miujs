@@ -24,6 +24,7 @@ test("inspect() merges the Cloudflare bindings plugins need", async () => {
     ai: undefined,
     vectorize: [],
     hyperdrive: [],
+    limits: undefined,
   });
 });
 
@@ -51,4 +52,19 @@ test("two plugins asking for different asset directories fail at startup", async
   });
   await app.ready();
   expect(() => app.inspect()).toThrow(expect.objectContaining({ code: "MIU_E_CLOUDFLARE_ASSETS_CONFLICT" }));
+});
+
+test("inspect() merges CPU limits: the largest cpuMs any plugin asks for, or none", async () => {
+  const app = miu({
+    plugins: [
+      definePlugin({ name: "a", cloudflare: () => ({ limits: { cpuMs: 1100 } }) }),
+      definePlugin({ name: "b", cloudflare: () => ({ limits: { cpuMs: 300 } }) }),
+      definePlugin({ name: "c", cloudflare: () => ({ limits: {} }) }),
+    ],
+  });
+  await app.ready();
+  expect(app.inspect().cloudflare.limits).toEqual({ cpuMs: 1100 });
+  const plain = miu({ plugins: [definePlugin({ name: "a", cloudflare: () => ({ kv: ["X"] }) })] });
+  await plain.ready();
+  expect(plain.inspect().cloudflare.limits).toBeUndefined();
 });

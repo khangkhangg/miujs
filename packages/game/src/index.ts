@@ -2,11 +2,11 @@
 // on top of @miujs/realtime. See README.md.
 
 export { AchievementSet, defineAchievements, type AchievementDef, type PlayerStats, type Unlock } from "./achievements.ts";
-export { createMatchmakerDurableObject, durableHost, type MatchHost, type MatchmakerDurableObjectOptions } from "./cloudflare.ts";
+export { createMatchmakerDurableObject, durableHost, type MatchHost, type MatchmakerDurableObject, type MatchmakerDurableObjectClass, type MatchmakerDurableObjectOptions } from "./cloudflare.ts";
 export { defaultDatabase } from "./db.ts";
 export { gameErrors } from "./errors.ts";
 export { leaderboard, periodKey, signScoreProof, type Entry, type Leaderboard, type LeaderboardOptions, type Resets, type SubmitResult } from "./leaderboard.ts";
-export { createLobbyDurableObject, execLobby, lobbies, type Lobbies, type LobbiesOptions, type LobbyReply, type LobbyRequest } from "./lobbies.ts";
+export { createLobbyDurableObject, execLobby, lobbies, type Lobbies, type LobbyDurableObject, type LobbyDurableObjectClass, type LobbiesOptions, type LobbyReply, type LobbyRequest } from "./lobbies.ts";
 export { LobbyCore, type LobbyInit, type LobbySnapshot, type LobbyStatus, type LobbyView } from "./lobby.ts";
 export {
   acceptInput,

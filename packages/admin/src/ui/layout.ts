@@ -1,6 +1,6 @@
 // The page shell: header with brand and org switcher, resource navigation, main region.
 
-import type { Context } from "miujs";
+import type { Context, HeadersLike } from "miujs";
 import { html, render, type HtmlString } from "@miujs/web";
 import type { ResourceMeta } from "../meta.ts";
 import { orgOf, PAGE_HEADERS } from "./http.ts";
@@ -25,7 +25,7 @@ export interface PageInput {
   /** Show the System entry (the user may read the System area). */
   system?: boolean;
   /** Extra response headers (e.g. Set-Cookie). */
-  headers?: HeadersInit;
+  headers?: HeadersLike;
 }
 
 function nonceAttr(ctx: Context): HtmlString | string {

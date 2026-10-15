@@ -61,6 +61,18 @@ export function wranglerToml(info: any, main: string, date = new Date().toISOStr
     const ns = r.namespaceId ?? String(1000 + [...String(r.binding)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 9000, 7));
     parts.push(`\n[[ratelimits]]\nname = "${r.binding}"\nnamespace_id = "${ns}"\n\n  [ratelimits.simple]\n  limit = ${r.limit}\n  period = ${r.period}`);
   }
+  const cpuMs = Number(cf.limits?.cpuMs);
+  if (cpuMs > 0) {
+    parts.push(
+      [
+        `\n[limits]`,
+        `# CPU ms per request that plugins need (e.g. @miujs/auth's PBKDF2 password hashing). Workers Paid`,
+        `# plans only: the Free plan allows 10 ms and is not configurable. Raise it if other routes need more`,
+        `# (without this line the Paid default is 30000), or see the @miujs/auth README for alternatives.`,
+        `cpu_ms = ${Math.ceil(cpuMs)}`,
+      ].join("\n"),
+    );
+  }
   return parts.join("\n") + "\n";
 }
 

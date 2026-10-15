@@ -1,10 +1,10 @@
 // @miujs/auth — email/password accounts, sessions and API tokens. Sets `ctx.user`; core enforces
 // `route.auth`. Needs `session()` earlier in `plugins`.
 
-import { definePlugin, errors, processEnv, route, t, type AuthUser, type CloudflareNeeds, type Context, type Env, type RouteDef } from "miujs";
+import { definePlugin, errors, processEnv, route, targetRuntime, t, type AuthUser, type CloudflareNeeds, type Context, type Env, type RouteDef } from "miujs";
 import { getSession, hex, randomId, sha256, timingSafeEqual, utf8, base64urlEncode, randomBytes } from "@miujs/session";
 import { defaultAuthEmails, type AuthEmails, type AuthMailer } from "./emails.ts";
-import { UNUSABLE_PASSWORD, describePasswordHashing, hashPassword, needsRehash, verifyPassword, type PasswordOptions } from "./password.ts";
+import { DEFAULT_ITERATIONS, UNUSABLE_PASSWORD, WORKERS_FREE_CPU_MS, describePasswordHashing, hashPassword, needsRehash, pbkdf2WorkersCpuMs, suggestedWorkersCpuMs, verifyPassword, workersCpuWarning, type PasswordOptions } from "./password.ts";
 import { authManage } from "./manage.ts";
 import { RATE_LIMIT_DEFAULTS, memoryRateLimiter, type RateLimitOptions } from "./ratelimit.ts";
 import { memoryUserStore, type OneTimeTokenPurpose, type OneTimeTokenRecord, type StoredUser, type UserStore } from "./store.ts";
@@ -687,6 +687,11 @@ export function auth(opts: AuthOptions = {}) {
         throw errors.config("MIU_E_AUTH_SESSION_REQUIRED", "auth() needs session() earlier in plugins", "Use miu({ plugins: [session(), auth()] }).");
       }
       dev = app.dev;
+      // PBKDF2 can need far more CPU than a Workers plan allows: say so once, never weaken it silently.
+      if (targetRuntime() === "workerd") {
+        const cpu = workersCpuWarning(pw);
+        if (cpu) app.log.warn(cpu);
+      }
       if (opts.appUrl !== undefined && !/^https?:\/\/[^\s/]+/i.test(opts.appUrl)) {
         throw errors.config("MIU_E_AUTH_APP_URL_INVALID", `appUrl ${JSON.stringify(opts.appUrl)} is not an http(s) URL`, 'Pass auth({ appUrl: "https://app.example.com" }).');
       }
@@ -773,6 +778,11 @@ export function auth(opts: AuthOptions = {}) {
       const needs: CloudflareNeeds = { ...users.cloudflare?.() };
       // The binding applies one limit to every key, so size it for the strictest login rule.
       if (limiter?.binding) needs.ratelimits = [{ binding: limiter.binding, limit: loginLimits.perIpAccount, period: 60 }];
+      // PBKDF2 (Workers has no argon2id) over the Free plan's CPU limit: ask for a cpu_ms that fits.
+      const iterations = pw.iterations ?? DEFAULT_ITERATIONS;
+      if (pw.algorithm !== "argon2id" && pbkdf2WorkersCpuMs(iterations) > WORKERS_FREE_CPU_MS) {
+        needs.limits = { cpuMs: Math.max(suggestedWorkersCpuMs(iterations), typeof pw.workersCpuMs === "number" ? pw.workersCpuMs : 0) };
+      }
       return needs;
     },
   });

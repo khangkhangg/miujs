@@ -1,7 +1,7 @@
 // Run a code-defined workflow on Cloudflare Workflows (durable execution by the platform)
 // instead of the queue-based engine. Steps map 1:1 onto Cloudflare's WorkflowStep.
 
-import { createLogger, errors, validate, type Env } from "miujs";
+import { createLogger, detectRuntime, errors, validate, type Env, type Runtime } from "miujs";
 import { normalizeApprovers, type Mailer, type Step, type StepRunOptions, type WorkflowDef, type WorkflowEvent } from "./define.ts";
 import { parseDuration } from "./duration.ts";
 import { workflowErrors } from "./errors.ts";
@@ -40,8 +40,42 @@ export class WorkflowEntrypointShape {
   }
 }
 
+/** The Workers built-in module; a variable, so bundlers for other runtimes never try to resolve it. */
+const CF_WORKERS = "cloudflare:workers";
+
+/**
+ * `WorkflowEntrypoint` from "cloudflare:workers" when running on workerd, else undefined. workerd
+ * only runs Workflow classes that extend it ("worker is not an actor" otherwise).
+ */
+export async function workersEntrypoint(runtime: Runtime = detectRuntime(), load: (spec: string) => Promise<unknown> = (spec) => import(spec)): Promise<EntrypointBase | undefined> {
+  if (runtime !== "workerd") return undefined;
+  try {
+    const mod = (await load(CF_WORKERS)) as { WorkflowEntrypoint?: EntrypointBase };
+    return typeof mod?.WorkflowEntrypoint === "function" ? mod.WorkflowEntrypoint : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Loaded once, before any createCloudflareWorkflow() call at the top of a Worker's entry module.
+const workersBase = await workersEntrypoint();
+
+/** The class a Cloudflare Workflow extends: `base` if given; on workerd WorkflowEntrypoint; elsewhere the shape. */
+export function entrypointBase(base: EntrypointBase | undefined, runtime: Runtime, workers: EntrypointBase | undefined, workflow = "workflow"): EntrypointBase {
+  if (base) return base;
+  if (runtime !== "workerd") return WorkflowEntrypointShape;
+  if (workers) return workers;
+  throw workflowErrors.config(
+    `createCloudflareWorkflow("${workflow}") could not load WorkflowEntrypoint from "cloudflare:workers"; workerd would refuse the class ("worker is not an actor")`,
+    'Pass the base class: import { WorkflowEntrypoint } from "cloudflare:workers"; createCloudflareWorkflow(def, { base: WorkflowEntrypoint }).',
+  );
+}
+
 export interface CloudflareWorkflowOptions<B extends EntrypointBase> {
-  /** Pass `WorkflowEntrypoint` from "cloudflare:workers" (required by the Workers runtime). */
+  /**
+   * The class to extend. Default: `WorkflowEntrypoint` from "cloudflare:workers" on Workers, a
+   * stand-in with the same shape elsewhere (tests, Bun, Node).
+   */
   base?: B;
   mailer?: Mailer;
   fetch?: typeof fetch;
@@ -67,10 +101,12 @@ function retryConfig(o: StepRunOptions | undefined): CfStepConfig {
  * A class for Cloudflare Workflows that runs `def`:
  *
  * ```ts
- * import { WorkflowEntrypoint } from "cloudflare:workers";
- * export const FollowUp = createCloudflareWorkflow(followUp, { base: WorkflowEntrypoint });
+ * export const FollowUp = createCloudflareWorkflow(followUp);
  * // wrangler: [[workflows]] name = "contact-follow-up" binding = "FOLLOW_UP" class_name = "FollowUp"
  * ```
+ *
+ * On Workers the class extends `WorkflowEntrypoint` from "cloudflare:workers" (loaded for you);
+ * pass `{ base: WorkflowEntrypoint }` to choose the base class yourself.
  *
  * Mapping: step.run → step.do (retries/backoff → retry config), step.sleep → step.sleep,
  * step.waitForEvent → step.waitForEvent (type = event name, `match` checked here; non-matching
@@ -78,7 +114,7 @@ function retryConfig(o: StepRunOptions | undefined): CfStepConfig {
  * `approval-<step>`: send it with instance.sendEvent() after checking the approver yourself.
  */
 export function createCloudflareWorkflow<B extends EntrypointBase = typeof WorkflowEntrypointShape>(def: WorkflowDef<any>, opts: CloudflareWorkflowOptions<B> = {}) {
-  const Base = (opts.base ?? WorkflowEntrypointShape) as EntrypointBase;
+  const Base = entrypointBase(opts.base, detectRuntime(), workersBase, def.name);
   const maxSkips = opts.maxEventSkips ?? 100;
 
   class MiuWorkflow extends Base {

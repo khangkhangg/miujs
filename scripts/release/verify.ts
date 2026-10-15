@@ -9,7 +9,8 @@
 // Steps (each prints PASS/FAIL; the exit code is 1 if any failed):
 //   pack     npm pack every release package; check files, exports targets, manifest fields
 //   node     npm install the tarballs (Node 24); import every export; run fixtures/app.ts over HTTP
-//            through miujs/node with auth + session + db (node:sqlite) + cache + queue + realtime + bots
+//            through miujs/node with auth + session + db (node:sqlite) + cache + queue + realtime + bots;
+//            fixtures/kits.ts: admin resource CRUD through app.request, game/tour/migrate plugins build
 //   types    tsc --noEmit, strict, skipLibCheck false, nodenext, no lib "dom", against dist/types only
 //            (src/ deleted); lists files that still need lib "dom"
 //   workers  esbuild bundle of fixtures/worker.ts with Wrangler's conditions; no static node:/bun:
@@ -141,7 +142,7 @@ async function main() {
       mkdirSync(dir, { recursive: true });
       // overrides pin transitive "miujs@^x" / "@miujs/*@^x" to the tarballs too, so nothing comes from the registry.
       writeFileSync(join(dir, "package.json"), JSON.stringify({ name: `verify-${dir.split(/[\\/]/).pop()}`, private: true, type: "module", dependencies: deps, overrides: deps, ...extra }, null, 2));
-      for (const f of ["app.ts", "d1-node-sqlite.ts", "worker.ts"]) cpSync(join(FIXTURES, f), join(dir, f));
+      for (const f of ["app.ts", "kits.ts", "d1-node-sqlite.ts", "worker.ts"]) cpSync(join(FIXTURES, f), join(dir, f));
     };
     const assertInstalled = (dir: string, label: string) => {
       const problems = checkInstalled(dir, packs);
@@ -166,11 +167,12 @@ async function main() {
       const specs = exportSpecifiers(packs);
       writeFileSync(
         join(nodeDir, "import-all.mjs"),
-        `const specs = ${JSON.stringify(specs)};\nconst bad = [];\nfor (const s of specs) {\n  try {\n    const url = import.meta.resolve(s);\n    if (!/\\/dist\\/[^/]+\\.js$/.test(url)) bad.push(\`\${s} resolved to \${url}\`);\n    await import(s);\n  } catch (e) { bad.push(\`\${s}: \${e.message}\`); }\n}\nconsole.log(JSON.stringify({ count: specs.length, bad }));\nif (bad.length) process.exit(1);\n`,
+        `const specs = ${JSON.stringify(specs)};\nconst bad = [];\nfor (const s of specs) {\n  try {\n    const url = import.meta.resolve(s);\n    if (!/\\/dist\\/(?!types\\/)[\\w./-]+\\.js$/.test(url)) bad.push(\`\${s} resolved to \${url}\`);\n    await import(s);\n  } catch (e) { bad.push(\`\${s}: \${e.message}\`); }\n}\nconsole.log(JSON.stringify({ count: specs.length, bad }));\nif (bad.length) process.exit(1);\n`,
       );
       const imp = run([node, "import-all.mjs"], nodeDir);
       record("node import every export", imp.code === 0, imp.code === 0 ? `${specs.length} entry points, all from dist/*.js` : tail(imp));
       runApp("node", run([node, "app.ts"], nodeDir), "node", /node_modules\/miujs\/dist\/index\.js$/, record, tail);
+      runApp("node kits", run([node, "kits.ts"], nodeDir), "node", /node_modules\/miujs\/dist\/index\.js$/, record, tail);
     }
 
     // 4. types: strict consumer, dist/types only
@@ -181,7 +183,7 @@ async function main() {
       const tsc = join(nodeDir, "node_modules", "typescript", "bin", "tsc");
       // A Node-only consumer: lib es2023 + @types/node, no lib "dom". Headers, Request, Response and
       // crypto exist there; DOM-only names (HeadersInit, BodyInit, CryptoKey, ...) do not.
-      writeFileSync(join(nodeDir, "tsconfig.json"), JSON.stringify({ compilerOptions: { ...STRICT_CONSUMER, lib: ["es2023"] }, files: ["app.ts", "worker.ts", "types-all.ts"] }, null, 2));
+      writeFileSync(join(nodeDir, "tsconfig.json"), JSON.stringify({ compilerOptions: { ...STRICT_CONSUMER, lib: ["es2023"] }, files: ["app.ts", "kits.ts", "worker.ts", "types-all.ts"] }, null, 2));
       const r = run([node, tsc, "-p", "tsconfig.json", "--pretty", "false", "--listFiles"], nodeDir);
       const t = splitTscOutput(r.out);
       const dom = classifyDomErrors(t.ours);
@@ -226,6 +228,7 @@ async function main() {
         record("deno npm install", r.code === 0, r.code === 0 ? "" : tail(r));
         if (r.code === 0 && assertInstalled(denoDir, "deno")) {
           runApp("deno (bare specifiers)", run([deno, "run", "-A", "app.ts"], denoDir), "deno", /node_modules\/miujs\/dist\/index\.js$/, record, tail);
+          runApp("deno kits", run([deno, "run", "-A", "kits.ts"], denoDir), "deno", /node_modules\/miujs\/dist\/index\.js$/, record, tail);
           // The same app with npm: specifiers, resolved from the local node_modules.
           for (const f of ["app.ts", "d1-node-sqlite.ts"]) {
             const text = readFileSync(join(denoDir, f), "utf8").replace(/from "((?:@miujs\/[\w-]+|miujs)(?:\/[\w-]+)?)"/g, 'from "npm:$1"').replace(/import\.meta\.resolve\("(@miujs\/cache|miujs)"\)/g, 'import.meta.resolve("npm:$1")');
@@ -244,7 +247,10 @@ async function main() {
       consumer(bunDir);
       const r = run([process.execPath, "install", "--no-save"], bunDir, 600_000);
       record("bun install", r.code === 0, r.code === 0 ? "" : tail(r));
-      if (r.code === 0 && assertInstalled(bunDir, "bun")) runApp("bun", run([process.execPath, "app.ts"], bunDir), "bun", /node_modules\/miujs\/src\/index\.ts$/, record, tail);
+      if (r.code === 0 && assertInstalled(bunDir, "bun")) {
+        runApp("bun", run([process.execPath, "app.ts"], bunDir), "bun", /node_modules\/miujs\/src\/index\.ts$/, record, tail);
+        runApp("bun kits", run([process.execPath, "kits.ts"], bunDir), "bun", /node_modules\/miujs\/src\/index\.ts$/, record, tail);
+      }
     }
   } finally {
     finish(results, tmp, packs, opts.keep);

@@ -165,4 +165,16 @@ describe("public declarations without lib dom", () => {
     for (const folder of buildOrder(["auth", "audit", "web", "ai"])) await buildPackage(folder);
     expect(["auth", "audit", "web", "ai"].flatMap(declarationsUsing)).toEqual([]);
   }, 180_000);
+
+  test("the kits (admin, game, tour, migrate) build and use no DOM-only type names", async () => {
+    const kits = ["admin", "game", "tour", "migrate"];
+    for (const folder of buildOrder(kits)) await buildPackage(folder);
+    expect(kits.flatMap(declarationsUsing)).toEqual([]);
+  }, 300_000);
+});
+
+describe("release set", () => {
+  test("the kits are released with the batteries", () => {
+    for (const kit of ["admin", "game", "tour", "migrate"]) expect(RELEASE_PACKAGES).toContain(kit);
+  });
 });

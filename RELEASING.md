@@ -4,9 +4,11 @@ All packages (`miujs` and every `@miujs/*`) share one version and are published 
 [.github/workflows/release.yml](.github/workflows/release.yml) when a `v*` tag is pushed.
 
 Released packages: `miujs`, `@miujs/cli`, `auth`, `session`, `db`, `cache`, `queue`, `ratelimit`,
-`bots`, `realtime`, `files`, `web`, `mail`, `access`, `audit`, `workflows` and `ai`
-(`RELEASE_PACKAGES` in [scripts/build-packages.ts](scripts/build-packages.ts)). `admin`, `game`,
-`tour` and `migrate` stay unpublished until their APIs settle.
+`bots`, `realtime`, `files`, `web`, `mail`, `access`, `audit`, `workflows` and `ai`, plus the kits
+`admin`, `game`, `tour` and `migrate` (`RELEASE_PACKAGES` in
+[scripts/build-packages.ts](scripts/build-packages.ts): the documented packages, then
+`KIT_PACKAGES`). The kits are published but not yet in the docs index (`DOCUMENTED_PACKAGES` in
+[scripts/lib/repo.ts](scripts/lib/repo.ts)).
 
 ## One-time setup (maintainer)
 
@@ -83,7 +85,7 @@ registry for typescript, esbuild, @types/node and the optional peers) packs ever
 | step | what it proves |
 |---|---|
 | pack | each tarball has README, both license files and every `exports`/`main`/`bin` target, and no tests |
-| node | `npm install` of the tarballs only (no registry copy of ours); every export imports from `dist/*.js`; an app with auth + session + db (node:sqlite) + cache + queue + realtime + bots answers real HTTP through `miujs/node` |
+| node | `npm install` of the tarballs only (no registry copy of ours); every export imports from `dist/*.js`; an app with auth + session + db (node:sqlite) + cache + queue + realtime + bots answers real HTTP through `miujs/node`; `fixtures/kits.ts` runs admin resource CRUD through `app.request` and builds the game, tour and migrate plugins (on Deno and Bun too) |
 | types | `tsc --noEmit` with `strict`, `skipLibCheck: false`, `nodenext` and no lib `"dom"` (lib es2023 + @types/node), every export, after deleting the packages' `src/`; DOM-only names fail, except in packages listed in `DOM_LIB_PENDING` (`miujs` for now), which are listed as a warning |
 | workers | esbuild with Wrangler's `workerd`/`worker`/`browser` conditions: no static `node:`/`bun:` imports, no `src/*.ts`, no `eval`; the bundle answers a request as `workerd` |
 | deno | Deno 2 runs the same app with bare and `npm:` specifiers, and `deno check` passes |

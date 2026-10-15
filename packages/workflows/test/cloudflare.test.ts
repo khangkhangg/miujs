@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { miu, t } from "miujs";
 import { cloudflareQueue } from "@miujs/queue";
-import { createCloudflareWorkflow, defineWorkflow, workflows, type CfWorkflowStep } from "../src/index.ts";
+import { createCloudflareWorkflow, defineWorkflow, workflows, WorkflowEntrypointShape, type CfWorkflowStep } from "../src/index.ts";
+import { entrypointBase, workersEntrypoint } from "../src/cloudflare.ts";
 
 /** In-test fake of Cloudflare's WorkflowStep: journals `do` results by name like the real one. */
 function fakeStep(events: Record<string, { payload: unknown }[]> = {}) {
@@ -103,6 +104,45 @@ describe("createCloudflareWorkflow", () => {
     });
     const D = createCloudflareWorkflow(dup, { base: FakeEntrypoint });
     await expect(new D({}, {}).run({ payload: {}, timestamp: new Date(0), instanceId: "i" }, fakeStep())).rejects.toMatchObject({ code: "MIU_E_WORKFLOW_STEP_DUPLICATE" });
+  });
+
+  test("on workerd, the default base is WorkflowEntrypoint from cloudflare:workers", async () => {
+    const loaded: string[] = [];
+    const load = async (spec: string) => {
+      loaded.push(spec);
+      return { WorkflowEntrypoint: FakeEntrypoint };
+    };
+    expect(await workersEntrypoint("workerd", load)).toBe(FakeEntrypoint);
+    expect(loaded).toEqual(["cloudflare:workers"]);
+    for (const rt of ["bun", "node", "deno", "unknown"] as const) expect(await workersEntrypoint(rt, load)).toBeUndefined();
+    expect(loaded).toEqual(["cloudflare:workers"]);
+    expect(
+      await workersEntrypoint("workerd", async () => {
+        throw new Error("no such module");
+      }),
+    ).toBeUndefined();
+  });
+
+  test("entrypointBase: an explicit base wins; workerd uses WorkflowEntrypoint; elsewhere the shape", () => {
+    class Mine extends FakeEntrypoint {}
+    expect(entrypointBase(Mine, "workerd", FakeEntrypoint)).toBe(Mine);
+    expect(entrypointBase(Mine, "bun", undefined)).toBe(Mine);
+    expect(entrypointBase(undefined, "workerd", FakeEntrypoint)).toBe(FakeEntrypoint);
+    expect(entrypointBase(undefined, "bun", undefined)).toBe(WorkflowEntrypointShape);
+    expect(entrypointBase(undefined, "node", FakeEntrypoint)).toBe(WorkflowEntrypointShape);
+  });
+
+  test("on workerd without WorkflowEntrypoint, construction fails with a fix instead of 'worker is not an actor'", () => {
+    let err: any;
+    try {
+      entrypointBase(undefined, "workerd", undefined, "nightly");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ code: "MIU_E_WORKFLOW_CONFIG" });
+    expect(err.message).toContain("nightly");
+    expect(err.fix).toContain('import { WorkflowEntrypoint } from "cloudflare:workers"');
+    expect(err.fix).toContain("base: WorkflowEntrypoint");
   });
 
   test("works without a base class (plain WorkflowEntrypoint shape)", async () => {

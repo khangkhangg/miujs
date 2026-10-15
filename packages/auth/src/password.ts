@@ -24,6 +24,12 @@ export interface PasswordOptions {
    * memory (concurrency x memoryCost) and CPU when many sign-ins arrive together.
    */
   concurrency?: number;
+  /**
+   * Cloudflare Workers: the CPU time per request your Worker may use, in ms (wrangler `[limits]
+   * cpu_ms`). Default 10, the Free plan's limit. On Workers, auth() warns once at startup when one
+   * PBKDF2 hash is estimated to need more. Set it to your plan's limit, or false to skip the check.
+   */
+  workersCpuMs?: number | false;
   /** @internal Override `Bun.password` (null = pretend it is absent). */
   bunPassword?: BunPasswordLike | null;
 }
@@ -81,6 +87,43 @@ function preferred(opts: PasswordOptions): "argon2id" | "pbkdf2" {
 export function describePasswordHashing(opts: PasswordOptions = {}): string {
   if (preferred(opts) === "argon2id") return `argon2id, m=${opts.memoryCost ?? DEFAULT_MEMORY_COST} KiB, t=${opts.timeCost ?? DEFAULT_TIME_COST}`;
   return `pbkdf2-sha256, ${opts.iterations ?? DEFAULT_ITERATIONS} iterations`;
+}
+
+/** CPU time per request on the Cloudflare Workers Free plan, in ms (not configurable there). */
+export const WORKERS_FREE_CPU_MS = 10;
+/** Measured on workerd: one PBKDF2-SHA256 hash at 600,000 iterations costs about 250 ms of CPU. */
+const WORKERD_MS_PER_100K_ITERATIONS = 42;
+
+/** Estimated CPU time of one PBKDF2-SHA256 hash on workerd, in ms. */
+export function pbkdf2WorkersCpuMs(iterations: number): number {
+  return Math.ceil((iterations / 100_000) * WORKERD_MS_PER_100K_ITERATIONS);
+}
+
+/**
+ * The `[limits] cpu_ms` a Worker hashing passwords with PBKDF2 should have: a sign-in can verify
+ * and then rehash (two hashes), doubled for headroom, rounded up to 100 ms.
+ */
+export function suggestedWorkersCpuMs(iterations: number): number {
+  return Math.ceil((4 * pbkdf2WorkersCpuMs(iterations)) / 100) * 100;
+}
+
+/** Why PBKDF2 will not fit the Workers CPU budget and what to do, or null when it fits. */
+export function workersCpuWarning(opts: PasswordOptions = {}): string | null {
+  if (opts.workersCpuMs === false || preferred({ ...opts, bunPassword: null }) !== "pbkdf2") return null;
+  const iterations = opts.iterations ?? DEFAULT_ITERATIONS;
+  const budget = opts.workersCpuMs ?? WORKERS_FREE_CPU_MS;
+  const cost = pbkdf2WorkersCpuMs(iterations);
+  if (cost <= budget) return null;
+  const suggested = suggestedWorkersCpuMs(iterations);
+  const fits = Math.floor((budget / WORKERD_MS_PER_100K_ITERATIONS) * 100_000);
+  return (
+    `auth(): PBKDF2-SHA256 at ${iterations} iterations costs about ${cost} ms of CPU per password hash on Workers, ` +
+    `over the ${budget} ms CPU budget${budget === WORKERS_FREE_CPU_MS ? " (the Workers Free plan limit)" : ""}, so sign-up, sign-in and password changes may fail (error 1102). ` +
+    `Options: (1) a Workers Paid plan with [limits] cpu_ms = ${suggested} or more in wrangler.toml (miu deploy cloudflare writes it), then auth({ password: { workersCpuMs: ${suggested} } }); ` +
+    `(2) fewer iterations, auth({ password: { iterations: ${fits} } }) fits ${budget} ms, but a leaked hash becomes ${Math.max(1, Math.round(iterations / Math.max(1, fits)))}x cheaper to guess offline (OWASP recommends 600000); ` +
+    `(3) sign users in without passwords on Workers (passkeys or OAuth), or delegate sign-in to an external identity provider. ` +
+    `Set auth({ password: { workersCpuMs: false } }) to silence this.`
+  );
 }
 
 async function pbkdf2(password: string, salt: string, iterations: number): Promise<Uint8Array> {

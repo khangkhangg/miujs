@@ -45,6 +45,11 @@ export interface CloudflareNeeds {
    * `wrangler hyperdrive create`; `localConnectionString` is what `wrangler dev` connects to.
    */
   hyperdrive?: { binding: string; id?: string; localConnectionString?: string }[];
+  /**
+   * Worker limits (`[limits]`). `cpuMs`: CPU time per request the plugin needs, e.g. password
+   * hashing; the app asks for the largest. Configurable on Workers Paid plans only.
+   */
+  limits?: { cpuMs?: number };
 }
 
 /**

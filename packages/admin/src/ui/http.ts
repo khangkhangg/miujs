@@ -2,7 +2,7 @@
 // write goes through the same routes, permission checks and validation as the API), the
 // active organization, redirects and permission checks.
 
-import type { App, Context } from "miujs";
+import type { App, Context, HeadersLike } from "miujs";
 
 export const ORG_COOKIE = "miu_admin_org";
 const ORG_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
@@ -64,7 +64,7 @@ export async function sub(app: App, ctx: Context, method: string, path: string, 
   return { status: res.status, ok: res.ok, data, headers: res.headers };
 }
 
-export function redirect(location: string, headers?: HeadersInit): Response {
+export function redirect(location: string, headers?: HeadersLike): Response {
   const h = new Headers(headers);
   h.set("location", location);
   return new Response(null, { status: 303, headers: h });

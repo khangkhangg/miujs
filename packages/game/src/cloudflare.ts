@@ -96,8 +96,22 @@ function fail(err: unknown): Response {
   return errors.internal().toResponse();
 }
 
+/** An instance of the matchmaker Durable Object (what Cloudflare calls). */
+export interface MatchmakerDurableObject {
+  fetch(req: Request): Promise<Response>;
+  /** Re-run matching (window widened, someone timed out, statuses expired). */
+  alarm(): Promise<void>;
+  webSocketMessage(ws: CfWebSocketLike, message: string | ArrayBuffer): Promise<void>;
+  webSocketClose(): Promise<void>;
+}
+
+/** The class createMatchmakerDurableObject() returns; export it from your Worker. */
+export interface MatchmakerDurableObjectClass {
+  new (state: DurableStateLike, env: unknown): MatchmakerDurableObject;
+}
+
 /** Build the Durable Object class that hosts matchmaking queues. Export it from your Worker. */
-export function createMatchmakerDurableObject(mm: Matchmaker, opts: MatchmakerDurableObjectOptions = {}) {
+export function createMatchmakerDurableObject(mm: Matchmaker, opts: MatchmakerDurableObjectOptions = {}): MatchmakerDurableObjectClass {
   const inner = internals(mm);
   const clock = opts.clock ?? inner.clock ?? systemClock;
   const makePair =

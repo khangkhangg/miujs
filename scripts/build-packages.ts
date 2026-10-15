@@ -31,10 +31,11 @@ import { DOCUMENTED_PACKAGES, GITHUB_REPO, ROOT, blobUrl, readPackageJson, slash
 type Conditions = { types: string; bun: string; default: string };
 
 /**
- * Packages published to npm, in docs order. admin, game, tour and migrate are left out until their
- * APIs settle (see DOCUMENTED_PACKAGES); build them with --all.
+ * Packages published to npm: the documented batteries in docs order, then the kits (admin, game,
+ * tour, migrate), which are released but not yet in the docs index (see DOCUMENTED_PACKAGES).
  */
-export const RELEASE_PACKAGES: readonly string[] = DOCUMENTED_PACKAGES;
+export const KIT_PACKAGES: readonly string[] = ["admin", "game", "tour", "migrate"];
+export const RELEASE_PACKAGES: readonly string[] = [...DOCUMENTED_PACKAGES, ...KIT_PACKAGES];
 
 /** Every workspace package folder under packages/. */
 export const ALL_PACKAGES = (): string[] =>

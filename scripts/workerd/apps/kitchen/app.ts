@@ -49,10 +49,20 @@ const nightly = defineWorkflow("kitchen-nightly", {
 });
 // workerd only runs Workflow classes that extend WorkflowEntrypoint (the CLI shims the import on Bun).
 export const Nightly = createCloudflareWorkflow(nightly, { base: WorkflowEntrypoint });
+// Without `base`: @miujs/workflows loads WorkflowEntrypoint from "cloudflare:workers" itself on workerd.
+export const NightlyDefault = createCloudflareWorkflow(nightly);
 const cfWorkflows = definePlugin({
   name: "kitchen-workflows",
-  cloudflare: () => ({ kv: ["MARKS"], workflows: [{ binding: "NIGHTLY", name: "kitchen-nightly", className: "Nightly" }] }),
+  cloudflare: () => ({
+    kv: ["MARKS"],
+    workflows: [
+      { binding: "NIGHTLY", name: "kitchen-nightly", className: "Nightly" },
+      { binding: "NIGHTLY_DEFAULT", name: "kitchen-nightly-default", className: "NightlyDefault" },
+    ],
+  }),
 });
+/** ?class=default uses the Workflow built without `base`. */
+const workflowBinding = (env: Record<string, unknown>, cls: string | undefined) => (cls === "default" ? env.NIGHTLY_DEFAULT : env.NIGHTLY);
 
 export { RateLimiterDurableObject };
 const doLimiter = durableObjectStore("RATE_LIMITER");
@@ -123,16 +133,18 @@ const routes = {
   // Cloudflare Workflows
   startWorkflow: route.post("/workflows/:key", {
     params: t.object({ key: t.string() }),
+    query: t.object({ class: t.optional(t.enum(["base", "default"] as const)) }),
     handler: async (ctx) => {
-      const binding = ctx.env.NIGHTLY as { create(o: { id?: string; params: unknown }): Promise<{ id: string }> };
+      const binding = workflowBinding(ctx.env, ctx.query.class) as { create(o: { id?: string; params: unknown }): Promise<{ id: string }> };
       const inst = await binding.create({ id: ctx.params.key, params: { key: ctx.params.key } });
       return { id: inst.id };
     },
   }),
   workflowStatus: route.get("/workflows/:key", {
     params: t.object({ key: t.string() }),
+    query: t.object({ class: t.optional(t.enum(["base", "default"] as const)) }),
     handler: async (ctx) => {
-      const binding = ctx.env.NIGHTLY as { get(id: string): Promise<{ status(): Promise<unknown> }> };
+      const binding = workflowBinding(ctx.env, ctx.query.class) as { get(id: string): Promise<{ status(): Promise<unknown> }> };
       return { status: await (await binding.get(ctx.params.key)).status() };
     },
   }),

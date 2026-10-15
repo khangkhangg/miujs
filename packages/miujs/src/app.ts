@@ -1007,6 +1007,7 @@ export class App {
       }
       assets ??= next;
     }
+    const cpuMs = Math.max(0, ...all.map((n) => n.limits?.cpuMs ?? 0));
     return {
       assets,
       workflows: byBinding(all.flatMap((n) => n.workflows ?? [])),
@@ -1023,6 +1024,7 @@ export class App {
       },
       durableObjects: [...dos.values()],
       crons: uniq(all.flatMap((n) => n.crons ?? [])),
+      limits: cpuMs > 0 ? { cpuMs } : undefined,
     };
   }
 }

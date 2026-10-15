@@ -202,5 +202,22 @@ export async function run(dev: Dev, _ctx: SuiteContext) {
     eq((await mark("wf:k1"))?.total, 42, "workflow output in KV");
     return `complete in ${Math.round(performance.now() - t0)} ms (includes a 1 s step.sleep)`;
   });
+
+  await S("Cloudflare Workflows: createCloudflareWorkflow without base extends WorkflowEntrypoint on workerd", async () => {
+    const created = await c.post("/workflows/k2?class=default");
+    check(created.status === 200, `create ${created.status}: ${created.text.slice(0, 400)}`);
+    const status = await waitFor(
+      async () => {
+        const s = (await c.get("/workflows/k2?class=default")).json?.status;
+        return s && (s.status === "complete" || s.status === "errored") ? s : null;
+      },
+      30_000,
+      "the default-base workflow to finish",
+      250,
+    );
+    check(status.status === "complete", `workflow status: ${JSON.stringify(status).slice(0, 500)}`);
+    eq((await mark("wf:k2"))?.total, 42, "workflow output in KV");
+    return "complete (no base option)";
+  });
   void sleep;
 }

@@ -151,7 +151,7 @@ Both need a store with the extra methods (`memoryUserStore()` and `dbUserStore()
 | --- | --- | --- | --- |
 | `users` | `UserStore` | `memoryUserStore()` | Where users and tokens live. Use `dbUserStore(db)` in real apps. |
 | `basePath` | `string` | `"/auth"` | Prefix for all auth routes. |
-| `password` | `PasswordOptions` | `{}` | `{ algorithm?: "argon2id" \| "pbkdf2", iterations? }`. Default argon2id on Bun, else PBKDF2 with 600,000 iterations. |
+| `password` | `PasswordOptions` | `{}` | `{ algorithm?: "argon2id" \| "pbkdf2", iterations?, workersCpuMs? }`. Default argon2id on Bun, else PBKDF2 with 600,000 iterations. `workersCpuMs` is your Workers CPU limit per request (default 10, the Free plan) or `false`; see [Cloudflare Workers](#cloudflare-workers). |
 | `defaultRoles` | `string[]` | `[]` | Roles given to newly registered users. |
 | `minPasswordLength` | `number` | `8` | Minimum password length (maximum is 1024). |
 | `register` | `boolean` | `true` | Serve `POST /register`. |
@@ -204,6 +204,19 @@ See [all error codes](../../docs/errors.md).
 - The default memory rate limiter counts per isolate, so limits are approximate on Workers. Use `rateLimit: { limiter: cloudflareRateLimiter("LOGIN_LIMIT") }`: `auth().cloudflare()` then declares a `[[ratelimits]]` binding with the login per-IP+account limit and a 60-second period. The binding's own limit applies to every rule. A missing binding fails with `MIU_E_AUTH_RATELIMIT_BINDING` rather than leaving login unprotected.
 - `APP_URL` and `TURNSTILE_SECRET_KEY` are read from `env` per request, so the missing-`APP_URL` check happens when the first link is built.
 - Passwords use PBKDF2 via Web Crypto on Workers (no `Bun.password`), so bcrypt and argon2 legacy hashes cannot be verified there.
+
+### PBKDF2 and the Workers CPU limit
+
+One PBKDF2-SHA256 hash at the default 600,000 iterations costs about 250 ms of CPU on workerd. Sign-up, sign-in (which may also rehash) and password changes each hash at least once. The Workers Free plan allows 10 ms of CPU per request; Paid plans default to 30,000 ms and let you set the limit with `[limits] cpu_ms` in `wrangler.toml`. auth() does not lower the iteration count for you. Instead:
+
+- **Startup warning.** On Workers (and under `miu deploy cloudflare`), auth() logs one warning when a hash is estimated to cost more than `password.workersCpuMs` (default 10). The warning lists the options below. Set `workersCpuMs` to your plan's limit once it is high enough, or to `false` to turn the check off.
+- **`miu deploy cloudflare`** writes `[limits] cpu_ms` when `auth().cloudflare()` asks for it: four hashes' worth (a verify plus a rehash, doubled for headroom), 1,100 ms at 600,000 iterations, or `workersCpuMs` if that is higher. The Free plan cannot set this. On Paid it replaces the 30,000 ms default, so raise it if other routes need more.
+
+Pick one:
+
+1. **Workers Paid with a CPU limit** (recommended). Keep 600,000 iterations and deploy with the generated `[limits] cpu_ms`. Then pass `auth({ password: { workersCpuMs: 1100 } })` so the warning goes away.
+2. **Fewer iterations.** Pass `auth({ password: { iterations } })`. About 23,000 iterations fit in 10 ms. That makes a leaked hash about 25 times cheaper to guess offline than OWASP's 600,000. Existing hashes keep working, and `needsRehash` only upgrades a hash, never downgrades it.
+3. **No passwords on Workers.** Sign users in with passkeys or OAuth, or delegate sign-in to an external identity provider.
 
 ## Links
 

@@ -208,6 +208,30 @@ describe("miu deploy cloudflare reminders", () => {
     expect(r.out).toContain("export const MiuRooms");
   });
 
+  test("writes [limits] cpu_ms when a plugin needs more CPU than the Free plan (auth's PBKDF2)", async () => {
+    const dir = tempDir();
+    linkWorkspace(dir, ["miujs", "@miujs/session", "@miujs/auth"]);
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "cpu-demo", type: "module" }));
+    writeFileSync(
+      join(dir, "app.ts"),
+      `import { miu } from "miujs";
+import { session } from "@miujs/session";
+import { auth } from "@miujs/auth";
+export default miu({ name: "cpu-demo", plugins: [session(), auth()], logLevel: "silent" });
+`,
+    );
+    const r = await run(["deploy", "cloudflare", "--dry-run"], dir);
+    expect(r.code).toBe(0);
+    expect(read(dir, "wrangler.toml")).toMatch(/\n\[limits\]\n(#.*\n)*cpu_ms = 1100\n/);
+  });
+
+  test("no [limits] when nothing asks for CPU", async () => {
+    const dir = project();
+    const r = await run(["deploy", "cloudflare", "--dry-run"], dir);
+    expect(r.code).toBe(0);
+    expect(read(dir, "wrangler.toml")).not.toContain("[limits]");
+  });
+
   test("unknown targets list the real ones", async () => {
     const r = await run(["deploy", "mars"], fixture("basic"));
     expect(r.code).toBe(1);

@@ -294,8 +294,18 @@ export function lobbies(opts: LobbiesOptions) {
 
 export type Lobbies = ReturnType<typeof lobbies>;
 
+/** An instance of the lobby Durable Object (what Cloudflare calls). */
+export interface LobbyDurableObject {
+  fetch(req: Request): Promise<Response>;
+}
+
+/** The class createLobbyDurableObject() returns; export it from your Worker. */
+export interface LobbyDurableObjectClass {
+  new (state: { storage: { get(k: string): Promise<unknown>; put(k: string, v: unknown): Promise<void> }; getWebSockets?(): CfWebSocketLike[] }, env: unknown): LobbyDurableObject;
+}
+
 /** Cloudflare: one Durable Object per lobby. Export it as `MiuLobbies` (binding MIU_LOBBY). */
-export function createLobbyDurableObject(lb: Lobbies, o: { clock?: Clock } = {}) {
+export function createLobbyDurableObject(lb: Lobbies, o: { clock?: Clock } = {}): LobbyDurableObjectClass {
   const clock = o.clock ?? (lb as unknown as Record<symbol, { clock: Clock }>)[INTERNAL]?.clock ?? systemClock;
   return class MiuLobbiesDurableObject {
     private state: { storage: { get(k: string): Promise<unknown>; put(k: string, v: unknown): Promise<void> } };
