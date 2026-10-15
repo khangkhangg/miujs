@@ -1,26 +1,23 @@
-// `miu` command line. `runCli` is pure enough to test: it takes args, a cwd and output sinks
-// and returns an exit code.
+// `miu` command line. `runCli` is pure enough to test: it takes args, a cwd, output sinks and an
+// optional command runner (for wrangler, flyctl, bun build, ...) and returns an exit code.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { camel, jobTemplate, newProjectFiles, pluginTemplate, roomTemplate, routeTemplate } from "./templates.ts";
+import { existsSync, readdirSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
+import { cmdCheck } from "./check.ts";
+import { cmdDb } from "./db.ts";
+import { cmdDeploy } from "./deploy.ts";
+import { cmdLoadtest } from "./loadtest.ts";
+import { cmdLogs } from "./logs.ts";
+import { camel, jobTemplate, pluginTemplate, roomTemplate, routeTemplate, templateFiles, TEMPLATES } from "./templates.ts";
+import { CliError, defaultRunner, findEntry, loadApp, parseArgs, str, writeFile, writeNew, type CliIO, type FlagSpec, type Flags, type Runner } from "./util.ts";
 
-export interface CliIO {
-  cwd: string;
-  out: (line: string) => void;
-  err: (line: string) => void;
-}
-
-class CliError extends Error {
-  readonly code: string;
-  readonly fix: string;
-  constructor(code: string, message: string, fix: string) {
-    super(message);
-    this.code = code;
-    this.fix = fix;
-  }
-}
+export { CliError, defaultRunner, parseArgs, type CliIO, type RunOptions, type RunResult, type Runner } from "./util.ts";
+export { inlineParams, wranglerD1 } from "./db.ts";
+export { appEnv, dockerfile, shippedPaths, wranglerToml, DEPLOY_TARGETS } from "./deploy.ts";
+export { formatEntry, entriesFromTail, jsonObjectSplitter, parseLine, type LogEntry } from "./logs.ts";
+export { parseActions } from "./loadtest.ts";
+export { workersImports } from "./check.ts";
+export { TEMPLATES, templateFiles } from "./templates.ts";
 
 const HELP = `miu — the MiuJS command line
 
@@ -29,79 +26,74 @@ Usage:
   miu test [entry]                Run the \`tests\` exported by route files
   miu inspect [entry] [--json]    List routes, schemas, plugins and MCP tools
   miu openapi [entry] [--out f]   Print or write the OpenAPI 3.1 spec
-  miu check [entry]               Look for leaked secrets and unauthenticated mutations
+  miu check [entry] [--no-types]  Leaked secrets, unauthenticated mutations, tsc --noEmit
+                                  (when a tsconfig.json exists) and node:/bun: imports that
+                                  would break a Cloudflare Workers bundle
   miu add route|job|room|plugin <name>
                                   Scaffold a file with a failing test
-  miu new <dir>                   Create a new MiuJS project
-  miu deploy cloudflare [--dry-run] [--out wrangler.toml] [--force]
-                                  Generate wrangler.toml from your plugins and deploy
+  miu new <dir> [--template api]  Create a new MiuJS project. Templates:
+                                    api           JSON API with a health route (default)
+                                    fullstack     @miujs/web JSX pages + htmx
+                                    quiz-game     the Kahoot-style quiz (examples/quiz)
+                                    chat          realtime chat room + client page
+                                    saas-starter  auth, sessions, orgs, mail, audit, workflows
+                                    crm           contacts per org + a follow-up workflow (minimal)
+                                    game          a realtime multiplayer room (minimal)
+
+  miu db pull [--db file.sqlite | --d1 name] [--out schema.ts] [--json]
+                                  Introspect a database and write a Drizzle schema.ts
+                                  (or print the JSON description)
+  miu db migrate [--dir migrations] [--db file.sqlite | --d1 name]
+                                  Apply NNNN_name.sql files that have not run yet
+  miu db migrate --generate <name> --schema schema.ts [--dir migrations] [--db f | --d1 n]
+                                  Diff your Drizzle schema against the database (or the
+                                  migrations replayed in memory) and write the next
+                                  NNNN_<name>.sql. Destructive changes are printed, never written.
+      --d1 <name> runs \`bunx wrangler d1 execute <name> --remote --json\` (needs \`wrangler login\`).
+      Applied migrations are recorded in the _miu_migrations table (the same one db({ migrations })
+      uses at runtime). Wrangler's \`wrangler d1 migrations apply\` keeps its own d1_migrations table
+      instead; both read the same NNNN_name.sql files, but they do not know about each other, so
+      pick one tool per database. Both tables are skipped by \`miu db pull\`.
+
+  miu loadtest <ws-url> --players N --duration 10s [--action '{"type":"inc","data":{}}']
+               [--rate 5] [--json]
+                                  Simulate N room clients and print p50/p95/p99 patch latency
+                                  (--action also accepts a protocol frame {"t":"msg","type":...})
+  miu logs [--last N] [--json] [--file app.log | --worker name]
+                                  Pretty-print the app's JSON-lines log: a local file (--file),
+                                  or \`wrangler tail --format json\` for Cloudflare
+  miu deploy <target> [--dry-run] [--force] [--entry app.ts]
+      cloudflare [--out wrangler.toml]  wrangler.toml from your plugins, secrets to set, then deploy
+      fly                               Dockerfile (oven/bun, non-root) + fly.toml, then flyctl deploy
+      railway                           Dockerfile + railway.json, then railway up
+      render                            Dockerfile + render.yaml (deploy from git as a Blueprint)
+      vps [--host user@server] [--domain example.com]
+                                        systemd unit + Caddyfile; prints the rsync/ssh commands
+      binary [--out dist/app]           bun build --compile into one executable
+      deno-deploy                       deno.json deploy config; deployctl deploy
+      --dry-run writes the files and prints the next commands without running anything.
 
 Entry defaults to app.ts, src/app.ts, index.ts or src/index.ts.`;
 
-interface AppLike {
-  ready(): Promise<void>;
-  inspect(): any;
-  openapi(): any;
-  tests: { name: string; fn: (call: unknown) => unknown }[];
-  call: unknown;
-}
-
-function parseArgs(args: string[]) {
-  const positional: string[] = [];
-  const flags: Record<string, string | true> = {};
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith("--")) {
-      const key = a.slice(2);
-      const next = args[i + 1];
-      if (next !== undefined && !next.startsWith("--") && (key === "out" || key === "entry")) {
-        flags[key] = next;
-        i++;
-      } else flags[key] = true;
-    } else positional.push(a);
-  }
-  return { positional, flags };
-}
-
-const ENTRY_CANDIDATES = ["app.ts", "src/app.ts", "index.ts", "src/index.ts"];
-
-function findEntry(cwd: string, given?: string): string {
-  if (given) {
-    const p = resolve(cwd, given);
-    if (!existsSync(p)) throw new CliError("MIU_E_CLI_NO_APP", `Entry file ${given} does not exist`, "Pass the path to the file that default-exports your app.");
-    return p;
-  }
-  for (const c of ENTRY_CANDIDATES) {
-    const p = join(cwd, c);
-    if (existsSync(p)) return p;
-  }
-  throw new CliError(
-    "MIU_E_CLI_NO_APP",
-    `No app entry found in ${cwd}`,
-    `Create app.ts with \`export default miu({...})\`, or pass the entry path (tried ${ENTRY_CANDIDATES.join(", ")}).`,
-  );
-}
-
-async function loadApp(entry: string): Promise<AppLike> {
-  const mod = await import(pathToFileURL(entry).href);
-  const app = mod.default;
-  if (!app || typeof app.inspect !== "function" || typeof app.ready !== "function") {
-    throw new CliError("MIU_E_CLI_NO_DEFAULT_EXPORT", `${entry} does not default-export a MiuJS app`, "Add `export default miu({ ... })` to the entry file.");
-  }
-  await app.ready();
-  return app;
-}
-
-function writeNew(file: string, content: string) {
-  if (existsSync(file)) throw new CliError("MIU_E_CLI_EXISTS", `${file} already exists`, "Pick another name or delete the existing file first.");
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, content);
-}
+const ENTRY: FlagSpec = { entry: "value" };
+const FLAGS: Record<string, FlagSpec> = {
+  dev: ENTRY,
+  test: ENTRY,
+  inspect: { ...ENTRY, json: "bool" },
+  openapi: { ...ENTRY, out: "value" },
+  check: { ...ENTRY, "no-types": "bool" },
+  add: {},
+  new: { template: "value" },
+  deploy: { ...ENTRY, out: "value", "dry-run": "bool", force: "bool", host: "value", domain: "value", region: "value", port: "value" },
+  db: { db: "value", d1: "value", out: "value", json: "bool", dir: "value", generate: "value", schema: "value" },
+  loadtest: { players: "value", duration: "value", action: "value", rate: "value", json: "bool" },
+  logs: { last: "value", json: "bool", file: "value", worker: "value" },
+};
 
 // ---------- commands ----------
 
-async function cmdInspect(io: CliIO, positional: string[], flags: Record<string, string | true>) {
-  const app = await loadApp(findEntry(io.cwd, positional[0] ?? (flags.entry as string | undefined)));
+async function cmdInspect(io: CliIO, positional: string[], flags: Flags) {
+  const app = await loadApp(findEntry(io.cwd, positional[0] ?? str(flags, "entry")));
   const info = app.inspect();
   if (flags.json) {
     io.out(JSON.stringify(info, null, 2));
@@ -119,8 +111,8 @@ async function cmdInspect(io: CliIO, positional: string[], flags: Record<string,
   return 0;
 }
 
-async function cmdTest(io: CliIO, positional: string[], flags: Record<string, string | true>) {
-  const app = await loadApp(findEntry(io.cwd, positional[0] ?? (flags.entry as string | undefined)));
+async function cmdTest(io: CliIO, positional: string[], flags: Flags) {
+  const app = await loadApp(findEntry(io.cwd, positional[0] ?? str(flags, "entry")));
   let passed = 0;
   let failed = 0;
   for (const t of app.tests) {
@@ -140,63 +132,16 @@ async function cmdTest(io: CliIO, positional: string[], flags: Record<string, st
   return failed ? 1 : 0;
 }
 
-async function cmdOpenapi(io: CliIO, positional: string[], flags: Record<string, string | true>) {
-  const app = await loadApp(findEntry(io.cwd, positional[0] ?? (flags.entry as string | undefined)));
+async function cmdOpenapi(io: CliIO, positional: string[], flags: Flags) {
+  const app = await loadApp(findEntry(io.cwd, positional[0] ?? str(flags, "entry")));
   const spec = JSON.stringify(app.openapi(), null, 2);
-  if (typeof flags.out === "string") {
-    const file = resolve(io.cwd, flags.out);
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, spec + "\n");
+  const out = str(flags, "out");
+  if (out) {
+    const file = resolve(io.cwd, out);
+    writeFile(file, spec + "\n");
     io.out(`Wrote ${file}`);
   } else io.out(spec);
   return 0;
-}
-
-const SECRET_PATTERNS: { name: string; re: RegExp }[] = [
-  { name: "Anthropic API key", re: /sk-ant-[A-Za-z0-9_-]{20,}/ },
-  { name: "OpenAI-style API key", re: /\bsk-(?:proj-)?[A-Za-z0-9]{32,}\b/ },
-  { name: "AWS access key", re: /\bAKIA[0-9A-Z]{16}\b/ },
-  { name: "GitHub token", re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/ },
-  { name: "Slack token", re: /\bxox[abpr]-[A-Za-z0-9-]{20,}\b/ },
-  { name: "Stripe live key", re: /\b[sr]k_live_[A-Za-z0-9]{20,}\b/ },
-  { name: "private key", re: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/ },
-];
-const SCAN_EXT = /\.(ts|tsx|js|mjs|cjs|json|toml|ya?ml|env)$/;
-const SKIP_DIRS = new Set(["node_modules", ".git", ".wrangler", "dist"]);
-
-function* walk(dir: string): Generator<string> {
-  for (const name of readdirSync(dir)) {
-    if (SKIP_DIRS.has(name)) continue;
-    const p = join(dir, name);
-    const st = statSync(p);
-    if (st.isDirectory()) yield* walk(p);
-    else if (SCAN_EXT.test(name) && st.size < 1_000_000) yield p;
-  }
-}
-
-async function cmdCheck(io: CliIO, positional: string[], flags: Record<string, string | true>) {
-  let errors = 0;
-  let warnings = 0;
-  for (const file of walk(io.cwd)) {
-    const lines = readFileSync(file, "utf8").split("\n");
-    lines.forEach((line, i) => {
-      for (const p of SECRET_PATTERNS) {
-        if (p.re.test(line)) {
-          errors++;
-          io.out(`error MIU_W_SECRET_IN_CODE ${relative(io.cwd, file)}:${i + 1} looks like a ${p.name}. Fix: move it to an env var or a Cloudflare secret and rotate it.`);
-        }
-      }
-    });
-  }
-  const app = await loadApp(findEntry(io.cwd, positional[0] ?? (flags.entry as string | undefined)));
-  for (const r of app.inspect().routes) {
-    if (["POST", "PUT", "PATCH", "DELETE"].includes(r.method) && !r.auth) {
-      warnings++;
-      io.out(`warn  MIU_W_UNAUTHENTICATED_MUTATION ${r.method} ${r.path} (${r.name}) has no auth. Fix: add \`auth: "required"\`, or \`auth: "optional"\` if it is public on purpose.`);
-    }
-  }
-  io.out(`\n${errors} error(s), ${warnings} warning(s)`);
-  return errors ? 1 : 0;
 }
 
 function cmdAdd(io: CliIO, positional: string[]) {
@@ -226,111 +171,48 @@ function cmdAdd(io: CliIO, positional: string[]) {
   return 0;
 }
 
-function cmdNew(io: CliIO, positional: string[]) {
+function cmdNew(io: CliIO, positional: string[], flags: Flags) {
   const name = positional[0];
-  if (!name) throw new CliError("MIU_E_CLI_NEW_USAGE", "Usage: miu new <dir>", "Pass the folder name for the new project.");
+  if (!name) throw new CliError("MIU_E_CLI_NEW_USAGE", "Usage: miu new <dir> [--template api]", "Pass the folder name for the new project.");
+  const template = str(flags, "template") ?? "api";
+  const info = TEMPLATES[template];
+  if (!info) {
+    throw new CliError("MIU_E_CLI_TEMPLATE", `Unknown template "${template}"`, `Use --template with one of: ${Object.entries(TEMPLATES).map(([k, v]) => `${k} (${v.description})`).join(", ")}.`);
+  }
   const dir = resolve(io.cwd, name);
   if (existsSync(dir) && readdirSync(dir).length) {
     throw new CliError("MIU_E_CLI_EXISTS", `${dir} already exists and is not empty`, "Pick another folder name.");
   }
   const pkgName = name.split(/[\\/]/).pop()!.toLowerCase().replace(/[^a-z0-9-]/g, "-");
-  for (const [rel, content] of Object.entries(newProjectFiles(pkgName))) writeNew(join(dir, rel), content);
-  io.out(`Created ${pkgName} in ${dir}`);
+  if (info.inProgress) io.out(`${template}: kit in progress; generating a minimal starter.`);
+  for (const [rel, content] of Object.entries(templateFiles(template, pkgName))) writeNew(join(dir, rel), content);
+  io.out(`Created ${pkgName} in ${dir} (template: ${template})`);
   io.out(`Next:\n  cd ${name}\n  bun install\n  bun run dev`);
   return 0;
 }
 
-export function wranglerToml(info: any, main: string, date = new Date().toISOString().slice(0, 10)): string {
-  const cf = info.cloudflare ?? {};
-  const queueName = (b: string) => b.toLowerCase().replace(/_/g, "-");
-  const parts: string[] = [
-    `# Generated by \`miu deploy cloudflare\`. Re-run it after adding plugins.`,
-    `name = "${info.name}"`,
-    `main = "${main}"`,
-    `compatibility_date = "${date}"`,
-  ];
-  for (const b of cf.kv ?? []) parts.push(`\n[[kv_namespaces]]\nbinding = "${b}"`);
-  for (const b of cf.d1 ?? []) parts.push(`\n[[d1_databases]]\nbinding = "${b}"\ndatabase_name = "${queueName(b)}"`);
-  for (const b of cf.r2 ?? []) parts.push(`\n[[r2_buckets]]\nbinding = "${b}"\nbucket_name = "${queueName(b)}"`);
-  for (const b of cf.queues?.producers ?? []) parts.push(`\n[[queues.producers]]\nbinding = "${b}"\nqueue = "${queueName(b)}"`);
-  for (const b of cf.queues?.consumers ?? []) parts.push(`\n[[queues.consumers]]\nqueue = "${queueName(b)}"`);
-  const dos = cf.durableObjects ?? [];
-  for (const d of dos) parts.push(`\n[[durable_objects.bindings]]\nname = "${d.binding}"\nclass_name = "${d.className}"`);
-  if (dos.length) {
-    parts.push(`\n[[migrations]]\ntag = "v1"\nnew_sqlite_classes = [${dos.map((d: { className: string }) => `"${d.className}"`).join(", ")}]`);
-  }
-  if (cf.crons?.length) parts.push(`\n[triggers]\ncrons = [${cf.crons.map((c: string) => `"${c}"`).join(", ")}]`);
-  if (cf.assets) {
-    const a = cf.assets;
-    let block = `\n[assets]\ndirectory = "${a.directory}"\nbinding = "${a.binding ?? "ASSETS"}"`;
-    if (a.notFoundHandling) block += `\nnot_found_handling = "${a.notFoundHandling}"`;
-    if (a.htmlHandling) block += `\nhtml_handling = "${a.htmlHandling}"`;
-    if (a.runWorkerFirst !== undefined) {
-      block += `\nrun_worker_first = ${Array.isArray(a.runWorkerFirst) ? `[${a.runWorkerFirst.map((p: string) => `"${p}"`).join(", ")}]` : a.runWorkerFirst}`;
-    }
-    parts.push(block);
-  }
-  if (cf.ai) parts.push(`\n[ai]\nbinding = "${cf.ai.binding}"`);
-  for (const v of cf.vectorize ?? []) parts.push(`\n[[vectorize]]\nbinding = "${v.binding}"\nindex_name = "${v.indexName}"`);
-  for (const w of cf.workflows ?? []) parts.push(`\n[[workflows]]\nname = "${w.name}"\nbinding = "${w.binding}"\nclass_name = "${w.className}"`);
-  for (const r of cf.ratelimits ?? []) {
-    // namespace_id must be a positive integer unique within the account; derive a stable one from the binding name.
-    const ns = r.namespaceId ?? String(1000 + [...String(r.binding)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 9000, 7));
-    parts.push(`\n[[ratelimits]]\nname = "${r.binding}"\nnamespace_id = "${ns}"\n\n  [ratelimits.simple]\n  limit = ${r.limit}\n  period = ${r.period}`);
-  }
-  return parts.join("\n") + "\n";
-}
-
-async function cmdDeploy(io: CliIO, positional: string[], flags: Record<string, string | true>) {
-  const target = positional[0];
-  if (target !== "cloudflare") {
-    throw new CliError("MIU_E_CLI_DEPLOY_TARGET", `Unknown deploy target "${target ?? ""}"`, "Use `miu deploy cloudflare`. Other targets (fly, vps, binary) are planned.");
-  }
-  const entry = findEntry(io.cwd, flags.entry as string | undefined);
-  const out = resolve(io.cwd, typeof flags.out === "string" ? flags.out : "wrangler.toml");
-  // Build the app as Workers will run it, so plugins pick their Cloudflare defaults
-  // (see targetRuntime() in miujs) and declare the bindings they need.
-  const previous = process.env.MIU_TARGET;
-  process.env.MIU_TARGET = "cloudflare";
-  let toml: string;
-  try {
-    const app = await loadApp(entry);
-    toml = wranglerToml(app.inspect(), relative(dirname(out), entry).replace(/\\/g, "/"));
-  } finally {
-    if (previous === undefined) delete process.env.MIU_TARGET;
-    else process.env.MIU_TARGET = previous;
-  }
-  if (existsSync(out) && !flags.force && !flags["dry-run"]) {
-    throw new CliError("MIU_E_CLI_EXISTS", `${out} already exists`, "Re-run with --force to overwrite it, or --dry-run --out other.toml to compare.");
-  }
-  writeFileSync(out, toml);
-  io.out(`Wrote ${out}`);
-  if (flags["dry-run"]) {
-    io.out(toml);
-    return 0;
-  }
-  const proc = Bun.spawn(["bunx", "wrangler", "deploy", "--config", out], { cwd: io.cwd, stdout: "inherit", stderr: "inherit" });
-  return await proc.exited;
-}
-
-async function cmdDev(io: CliIO, positional: string[], flags: Record<string, string | true>) {
-  const entry = findEntry(io.cwd, positional[0] ?? (flags.entry as string | undefined));
+async function cmdDev(io: CliIO, positional: string[], flags: Flags, run: Runner) {
+  const entry = findEntry(io.cwd, positional[0] ?? str(flags, "entry"));
   io.out(`miu dev: bun --hot ${relative(io.cwd, entry)}`);
-  const proc = Bun.spawn([process.execPath, "--hot", entry], { cwd: io.cwd, stdout: "inherit", stderr: "inherit", env: { ...process.env, MIU_ENV: "development" } });
-  return await proc.exited;
+  return (await run([process.execPath, "--hot", entry], { cwd: io.cwd, inherit: true, env: { MIU_ENV: "development" } })).code;
 }
 
 export async function runCli(args: string[], io: CliIO): Promise<number> {
   const [command, ...rest] = args;
-  const { positional, flags } = parseArgs(rest);
+  const run = io.run ?? defaultRunner;
   try {
+    if (command === undefined || command === "help" || command === "--help" || command === "-h") {
+      io.out(HELP);
+      return 0;
+    }
+    const spec = FLAGS[command];
+    if (!spec) throw new CliError("MIU_E_CLI_UNKNOWN_COMMAND", `Unknown command "${command}"`, "Run `miu help` to see the commands.");
+    const { positional, flags } = parseArgs(rest, spec, command);
+    if (flags.help) {
+      io.out(HELP);
+      return 0;
+    }
     switch (command) {
-      case undefined:
-      case "help":
-      case "--help":
-      case "-h":
-        io.out(HELP);
-        return 0;
       case "inspect":
         return await cmdInspect(io, positional, flags);
       case "test":
@@ -338,15 +220,21 @@ export async function runCli(args: string[], io: CliIO): Promise<number> {
       case "openapi":
         return await cmdOpenapi(io, positional, flags);
       case "check":
-        return await cmdCheck(io, positional, flags);
+        return await cmdCheck(io, positional, flags, run);
       case "add":
         return cmdAdd(io, positional);
       case "new":
-        return cmdNew(io, positional);
+        return cmdNew(io, positional, flags);
       case "deploy":
-        return await cmdDeploy(io, positional, flags);
+        return await cmdDeploy(io, positional, flags, run);
       case "dev":
-        return await cmdDev(io, positional, flags);
+        return await cmdDev(io, positional, flags, run);
+      case "db":
+        return await cmdDb(io, positional, flags, run);
+      case "loadtest":
+        return await cmdLoadtest(io, positional, flags);
+      case "logs":
+        return await cmdLogs(io, flags, run);
       default:
         throw new CliError("MIU_E_CLI_UNKNOWN_COMMAND", `Unknown command "${command}"`, "Run `miu help` to see the commands.");
     }

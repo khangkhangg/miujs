@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MiuJS Quiz</title>
+<style>
+  :root { --bg: #1b1036; --card: #2b1d55; --fg: #fff; --muted: #b9acd9; --accent: #ffcc00;
+          --c0: #e21b3c; --c1: #1368ce; --c2: #d89e00; --c3: #26890c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.4 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  main { max-width: 720px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.6rem; margin: 0.4em 0; }
+  .card { background: var(--card); border-radius: 12px; padding: 16px; margin: 12px 0; }
+  input, button { font: inherit; padding: 12px 14px; border-radius: 8px; border: 0; }
+  input { width: 100%; margin: 6px 0; }
+  button { background: var(--accent); color: #222; font-weight: 700; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .code { font-size: 3rem; letter-spacing: .3em; font-weight: 800; color: var(--accent); }
+  .muted { color: var(--muted); }
+  .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .choice { color: #fff; min-height: 80px; font-size: 1.1rem; }
+  .choice.c0 { background: var(--c0); } .choice.c1 { background: var(--c1); }
+  .choice.c2 { background: var(--c2); } .choice.c3 { background: var(--c3); }
+  .choice.right { outline: 4px solid #fff; } .choice.dim { opacity: .35; }
+  ol.board li { padding: 4px 0; }
+  .err { color: #ff8a8a; min-height: 1.4em; }
+  .timer { font-size: 2rem; font-weight: 800; float: right; }
+  @media (max-width: 480px) { .choices { grid-template-columns: 1fr; } .code { font-size: 2.2rem; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>MiuJS Quiz</h1>
+  <div id="app"></div>
+  <p class="err" id="err"></p>
+</main>
+<script type="module">
+// A dependency-free client for the MiuJS rooms wire protocol (see packages/realtime/PROTOCOL.md).
+const $app = document.getElementById("app");
+const $err = document.getElementById("err");
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+let ws = null, state = null, me = null, code = null, roomId = null, name = null, role = null, closedByUser = false, timer = null;
+const store = { get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } },
+                set: (k, v) => { try { sessionStorage.setItem(k, v); } catch {} } };
+
+function applyPatch(doc, ops) {
+  for (const op of ops) {
+    if (op.path === "") { if (op.op !== "remove") doc = op.value; continue; }
+    const segs = op.path.slice(1).split("/").map((s) => s.replace(/~1/g, "/").replace(/~0/g, "~"));
+    const last = segs.pop();
+    let p = doc;
+    for (const s of segs) p = p[s] ??= {};
+    if (op.op === "remove") delete p[last]; else p[last] = op.value;
+  }
+  return doc;
+}
+
+function join(id, roomCode, playerName, asHost) {
+  roomId = id; code = roomCode; name = playerName; role = asHost ? "host" : "player";
+  const u = new URL(`/rooms/quiz/${roomId}`, location.href);
+  u.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  u.searchParams.set("name", name);
+  if (asHost) u.searchParams.set("role", "host");
+  const resume = store.get(`resume:${roomId}`);
+  if (resume) u.searchParams.set("resume", resume);
+  const hostKey = store.get(`hostKey:${roomId}`);
+  if (hostKey) u.searchParams.set("hostKey", hostKey);
+  ws = new WebSocket(u);
+  ws.onmessage = (e) => {
+    const f = JSON.parse(e.data);
+    if (f.t === "welcome") { me = f.me; store.set(`resume:${roomId}`, f.resumeToken); if (f.hostKey) store.set(`hostKey:${roomId}`, f.hostKey); $err.textContent = ""; }
+    else if (f.t === "state") state = f.state;
+    else if (f.t === "patch") state = applyPatch(state, f.ops);
+    else if (f.t === "error") $err.textContent = `${f.message}${f.fix ? " — " + f.fix : ""}`;
+    render();
+  };
+  ws.onclose = (e) => {
+    if (closedByUser || [1000, 1003, 1009, 4003, 4004, 4005, 4008].includes(e.code)) return;
+    $err.textContent = "Connection lost, reconnecting…";
+    setTimeout(() => join(roomId, code, name, role === "host"), 1000);
+  };
+}
+
+const send = (type, data = {}) => ws?.readyState === 1 && ws.send(JSON.stringify({ t: "msg", type, data }));
+
+function home() {
+  $app.innerHTML = `
+    <div class="card"><h2>Host a game</h2>
+      <button id="create">Create game</button></div>
+    <div class="card"><h2>Join a game</h2>
+      <input id="code" inputmode="numeric" maxlength="6" placeholder="6-digit code" />
+      <input id="name" maxlength="32" placeholder="Your name" />
+      <button id="join">Join</button></div>`;
+  document.getElementById("create").onclick = async () => {
+    const res = await fetch("/api/games", { method: "POST" });
+    const { id, code } = await res.json();
+    join(id, code, "Host", true);
+  };
+  document.getElementById("join").onclick = async () => {
+    const c = document.getElementById("code").value.trim();
+    const n = document.getElementById("name").value.trim();
+    if (!/^\d{6}$/.test(c) || !n) { $err.textContent = "Enter the 6-digit code and your name."; return; }
+    // The code is only for typing; the server turns it into the room id (rate-limited per IP).
+    const res = await fetch(`/rooms/code/${c}`);
+    if (!res.ok) { $err.textContent = (await res.json()).error?.message ?? "Unknown code."; return; }
+    const { id } = await res.json();
+    join(id, c, n, false);
+  };
+}
+
+function board(s) {
+  return `<ol class="board">${s.leaderboard.map((r) => `<li>${esc(r.name)} — <b>${r.score}</b>${r.id === me?.id ? " (you)" : ""}</li>`).join("")}</ol>`;
+}
+
+function choices(s, clickable) {
+  const mine = me && s.answered.includes(me.id);
+  return `<div class="choices">${s.question.choices.map((c, i) => {
+    const cls = s.reveal ? (i === s.reveal.correct ? "right" : "dim") : "";
+    const count = s.reveal ? ` (${s.reveal.counts[i]})` : "";
+    return `<button class="choice c${i % 4} ${cls}" data-i="${i}" ${!clickable || mine || s.reveal ? "disabled" : ""}>${esc(c)}${count}</button>`;
+  }).join("")}</div>`;
+}
+
+function render() {
+  clearInterval(timer);
+  if (!state || !me) return home();
+  const s = state, host = me.role === "host", players = Object.keys(s.players).length;
+  let body = "";
+  if (s.phase === "lobby") {
+    body = host
+      ? `<div class="card"><p class="muted">Join at ${esc(location.host)} with code</p><div class="code">${esc(code)}</div>
+         <p>${players} player(s): ${Object.values(s.players).map((p) => esc(p.name)).join(", ") || "<span class='muted'>waiting…</span>"}</p>
+         <button id="start" ${players ? "" : "disabled"}>Start</button></div>`
+      : `<div class="card"><h2>You're in, ${esc(me.name)}!</h2><p class="muted">Waiting for the host to start… (${players} players)</p></div>`;
+  } else if (s.phase === "question" || s.phase === "reveal") {
+    const mine = s.players[me.id];
+    body = `<div class="card"><span class="timer" id="timer"></span>
+      <p class="muted">Question ${s.round + 1} / ${s.total}</p><h2>${esc(s.question.text)}</h2>
+      ${choices(s, !host)}
+      <p class="muted">${s.answered.length} / ${players} answered</p>
+      ${s.phase === "reveal" && mine ? `<p>${mine.gained ? `Correct! +${mine.gained}` : "Not this time."} Score: <b>${mine.score}</b></p>` : ""}
+      ${s.phase === "reveal" ? board(s) : ""}
+      ${host && s.phase === "reveal" ? `<button id="next">${s.round + 1 < s.total ? "Next question" : "Show results"}</button>` : ""}</div>`;
+  } else {
+    body = `<div class="card"><h2>Final results</h2>${board(s)}</div>`;
+  }
+  $app.innerHTML = body;
+  document.getElementById("start")?.addEventListener("click", () => send("start"));
+  document.getElementById("next")?.addEventListener("click", () => send("next"));
+  for (const b of document.querySelectorAll(".choice")) b.addEventListener("click", () => send("answer", { choice: Number(b.dataset.i) }));
+  if (s.phase === "question" && s.deadline) {
+    // Server clock vs ours may drift a little; good enough for a countdown.
+    const tick = () => { const el = document.getElementById("timer"); if (el) el.textContent = Math.max(0, Math.ceil((s.deadline - Date.now()) / 1000)); };
+    tick(); timer = setInterval(tick, 250);
+  }
+}
+
+addEventListener("beforeunload", () => { closedByUser = true; });
+home();
+</script>
+</body>
+</html>

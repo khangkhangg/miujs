@@ -3,8 +3,19 @@
   "version": "0.1.0",
   "type": "module",
   "license": "AGPL-3.0-only",
-  "exports": { ".": "./src/index.ts" },
-  "files": ["src"],
-  "bin": { "miu": "./src/bin.ts" },
-  "dependencies": { "miujs": "workspace:*" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "templates"
+  ],
+  "bin": {
+    "miu": "./src/bin.ts"
+  },
+  "dependencies": {
+    "miujs": "workspace:*",
+    "@miujs/db": "workspace:*",
+    "@miujs/realtime": "workspace:*"
+  }
 }

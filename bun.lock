@@ -43,6 +43,20 @@
         "miujs": "workspace:*",
       },
     },
+    "packages/admin": {
+      "name": "@miujs/admin",
+      "version": "0.1.0",
+      "dependencies": {
+        "@miujs/access": "workspace:*",
+        "@miujs/audit": "workspace:*",
+        "@miujs/auth": "workspace:*",
+        "@miujs/db": "workspace:*",
+        "@miujs/session": "workspace:*",
+        "@miujs/web": "workspace:*",
+        "@miujs/workflows": "workspace:*",
+        "miujs": "workspace:*",
+      },
+    },
     "packages/ai": {
       "name": "@miujs/ai",
       "version": "0.1.0",
@@ -81,6 +95,8 @@
         "miu": "./src/bin.ts",
       },
       "dependencies": {
+        "@miujs/db": "workspace:*",
+        "@miujs/realtime": "workspace:*",
         "miujs": "workspace:*",
       },
     },
@@ -104,6 +120,15 @@
       "name": "@miujs/files",
       "version": "0.1.0",
       "dependencies": {
+        "miujs": "workspace:*",
+      },
+    },
+    "packages/game": {
+      "name": "@miujs/game",
+      "version": "0.1.0",
+      "dependencies": {
+        "@miujs/db": "workspace:*",
+        "@miujs/realtime": "workspace:*",
         "miujs": "workspace:*",
       },
     },
@@ -154,6 +179,18 @@
         "miujs": "workspace:*",
       },
     },
+    "packages/tour": {
+      "name": "@miujs/tour",
+      "version": "0.1.0",
+      "dependencies": {
+        "@miujs/db": "workspace:*",
+        "@miujs/files": "workspace:*",
+        "@miujs/queue": "workspace:*",
+        "@miujs/realtime": "workspace:*",
+        "@miujs/web": "workspace:*",
+        "miujs": "workspace:*",
+      },
+    },
     "packages/web": {
       "name": "@miujs/web",
       "version": "0.1.0",
@@ -176,6 +213,8 @@
 
     "@miujs/access": ["@miujs/access@workspace:packages/access"],
 
+    "@miujs/admin": ["@miujs/admin@workspace:packages/admin"],
+
     "@miujs/ai": ["@miujs/ai@workspace:packages/ai"],
 
     "@miujs/audit": ["@miujs/audit@workspace:packages/audit"],
@@ -190,6 +229,8 @@
 
     "@miujs/files": ["@miujs/files@workspace:packages/files"],
 
+    "@miujs/game": ["@miujs/game@workspace:packages/game"],
+
     "@miujs/mail": ["@miujs/mail@workspace:packages/mail"],
 
     "@miujs/migrate": ["@miujs/migrate@workspace:packages/migrate"],
@@ -201,6 +242,8 @@
     "@miujs/realtime": ["@miujs/realtime@workspace:packages/realtime"],
 
     "@miujs/session": ["@miujs/session@workspace:packages/session"],
+
+    "@miujs/tour": ["@miujs/tour@workspace:packages/tour"],
 
     "@miujs/web": ["@miujs/web@workspace:packages/web"],
 
