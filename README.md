@@ -57,6 +57,7 @@ wrangler deploy     # Cloudflare Workers (or: miu deploy cloudflare)
 | [`@miujs/audit`](packages/audit) | Tamper-evident audit log (HMAC hash chain, external anchors) |
 | [`@miujs/workflows`](packages/workflows) | Durable automation: events, cron, webhooks, sleeps, approvals, JSON workflows |
 | [`@miujs/ratelimit`](packages/ratelimit) | Rate limits by route, path or tag; memory, KV, Durable Object, Redis |
+| [`@miujs/bots`](packages/bots) | Bot, AI crawler and location detection; block, trim or serve cached responses to crawlers |
 | [`@miujs/ai`](packages/ai) | Claude, OpenAI-compatible and Workers AI; structured output, tool loops, RAG |
 | [`@miujs/migrate`](packages/migrate) | Port Laravel, Django or FastAPI apps route by route (proxy, shared sessions, contract tests) |
 | `@miujs/admin`, `@miujs/game`, `@miujs/tour` | In progress: CRM/back-office, game and 3D tour kits |

@@ -25,6 +25,7 @@ export const DOCUMENTED_PACKAGES = [
   "cache",
   "queue",
   "ratelimit",
+  "bots",
   "realtime",
   "files",
   "web",

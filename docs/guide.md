@@ -121,6 +121,7 @@ export default miu({ name: "notes", routes: [listNotes], plugins: [db({ migratio
 | [`@miujs/cache`](../packages/cache/README.md) | `remember()`, tags; memory, KV or Redis |
 | [`@miujs/queue`](../packages/queue/README.md) | Typed jobs, retries, cron; Cloudflare Queues |
 | [`@miujs/ratelimit`](../packages/ratelimit/README.md) | Rate limiting rules |
+| [`@miujs/bots`](../packages/bots/README.md) | Detect bots, AI crawlers and visitor location; block them or serve them cached responses |
 | [`@miujs/realtime`](../packages/realtime/README.md) | Authoritative rooms over WebSockets, Durable Objects |
 | [`@miujs/files`](../packages/files/README.md) | Uploads and signed URLs; disk, R2, S3 |
 | [`@miujs/web`](../packages/web/README.md) | HTML and JSX without a build, static files, htmx, security headers |

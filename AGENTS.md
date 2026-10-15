@@ -5,7 +5,7 @@ Instructions for coding agents (and humans) changing this repo.
 ## Layout
 
 - `packages/miujs` — core (`miujs`): router, `t` schemas, errors, app, OpenAPI, MCP, WebSockets, Node adapter.
-- `packages/<name>` — official batteries, published as `@miujs/<name>` (auth, session, cache, queue, db, realtime, cli).
+- `packages/<name>` — official batteries, published as `@miujs/<name>` (auth, session, cache, queue, db, realtime, ratelimit, bots, cli, ...).
 - `examples/*` — runnable apps. `bench/` — benchmarks.
 
 Bun workspaces link packages, so `import { miu } from "miujs"` works everywhere in the repo.

@@ -98,6 +98,13 @@
         "miujs": "workspace:*",
       },
     },
+    "packages/bots": {
+      "name": "@miujs/bots",
+      "version": "0.1.0",
+      "dependencies": {
+        "miujs": "workspace:*",
+      },
+    },
     "packages/cache": {
       "name": "@miujs/cache",
       "version": "0.1.0",
@@ -237,6 +244,8 @@
     "@miujs/audit": ["@miujs/audit@workspace:packages/audit"],
 
     "@miujs/auth": ["@miujs/auth@workspace:packages/auth"],
+
+    "@miujs/bots": ["@miujs/bots@workspace:packages/bots"],
 
     "@miujs/cache": ["@miujs/cache@workspace:packages/cache"],
 

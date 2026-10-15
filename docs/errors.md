@@ -28,6 +28,7 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 | `@miujs/cache` | [MIU_E_CACHE_BINDING](#miu_e_cache_binding), [MIU_E_CACHE_CONFIG](#miu_e_cache_config), [MIU_E_CACHE_KEY](#miu_e_cache_key), [MIU_E_CACHE_REDIS](#miu_e_cache_redis), [MIU_E_CACHE_REDIS_RUNTIME](#miu_e_cache_redis_runtime), [MIU_E_CACHE_TTL](#miu_e_cache_ttl), [MIU_E_CACHE_VALUE](#miu_e_cache_value) |
 | `@miujs/queue` | [MIU_E_QUEUE_BINDING](#miu_e_queue_binding), [MIU_E_QUEUE_CONFIG](#miu_e_queue_config), [MIU_E_QUEUE_CRON](#miu_e_queue_cron), [MIU_E_QUEUE_DELAY](#miu_e_queue_delay), [MIU_E_QUEUE_JOB_DUPLICATE](#miu_e_queue_job_duplicate), [MIU_E_QUEUE_REDIS](#miu_e_queue_redis), [MIU_E_QUEUE_RUNTIME](#miu_e_queue_runtime), [MIU_E_QUEUE_SQLITE](#miu_e_queue_sqlite), [MIU_E_QUEUE_TIMEOUT](#miu_e_queue_timeout), [MIU_E_QUEUE_UNKNOWN_JOB](#miu_e_queue_unknown_job) |
 | `@miujs/ratelimit` | [MIU_E_RATELIMIT_BINDING](#miu_e_ratelimit_binding), [MIU_E_RATELIMIT_CONFIG](#miu_e_ratelimit_config), [MIU_E_RATELIMIT_ORDER](#miu_e_ratelimit_order), [MIU_E_RATELIMIT_STORE](#miu_e_ratelimit_store), [MIU_E_RATELIMIT_UNSUPPORTED](#miu_e_ratelimit_unsupported) |
+| `@miujs/bots` | [MIU_E_BOT_BLOCKED](#miu_e_bot_blocked), [MIU_E_BOTS_CONFIG](#miu_e_bots_config), [MIU_E_BOTS_ORDER](#miu_e_bots_order) |
 | `@miujs/realtime` | [MIU_E_ROOM_ALREADY_JOINED](#miu_e_room_already_joined), [MIU_E_ROOM_BAD_FRAME](#miu_e_room_bad_frame), [MIU_E_ROOM_CLIENT_NOT_FOUND](#miu_e_room_client_not_found), [MIU_E_ROOM_CLOSED](#miu_e_room_closed), [MIU_E_ROOM_CODE_RATE_LIMITED](#miu_e_room_code_rate_limited), [MIU_E_ROOM_CODE_UNKNOWN](#miu_e_room_code_unknown), [MIU_E_ROOM_CODES_EXHAUSTED](#miu_e_room_codes_exhausted), [MIU_E_ROOM_CREATE_FAILED](#miu_e_room_create_failed), [MIU_E_ROOM_ENCODING_UNSUPPORTED](#miu_e_room_encoding_unsupported), [MIU_E_ROOM_FULL](#miu_e_room_full), [MIU_E_ROOM_HANDLER_FAILED](#miu_e_room_handler_failed), [MIU_E_ROOM_HANDLER_UNKNOWN](#miu_e_room_handler_unknown), [MIU_E_ROOM_HOST_KEY](#miu_e_room_host_key), [MIU_E_ROOM_ID_INVALID](#miu_e_room_id_invalid), [MIU_E_ROOM_JOIN_INVALID](#miu_e_room_join_invalid), [MIU_E_ROOM_JOIN_REJECTED](#miu_e_room_join_rejected), [MIU_E_ROOM_KICKED](#miu_e_room_kicked), [MIU_E_ROOM_MESSAGE_INVALID](#miu_e_room_message_invalid), [MIU_E_ROOM_MESSAGE_TOO_LARGE](#miu_e_room_message_too_large), [MIU_E_ROOM_NOT_FOUND](#miu_e_room_not_found), [MIU_E_ROOM_NOT_JOINED](#miu_e_room_not_joined), [MIU_E_ROOM_RATE_LIMITED](#miu_e_room_rate_limited), [MIU_E_ROOM_REACT_MISSING](#miu_e_room_react_missing), [MIU_E_ROOM_RESUME_EXPIRED](#miu_e_room_resume_expired), [MIU_E_ROOM_SHARD_SIZE](#miu_e_room_shard_size), [MIU_E_ROOM_STATE_INVALID](#miu_e_room_state_invalid), [MIU_E_ROOM_TIMER_NOT_DURABLE](#miu_e_room_timer_not_durable), [MIU_E_ROOM_TIMER_UNKNOWN](#miu_e_room_timer_unknown), [MIU_E_ROOM_TYPE_INVALID](#miu_e_room_type_invalid), [MIU_E_ROOM_TYPE_UNKNOWN](#miu_e_room_type_unknown), [MIU_E_ROOM_UNKNOWN_MESSAGE](#miu_e_room_unknown_message) |
 | `@miujs/files` | [MIU_E_FILES_BAD_FORM](#miu_e_files_bad_form), [MIU_E_FILES_BAD_REQUEST](#miu_e_files_bad_request), [MIU_E_FILES_BINDING](#miu_e_files_binding), [MIU_E_FILES_BODY_USED](#miu_e_files_body_used), [MIU_E_FILES_CONFIG](#miu_e_files_config), [MIU_E_FILES_KEY_CONFLICT](#miu_e_files_key_conflict), [MIU_E_FILES_KEY_INVALID](#miu_e_files_key_invalid), [MIU_E_FILES_METADATA_INVALID](#miu_e_files_metadata_invalid), [MIU_E_FILES_NO_FILE](#miu_e_files_no_file), [MIU_E_FILES_NOT_FOUND](#miu_e_files_not_found), [MIU_E_FILES_PART_INVALID](#miu_e_files_part_invalid), [MIU_E_FILES_RUNTIME](#miu_e_files_runtime), [MIU_E_FILES_S3](#miu_e_files_s3), [MIU_E_FILES_S3_CONFIG](#miu_e_files_s3_config), [MIU_E_FILES_SECRET_MISSING](#miu_e_files_secret_missing), [MIU_E_FILES_SECRET_WEAK](#miu_e_files_secret_weak), [MIU_E_FILES_STORE_MISSING](#miu_e_files_store_missing), [MIU_E_FILES_TOKEN_EXPIRED](#miu_e_files_token_expired), [MIU_E_FILES_TOKEN_INVALID](#miu_e_files_token_invalid), [MIU_E_FILES_TOO_LARGE](#miu_e_files_too_large), [MIU_E_FILES_TOO_MANY_FILES](#miu_e_files_too_many_files), [MIU_E_FILES_TYPE_NOT_ALLOWED](#miu_e_files_type_not_allowed), [MIU_E_FILES_UPLOAD_NOT_FOUND](#miu_e_files_upload_not_found) |
 | `@miujs/web` | [MIU_E_WEB_BAD_PATH](#miu_e_web_bad_path), [MIU_E_WEB_CONFIG](#miu_e_web_config), [MIU_E_WEB_HTML_ASYNC](#miu_e_web_html_async), [MIU_E_WEB_HTML_FUNCTION](#miu_e_web_html_function), [MIU_E_WEB_HTML_RAW](#miu_e_web_html_raw), [MIU_E_WEB_HX_URL](#miu_e_web_hx_url), [MIU_E_WEB_JSX_ATTR](#miu_e_web_jsx_attr), [MIU_E_WEB_JSX_EVENT_HANDLER](#miu_e_web_jsx_event_handler), [MIU_E_WEB_JSX_INNER_HTML](#miu_e_web_jsx_inner_html), [MIU_E_WEB_JSX_TAG](#miu_e_web_jsx_tag), [MIU_E_WEB_JSX_VOID_CHILDREN](#miu_e_web_jsx_void_children), [MIU_E_WEB_NO_NONCE](#miu_e_web_no_nonce), [MIU_E_WEB_VITE_DEV_UNREACHABLE](#miu_e_web_vite_dev_unreachable), [MIU_E_WEB_VITE_ENTRY](#miu_e_web_vite_entry), [MIU_E_WEB_VITE_MANIFEST](#miu_e_web_vite_manifest) |
@@ -1723,6 +1724,44 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 - Wait for the window to pass, or use a store with reset().
 - Call limiter.reset(key) (it passes the policy), and give redisStore a client with del(...keys).
 - Change the rule, or use a store that supports it (memoryStore() or durableObjectStore() support every algorithm).
+
+## MIU_E_BOT_BLOCKED
+
+- **Package:** `@miujs/bots`
+- **HTTP status:** not fixed (depends on the call)
+- **Source:** [`bots/src/errors.ts`](../packages/bots/src/errors.ts), [`bots/src/plugin.ts`](../packages/bots/src/plugin.ts)
+
+**What it means:** This site does not serve {who}
+
+**How to fix:** If you are a person, use a regular browser with cookies and JavaScript on. If you run a crawler, follow /robots.txt; site owners change access in bots({ policy, rules }).
+
+## MIU_E_BOTS_CONFIG
+
+- **Package:** `@miujs/bots`
+- **HTTP status:** 500
+- **Source:** [`bots/src/errors.ts`](../packages/bots/src/errors.ts), [`bots/src/store.ts`](../packages/bots/src/store.ts)
+
+**What it means:**
+
+- {fn} {name} must be a positive integer, got {v}
+- bots({ store: cacheClientStore() }) needs ctx.cache, but no plugin set it
+- cacheApiStore() needs the Cache API (caches.default), which only Cloudflare Workers have
+
+**How to fix:**
+
+- Pass {name} &gt;= 1, or leave it out for the default.
+- List cache() from @miujs/cache before bots() in miu({ plugins }), or use another store.
+- Use cacheApiStore() on Workers only, or pass { cache } explicitly, or use memoryBotStore() / cacheClientStore().
+
+## MIU_E_BOTS_ORDER
+
+- **Package:** `@miujs/bots`
+- **HTTP status:** 500
+- **Source:** [`bots/src/errors.ts`](../packages/bots/src/errors.ts)
+
+**What it means:** bots() runs before {before}(), so it cannot tell signed-in users from anonymous visitors
+
+**How to fix:** List {before}() before bots() in miu({ plugins }): signed-in users then bypass the bot cache and partial responses.
 
 ## MIU_E_ROOM_ALREADY_JOINED
 
