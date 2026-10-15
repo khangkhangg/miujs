@@ -159,7 +159,7 @@ describe("inspect()", () => {
     const h = await setup([companies, contacts]);
     const info = h.app.inspect().plugins.find((p) => p.name === "admin")!.info as any;
     expect(info.basePath).toBe("/api");
-    expect(info.migrations).toEqual(["admin_001_companies", "admin_001_contacts"]);
+    expect(info.migrations).toEqual(["admin_001_companies", "admin_001_contacts", "admin_system_001_settings"]);
     const c = info.resources.find((r: { name: string }) => r.name === "contacts");
     expect(c.events).toEqual(["contacts.created", "contacts.updated", "contacts.deleted"]);
     expect(c.routes).toEqual(

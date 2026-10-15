@@ -11,6 +11,8 @@ import { Repo, type AuditEntryIn, type Runtime, type Scope } from "./repo.ts";
 import type { DataAccess, Resource } from "./resource.ts";
 import { resourceRoutes, schemaRoute, type RouteEnv } from "./routes.ts";
 import { adminMigrations, checkResources } from "./tables.ts";
+import { createSystem } from "./system.ts";
+import { appSection, ErrorCounter } from "./system-app.ts";
 
 export interface AdminOptions {
   resources: Resource[];
@@ -26,6 +28,17 @@ export interface AdminOptions {
   exportPageSize?: number;
   /** Serve `GET <basePath>/_admin/schema`. Default true. */
   schemaRoute?: boolean;
+  /**
+   * The System area: every plugin's `manage()` sections (status, lists, settings, actions) under
+   * `<basePath>/_admin/system`, plus a built-in "app" section. Default true.
+   */
+  system?: boolean;
+  /** Offer System actions as MCP tools (`system_<plugin>_<action>`). Default true. */
+  systemMcp?: boolean;
+  /** How long an instance trusts the System settings it read before re-reading them. Default 30 000 ms. */
+  systemSettingsTtlMs?: number;
+  /** Clock for the System area (uptime, settings TTL). Default `Date.now`; tests pass a fake. */
+  now?: () => number;
 }
 
 export interface DataScope {
@@ -116,6 +129,30 @@ export function admin(opts: AdminOptions) {
   };
   const routes = [...resources.flatMap((r) => resourceRoutes(r, routeEnv)), ...(opts.schemaRoute === false ? [] : [schemaRoute(routeEnv)])];
 
+  const now = opts.now ?? (() => Date.now());
+  const startedAt = now();
+  const errorCounter = new ErrorCounter();
+  const system =
+    opts.system === false
+      ? null
+      : createSystem({
+          app: () => {
+            if (!app) throw adminErrors.serviceMissing();
+            return app;
+          },
+          base: `${basePath}/_admin/system`,
+          builtin: () => (app ? [appSection(app, { startedAt, now, errors: errorCounter })] : []),
+          mcp: opts.systemMcp !== false,
+          now,
+          ttlMs: opts.systemSettingsTtlMs ?? 30_000,
+          database: async (ctx) => {
+            const database = databaseFor(ctx.env, ctx);
+            if (autoMigrate) await migrateOnce(database, migrations);
+            return database;
+          },
+        });
+  if (system) routes.push(...system.routes);
+
   const service: AdminService = {
     resources,
     data(scope: DataScope): DataAccess {
@@ -148,7 +185,20 @@ export function admin(opts: AdminOptions) {
       app = a;
       if (opts.autoMigrate === undefined) autoMigrate = a.dev;
       if (!a.hasService("admin")) a.provide("admin", service);
+      // One route per System action at its exact path: each becomes an MCP tool.
+      if (system) a.add(system.mcpRoutes());
     },
+    ...(system
+      ? {
+          /** Re-applies saved System settings on the first request and then once per TTL. */
+          onRequest(ctx: Context) {
+            return system.sync(ctx);
+          },
+          onError(_ctx: Context, error: unknown) {
+            errorCounter.record(error, now());
+          },
+        }
+      : {}),
     inspect() {
       return {
         basePath,
@@ -169,6 +219,7 @@ export function admin(opts: AdminOptions) {
           routes: routes.filter((x) => x.config.tags?.includes(r.name)).map((x) => `${x.method} ${x.path}`),
         })),
         schema: opts.schemaRoute === false ? null : `GET ${basePath}/_admin/schema`,
+        system: system ? { path: `GET ${basePath}/_admin/system`, mcp: opts.systemMcp !== false, settingsTtlMs: opts.systemSettingsTtlMs ?? 30_000 } : null,
       };
     },
     cloudflare(): CloudflareNeeds {

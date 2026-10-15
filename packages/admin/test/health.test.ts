@@ -9,6 +9,7 @@ import { describeLeak, exitCheck, leakCheck } from "../../../scripts/lib/leak.ts
 import { admin, field, resource } from "../src/index.ts";
 import { uiSetup } from "./ui/harness.ts";
 import { uiResources } from "./ui/fixtures.ts";
+import { systemSetup } from "./system-fixtures.ts";
 
 const PKG = join(import.meta.dir, "..");
 
@@ -198,7 +199,62 @@ describe("admin UI", () => {
   }, 120_000);
 });
 
+describe("System area memory plateaus", async () => {
+  // No audit store here: an in-memory audit log grows with every action by design.
+  const h = await systemSetup({ audit: false, ui: true });
+  const S = "/api/_admin/system";
+  const ok = async (method: string, path: string, body?: unknown) => {
+    const r = await h.req(method, path, { body });
+    if (r.status >= 400) throw new Error(`${method} ${path} → ${r.status} ${r.text.slice(0, 300)}`);
+  };
+  const cases: [string, (i: number) => Promise<unknown>][] = [
+    ["overview + section + app status", () => Promise.all([ok("GET", S), ok("GET", `${S}/jobs/queue`), ok("GET", `${S}/app/overview`)])],
+    ["list page with filters", () => ok("GET", `${S}/jobs/queue/lists/jobs?limit=3&filters=${encodeURIComponent('{"state":"failed"}')}`)],
+    ["actions (plain, validated, row)", () => Promise.all([ok("POST", `${S}/jobs/queue/actions/ping`, {}), ok("POST", `${S}/jobs/queue/actions/purge`, { olderThanDays: 2 }), ok("POST", `${S}/jobs/queue/lists/jobs/job1/actions/retry`, {})])],
+    ["settings get + put", (i) => Promise.all([ok("GET", `${S}/jobs/queue/settings`), ok("PUT", `${S}/jobs/queue/settings`, { concurrency: (i % 40) + 1, paused: false })])],
+    ["UI pages", (i) => ok("GET", i % 2 ? "/admin/system" : "/admin/system/jobs/queue")],
+  ];
+  for (const [name, fn] of cases) {
+    test(name, async () => {
+      // The fake plugin records every run/query/set; reset so only the System area is measured.
+      const r = await leakCheck(name, async (i) => {
+        await fn(i);
+        h.jobs.runs.length = 0;
+        h.jobs.queries.length = 0;
+        h.jobs.sets.length = 0;
+      }, { warmup: 500, perRound: 800, rounds: 5 });
+      expect(r.leaking, describeLeak(r)).toBe(false);
+    }, 120_000);
+  }
+});
+
 describe("admin apps exit", () => {
+  test("with the System area, its settings sync and an MCP action call", async () => {
+    const r = await exitCheck(
+      `
+      import { definePlugin, miu, t } from "miujs";
+      import { db as dbPlugin, sqlite } from "@miujs/db";
+      import { admin } from "../src/index.ts";
+      import { adminUI } from "../src/ui/index.ts";
+      const database = sqlite();
+      let v = { n: 1 };
+      const p = definePlugin({ name: "p", manage: () => [{ id: "s", title: "S", status: () => ({ stats: [{ label: "x", value: 1 }] }), settings: { schema: t.object({ n: t.integer() }), get: () => v, set: (x) => { v = x; } }, actions: [{ name: "go", title: "Go", run: () => "ok" }] }] });
+      const auth = definePlugin({ name: "a", onRequest(ctx) { ctx.user = { id: "u", roles: ["admin"] } as any; } });
+      const app = miu({ logLevel: "silent", mcp: true, plugins: [dbPlugin({ database }), auth, p, admin({ resources: [], database, autoMigrate: true, systemSettingsTtlMs: 10 }), adminUI({ title: "T", workflows: false })] });
+      await app.ready();
+      const f = (path, init) => app.fetch(new Request("http://localhost" + path, init)).then((r) => r.text());
+      await f("/api/_admin/system/p/s/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: 2 }) });
+      await f("/admin/system/p/s");
+      await f("/mcp", { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "system_p_go", arguments: {} } }) });
+      await new Promise((r) => setTimeout(r, 30));
+      await f("/api/_admin/system");
+    `,
+      3000,
+      PKG,
+    );
+    expect(r.exited, r.stderr).toBe(true);
+  }, 10_000);
+
   const src = (tail: string) => `
     import { definePlugin, miu } from "miujs";
     import { db as dbPlugin, sqlite } from "@miujs/db";

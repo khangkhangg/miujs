@@ -51,6 +51,8 @@ export interface PageData {
   resources: ResourceMeta[];
   orgs: { id: string; name: string }[];
   workflows: boolean;
+  /** The System area exists and this user may read it. */
+  system: boolean;
 }
 
 /** The schema as the current user sees it in the active org (filtered by permissions). */
@@ -72,8 +74,13 @@ export async function orgsFor(core: Core, ctx: Context): Promise<{ id: string; n
   return r.ok && Array.isArray(r.data?.orgs) ? r.data.orgs.map((o: { id: string; name: string }) => ({ id: o.id, name: o.name })) : [];
 }
 
+/** Can this user open the System area? Asks its API (app-wide, so without an org). */
+export async function systemVisible(core: Core, ctx: Context): Promise<boolean> {
+  return (await sub(core.app, ctx, "GET", `${core.apiBase}/_admin/system`, { org: null })).ok;
+}
+
 export async function pageData(core: Core, ctx: Context): Promise<PageData> {
-  const [schema, orgs] = await Promise.all([schemaFor(core, ctx), orgsFor(core, ctx)]);
+  const [schema, orgs, system] = await Promise.all([schemaFor(core, ctx), orgsFor(core, ctx), systemVisible(core, ctx)]);
   const resources = schema.resources.filter((r) => !core.only || core.only.includes(r.name));
-  return { schema, resources, orgs, workflows: !!core.workflows && can(ctx, "workflows:read") };
+  return { schema, resources, orgs, workflows: !!core.workflows && can(ctx, "workflows:read"), system };
 }

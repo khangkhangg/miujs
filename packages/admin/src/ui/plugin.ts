@@ -11,6 +11,7 @@ import { orgsFor, type AdminLike, type Core, type WorkflowsLike } from "./core.t
 import { cookieOrg, orgCookie, platformOf, redirect, safeNext, sub } from "./http.ts";
 import { barePage, type Shell } from "./layout.ts";
 import * as pages from "./pages.ts";
+import * as sysPages from "./system-pages.ts";
 import * as wfPages from "./workflow-pages.ts";
 import { WorkflowLoader, workflowStore, type WorkflowStore } from "./workflow-store.ts";
 
@@ -231,6 +232,15 @@ export function adminUI(opts: AdminUIOptions = {}) {
     postRoute(`${p}/r/:resource/:id`, (k, c) => pages.saveRecord(k, c, c.params.resource, c.params.id)),
     postRoute(`${p}/r/:resource/:id/delete`, (k, c) => pages.deleteRecord(k, c, c.params.resource, c.params.id)),
     postRoute(`${p}/r/:resource/:id/action/:action`, (k, c) => pages.recordAction(k, c, c.params.resource, c.params.id, c.params.action)),
+    // The System area: plugins' manage() sections, through the <apiBase>/_admin/system API.
+    pageRoute(`${p}/system`, sysPages.overview),
+    pageRoute(`${p}/system/:plugin`, (k, c) => sysPages.pluginPage(k, c, c.params.plugin)),
+    pageRoute(`${p}/system/:plugin/:section`, (k, c) => sysPages.sectionPage(k, c, c.params.plugin, c.params.section)),
+    postRoute(`${p}/system/:plugin/:section/actions/:action`, (k, c) => sysPages.runAction(k, c, c.params.plugin, c.params.section, c.params.action, null)),
+    postRoute(`${p}/system/:plugin/:section/lists/:list/:id/actions/:action`, (k, c) =>
+      sysPages.runAction(k, c, c.params.plugin, c.params.section, c.params.action, { list: c.params.list, id: c.params.id }),
+    ),
+    postRoute(`${p}/system/:plugin/:section/settings`, (k, c) => sysPages.saveSettings(k, c, c.params.plugin, c.params.section)),
   ];
   if (wfOpts) {
     routes.push(

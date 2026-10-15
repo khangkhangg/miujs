@@ -82,4 +82,36 @@ export const adminErrors = {
     client("RESOURCE_UNKNOWN", 404, `No admin resource named "${name}"`, `Use one of: ${known.join(", ") || "(none)"}.`),
   hookRejected: (message: string) => client("HOOK_REJECTED", 400, message, "A resource hook refused this change. Read the message for what to change."),
   validation: (issues: Issue[]): MiuError => errors.validation("body", issues),
+
+  // System area (plugins' manage() sections).
+  systemPluginUnknown: (name: string, known: string[]) =>
+    client("SYSTEM_PLUGIN_UNKNOWN", 404, `No plugin named "${name}" in the System area`, `Use one of: ${known.join(", ") || "(none)"}. GET <basePath>/_admin/system lists the plugins you may read.`),
+  systemSectionUnknown: (plugin: string, section: string, known: string[]) =>
+    client("SYSTEM_SECTION_UNKNOWN", 404, `Plugin "${plugin}" has no section "${section}"`, known.length ? `Use one of: ${known.join(", ")}.` : `"${plugin}" has no manage() sections; GET <basePath>/_admin/system/${plugin} shows what it offers.`),
+  systemListUnknown: (plugin: string, section: string, list: string, known: string[]) =>
+    client("SYSTEM_LIST_UNKNOWN", 404, `Section ${plugin}/${section} has no list "${list}"`, known.length ? `Use one of: ${known.join(", ")}.` : "This section has no lists."),
+  systemActionUnknown: (plugin: string, section: string, action: string, known: string[]) =>
+    client("SYSTEM_ACTION_UNKNOWN", 404, `Section ${plugin}/${section} has no action "${action}" here`, known.length ? `Use one of: ${known.join(", ")}.` : "There are no actions here."),
+  systemSettingsUnknown: (plugin: string, section: string) =>
+    client("SYSTEM_SETTINGS_UNKNOWN", 404, `Section ${plugin}/${section} has no settings`, "Only sections whose manage() entry has `settings` can be read or changed here."),
+  systemForbidden: (permission: string, withAccess: boolean) =>
+    client(
+      "SYSTEM_FORBIDDEN",
+      403,
+      withAccess ? `Missing permission "${permission}"` : "The System area needs the admin role",
+      withAccess
+        ? `Give the user a global role (user.roles, not an organization role) that grants "${permission}", e.g. operator: ["system:*"] in defineRoles(). "system:<verb>" grants it for every plugin, "system.<plugin>:*" everything on one plugin.`
+        : 'Sign in as a user whose roles include "admin", or install @miujs/access and grant "system:*" / "system.<plugin>:<verb>" permissions.',
+    ),
+  systemOrgScoped: () =>
+    client(
+      "SYSTEM_ORG_SCOPED",
+      400,
+      "System routes are app-wide and do not take an organization",
+      "Send the request without x-org-id (or the org your access() orgFrom reads): System permissions come from the user's global roles, never from an organization role.",
+    ),
+  systemFilterInvalid: (message: string) =>
+    client("SYSTEM_FILTER_INVALID", 400, `Invalid filters: ${message}`, 'Send filters as a JSON object of the list\'s filter keys to one of their options, e.g. filters={"state":"failed"}. GET the section to see each list\'s filters.'),
+  systemSearchUnsupported: (list: string) =>
+    client("SYSTEM_SEARCH_UNSUPPORTED", 400, `List "${list}" is not searchable`, "Leave out `search`, or use the list's filters instead."),
 };

@@ -4,6 +4,7 @@ import { quoteIdent, tableSql, type ColumnDescription, type IndexDescription, ty
 import { adminErrors } from "./errors.ts";
 import { sqlType } from "./fields.ts";
 import type { Resource } from "./resource.ts";
+import { systemMigration } from "./system-settings.ts";
 
 /** Checks names are unique and every relation points at a resource in the set. */
 export function checkResources(resources: readonly Resource[]): Map<string, Resource> {
@@ -123,11 +124,13 @@ export function ftsSql(r: Resource): string[] {
  * Migrations creating every resource's table, indexes and (with `search: true`) FTS5 index and
  * triggers. One migration per resource, ids `admin_001_<table>`; relation targets come first.
  * Later schema changes need new migrations of your own (see `adminTables` + `diffSchema`).
+ * The last migration, `admin_system_001_settings`, creates `admin_system_settings` (System settings).
  */
 export function adminMigrations(resources: readonly Resource[]): Migration[] {
   const byName = checkResources(resources);
-  return orderByDependencies(resources).map((r) => {
+  const own = orderByDependencies(resources).map((r) => {
     const statements = [...tableSql(tableDescription(r, byName)), ...(r.search ? ftsSql(r) : [])];
     return { id: `admin_001_${r.table}`, sql: statements.map((s) => `${s};`).join("\n") };
   });
+  return [...own, systemMigration];
 }

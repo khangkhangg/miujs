@@ -15,13 +15,15 @@ export interface Shell {
 
 export interface PageInput {
   title: string;
-  /** Nav key: a resource name, "workflows" or "home". */
+  /** Nav key: a resource name, "workflows", "system" or "home". */
   active?: string;
   body: HtmlString;
   status?: number;
   resources: ResourceMeta[];
   orgs: { id: string; name: string }[];
   workflows: boolean;
+  /** Show the System entry (the user may read the System area). */
+  system?: boolean;
   /** Extra response headers (e.g. Set-Cookie). */
   headers?: HeadersInit;
 }
@@ -52,7 +54,7 @@ export function page(shell: Shell, ctx: Context, p: PageInput): Response {
   }</div></header>
 <div class="shell"><nav class="side" aria-label="Admin"><ul>${link(shell.path, "home", "Overview")}</ul><h2>Records</h2><ul>${p.resources.map((r) => link(`${shell.path}/r/${r.name}`, r.name, r.label))}</ul>${
     p.workflows ? html`<h2>Automation</h2><ul>${link(`${shell.path}/workflows`, "workflows", "Workflows")}</ul>` : ""
-  }</nav>
+  }${p.system ? html`<h2>Operations</h2><ul>${link(`${shell.path}/system`, "system", "System")}</ul>` : ""}</nav>
 <main id="main" tabindex="-1">${p.body}</main></div>
 <div class="sr-only" aria-live="polite" data-live></div>
 </body></html>`;

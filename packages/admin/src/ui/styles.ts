@@ -113,6 +113,17 @@ dl.meta dt{color:var(--muted)}
 .grid-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.75rem}
 .grid-cards a{display:block;padding:1rem;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);text-decoration:none;color:var(--text);font-weight:600}
 details.menu summary{cursor:pointer}
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.5rem;margin:0 0 1rem}
+.stat{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:var(--radius);padding:.5rem .75rem}
+.stat dt{color:var(--muted);font-size:.8rem}
+.stat dd{margin:0;font-weight:700;font-size:1.1rem;overflow-wrap:anywhere}
+.stat.tone-good{border-left-color:var(--ok)}.stat.tone-warning{border-left-color:var(--warn)}.stat.tone-critical{border-left-color:var(--danger)}
+.plugin-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:.75rem}
+.plugin-card h2{font-size:1.05rem;margin:0 0 .5rem}
+.plugin-card h3{font-size:.9rem;margin:.5rem 0 .25rem}
+.plugin-card .stats{grid-template-columns:repeat(auto-fill,minmax(110px,1fr));margin:0}
+form.action h3{margin:0 0 .25rem;font-size:1rem}
+pre.mono{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
 @media (max-width:760px){
 .shell{grid-template-columns:minmax(0,1fr)}
 nav.side{border-right:0;border-bottom:1px solid var(--line);padding:.5rem}
