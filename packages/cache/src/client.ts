@@ -25,6 +25,18 @@ export interface CacheClient {
 /** Keys starting with this prefix are reserved for tag indexes. */
 export const TAG_PREFIX = "__miu:tag:";
 
+/** A stored tag index: keys, latest expiry (epoch ms, null = some key never expires), size after the last prune. */
+interface TagIndex {
+  k: string[];
+  e: number | null;
+  p: number;
+}
+
+/** Indexes smaller than this are never pruned. */
+const PRUNE_MIN = 32;
+/** Seconds a tag index outlives the last expiry it knows of (absorbs clock differences). */
+const TAG_INDEX_GRACE = 60;
+
 interface Shared {
   inflight: Map<string, Promise<unknown>>;
   tagLocks: Map<string, Promise<void>>;
@@ -80,9 +92,24 @@ export function createCache(store: CacheStore): CacheClient {
     return next;
   };
 
-  const readIndex = async (tag: string): Promise<string[]> => {
+  const readIndex = async (tag: string): Promise<TagIndex> => {
     const v = parse(await store.get(TAG_PREFIX + tag));
-    return Array.isArray(v) ? (v as string[]) : [];
+    // Older versions stored a plain array of keys (no expiry known: keep it permanent).
+    if (Array.isArray(v)) return { k: v.filter((x): x is string => typeof x === "string"), e: null, p: 0 };
+    const o = v as Partial<TagIndex> | undefined;
+    if (o && typeof o === "object" && Array.isArray(o.k)) {
+      return { k: o.k.filter((x): x is string => typeof x === "string"), e: typeof o.e === "number" ? o.e : null, p: typeof o.p === "number" ? o.p : 0 };
+    }
+    return { k: [], e: 0, p: 0 };
+  };
+
+  // Drops keys that no longer exist (expired, deleted, evicted). Run when the index has doubled
+  // since the last prune, so it costs O(1) store reads per tagged set, amortized, and an index
+  // holds at most about twice the live keys of its tag.
+  const prune = async (index: TagIndex): Promise<void> => {
+    const alive = await Promise.all(index.k.map(async (k) => (await store.get(k)) !== undefined));
+    index.k = index.k.filter((_, i) => alive[i]);
+    index.p = index.k.length;
   };
 
   const set = async (key: string, value: unknown, opts: SetOptions = {}): Promise<void> => {
@@ -93,11 +120,23 @@ export function createCache(store: CacheStore): CacheClient {
     await store.set(key, text, opts.ttl ? { ttl: opts.ttl } : undefined);
     for (const tag of opts.tags ?? []) {
       await withTag(tag, async () => {
-        const keys = await readIndex(tag);
-        if (!keys.includes(key)) {
-          keys.push(key);
-          await store.set(TAG_PREFIX + tag, JSON.stringify(keys));
+        const index = await readIndex(tag);
+        const now = Date.now();
+        // An empty index (new, or every key gone) takes this key's expiry; otherwise the latest wins.
+        const exp = opts.ttl ? now + opts.ttl * 1000 : null;
+        const known = index.k.includes(key);
+        if (!known) index.k.push(key);
+        if (index.k.length === 1) index.e = exp;
+        else if (index.e !== null) index.e = exp === null ? null : Math.max(index.e, exp);
+        if (known && index.e === null) return; // nothing changed
+        if (!known && index.k.length >= PRUNE_MIN && index.k.length >= 2 * index.p) {
+          await prune(index);
+          if (!index.k.includes(key)) index.k.push(key);
         }
+        // An index whose keys all expire expires (a little) after the last of them, so tags that
+        // are never invalidated do not stay in Redis/KV forever.
+        const ttl = index.e === null ? undefined : Math.ceil((index.e - now) / 1000) + TAG_INDEX_GRACE;
+        await store.set(TAG_PREFIX + tag, JSON.stringify(index), ttl ? { ttl } : undefined);
       });
     }
   };
@@ -142,7 +181,7 @@ export function createCache(store: CacheStore): CacheClient {
         return Promise.reject(err);
       }
       return withTag(tag, async () => {
-        const keys = await readIndex(tag);
+        const { k: keys } = await readIndex(tag);
         await Promise.all(keys.map((k) => store.delete(k)));
         await store.delete(TAG_PREFIX + tag);
       });

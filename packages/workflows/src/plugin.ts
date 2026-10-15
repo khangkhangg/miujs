@@ -62,11 +62,6 @@ export type UnknownWorkflow = { workflow: string } | { webhook: string } | { cro
 
 const RESUME_JOB = "miu.workflows.resume";
 const CRON_JOB = "miu.workflows.cron";
-/**
- * Never matches (30 February). Bun/Deno/Node queues only run their minute scheduler when they
- * start with at least one schedule, so this keeps it running for crons registered later.
- */
-const NEVER = "0 0 30 2 *";
 
 /**
  * Durable workflows: event, cron, webhook and manual triggers; replayed runs with a step
@@ -100,7 +95,6 @@ export function workflows(opts: WorkflowsOptions) {
   const cronJob = defineJob(CRON_JOB, {
     input: t.object({ workflow: t.string(), cron: t.string() }),
     run: async ({ input, env }) => {
-      if (input.workflow === "") return; // the NEVER placeholder
       const def = await engine.lookup(input.workflow, env);
       const tr = def?.triggers.find((x) => x.type === "cron" && x.cron === input.cron);
       if (!def || !tr || tr.type !== "cron") {
@@ -115,6 +109,8 @@ export function workflows(opts: WorkflowsOptions) {
   // event), and webhooks are dispatched from onRequest, so register()/unregister() take effect
   // without rebuilding routes or the queue.
   const schedules: Schedule<any>[] = [];
+  // addSchedule/removeSchedule start the queue's minute scheduler with the first cron and stop it with the last.
+  const q = queue({ jobs: [resumeJob, cronJob], schedules, adapter });
   const hooks = new Map<string, { def: WorkflowDef<any>; tr: WebhookTrigger }>();
   const checkHooks = (def: WorkflowDef<any>) => {
     for (const tr of def.triggers) {
@@ -125,22 +121,19 @@ export function workflows(opts: WorkflowsOptions) {
   };
   const index = (def: WorkflowDef<any>) => {
     for (const tr of def.triggers) {
-      if (tr.type === "cron") schedules.push(schedule(tr.cron, cronJob, { workflow: def.name, cron: tr.cron }));
+      if (tr.type === "cron") q.addSchedule(schedule(tr.cron, cronJob, { workflow: def.name, cron: tr.cron }));
       else if (tr.type === "webhook") hooks.set(tr.path, { def, tr });
     }
   };
   const unindex = (name: string) => {
-    for (let i = schedules.length - 1; i >= 0; i--) if ((schedules[i].input as { workflow: string }).workflow === name) schedules.splice(i, 1);
+    for (const sc of schedules.filter((x) => (x.input as { workflow: string }).workflow === name)) q.removeSchedule(sc);
     for (const [path, h] of hooks) if (h.def.name === name) hooks.delete(path);
   };
   for (const def of registry.values()) {
     checkHooks(def);
     index(def);
   }
-  if (adapter.name !== "cloudflare" && schedules.length === 0) schedules.push(schedule(NEVER, cronJob, { workflow: "", cron: NEVER }));
   const extraCrons = (opts.crons ?? []).map((c) => parseCron(c).source);
-  const q = queue({ jobs: [resumeJob, cronJob], schedules, adapter });
-
   const unknownHandlers: ((what: UnknownWorkflow, env: Env) => Promise<void> | void)[] = [];
   const askUnknown = async (what: UnknownWorkflow, env: Env) => {
     for (const fn of unknownHandlers) {

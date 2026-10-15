@@ -8,6 +8,8 @@ export interface MemoryQueueOptions {
   concurrency?: number;
   /** Time source for delays, backoff and schedules. Tests pass `manualClock()`. */
   clock?: Clock;
+  /** Dead letters kept in memory; older ones are dropped first. Default 1000. */
+  maxDeadLetters?: number;
 }
 
 export interface DeadLetter {
@@ -23,7 +25,7 @@ export interface DeadLetter {
 }
 
 export interface MemoryQueue extends QueueAdapter {
-  /** Messages that failed every attempt (or could never run). Newest last. */
+  /** Messages that failed every attempt (or could never run), at most `maxDeadLetters`. Newest last. */
   readonly deadLetters: DeadLetter[];
   /**
    * Resolve once nothing is queued, running or delayed. On a test clock (`manualClock`), delays
@@ -48,10 +50,16 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
   if (!Number.isInteger(concurrency) || concurrency < 1) {
     throw queueErrors.config(`memoryQueue concurrency must be a positive integer, got ${String(concurrency)}`, "Pass `concurrency: 1` or more.");
   }
+  const maxDeadLetters = opts.maxDeadLetters ?? 1000;
+  if (!Number.isInteger(maxDeadLetters) || maxDeadLetters < 0) {
+    throw queueErrors.config(`memoryQueue maxDeadLetters must be a whole number >= 0, got ${String(maxDeadLetters)}`, "Pass `maxDeadLetters: 1000` (0 keeps none).");
+  }
   const clock = opts.clock ?? realClock;
   let rt: QueueRuntime | undefined;
   const ready: Item[] = [];
   const delayed = new Map<unknown, number>(); // timer handle -> due time
+  const delayedById = new Map<string, unknown>(); // message id -> timer handle (for cancel)
+  let started = false; // setup() ran and stop() did not
   const scheduleTimers = new Set<unknown>();
   const deadLetters: DeadLetter[] = [];
   let running = 0;
@@ -90,10 +98,15 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
     }
     const h = clock.setTimeout(() => {
       delayed.delete(h);
+      if (delayedById.get(item.msg.id) === h) delayedById.delete(item.msg.id);
       ready.push(item);
       schedulePump();
     }, delayMs);
+    // A waiting delay or retry backoff does not keep the process alive (like schedules): an
+    // in-process queue loses pending jobs on exit anyway. Use a durable queue to keep them.
+    (h as { unref?: () => void } | null)?.unref?.();
     delayed.set(h, clock.now() + delayMs);
+    delayedById.set(item.msg.id, h);
   };
 
   const deadLetter = (item: Item, error: unknown) => {
@@ -107,6 +120,8 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
       code: typeof e?.code === "string" ? e.code : undefined,
       failedAt: clock.now(),
     });
+    // Bounded, so a job that keeps failing cannot grow memory forever.
+    if (deadLetters.length > maxDeadLetters) deadLetters.splice(0, deadLetters.length - maxDeadLetters);
   };
 
   const start = (item: Item) => {
@@ -146,7 +161,7 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
     const h = clock.setTimeout(() => {
       scheduleTimers.delete(h);
       tickSchedules(next);
-      armSchedules();
+      if (runtime().schedules.length) armSchedules();
     }, next - now);
     (h as { unref?: () => void } | null)?.unref?.(); // don't keep a script alive just for cron
     scheduleTimers.add(h);
@@ -163,13 +178,40 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
       enqueue({ msg, attempt: 1, env }, (o.delay ?? 0) * 1000);
     },
     setup() {
+      started = true;
       if (runtime().schedules.length && scheduleTimers.size === 0) armSchedules();
     },
+    schedulesChanged() {
+      if (!started) return;
+      if (runtime().schedules.length) {
+        if (scheduleTimers.size === 0) armSchedules();
+      } else {
+        for (const h of scheduleTimers) clock.clearTimeout(h);
+        scheduleTimers.clear();
+      }
+    },
+    async cancel(id) {
+      const h = delayedById.get(id);
+      if (h !== undefined) {
+        clock.clearTimeout(h);
+        delayedById.delete(id);
+        delayed.delete(h);
+        notify();
+        return true;
+      }
+      const i = ready.findIndex((it) => it.msg.id === id);
+      if (i === -1) return false;
+      ready.splice(i, 1);
+      notify();
+      return true;
+    },
     stop() {
+      started = false;
       for (const h of scheduleTimers) clock.clearTimeout(h);
       scheduleTimers.clear();
       for (const h of delayed.keys()) clock.clearTimeout(h);
       delayed.clear();
+      delayedById.clear();
       notify();
     },
     async drain() {

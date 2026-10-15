@@ -44,6 +44,8 @@ export interface DurableBackend {
   stats(now: number): Promise<QueueStats>;
   /** Oldest first. */
   deadLetters(): Promise<DeadLetter[]>;
+  /** Delete a message that is not leased (delayed or ready). False when there was none. */
+  cancel?(id: string): Promise<boolean>;
   close?(): void;
   inspect(): Record<string, unknown>;
 }
@@ -100,6 +102,7 @@ export function durableQueue(name: string, backend: DurableBackend | (() => Dura
   let dispatching = 0;
   let active = false; // workers started (setup) and not stopped
   let pollTimer: unknown;
+  let kickTimer: ReturnType<typeof setTimeout> | undefined; // one pending "pump soon" after send()
   const scheduleTimers = new Set<unknown>();
   const heartbeats = new Set<unknown>();
   let pumping: Promise<void> | undefined;
@@ -162,7 +165,10 @@ export function durableQueue(name: string, backend: DurableBackend | (() => Dura
       .finally(() => {
         stopRenew();
         running--;
-        void pump();
+        // After stop()/close() a finishing job must not make this worker claim more (or reopen
+        // the database close() just closed); drain() pumps by itself.
+        if (active) void pump();
+        else notify();
       });
   };
 
@@ -250,7 +256,7 @@ export function durableQueue(name: string, backend: DurableBackend | (() => Dura
     const h = clock.setTimeout(() => {
       scheduleTimers.delete(h);
       tickSchedules(next);
-      armSchedules();
+      if (active && runtime().schedules.length) armSchedules();
     }, next - now);
     (h as { unref?: () => void } | null)?.unref?.();
     scheduleTimers.add(h);
@@ -260,6 +266,8 @@ export function durableQueue(name: string, backend: DurableBackend | (() => Dura
     active = false;
     if (pollTimer !== undefined) clock.clearTimeout(pollTimer);
     pollTimer = undefined;
+    if (kickTimer !== undefined) clearTimeout(kickTimer);
+    kickTimer = undefined;
     for (const h of [...scheduleTimers, ...heartbeats]) clock.clearTimeout(h);
     scheduleTimers.clear();
     heartbeats.clear();
@@ -276,7 +284,13 @@ export function durableQueue(name: string, backend: DurableBackend | (() => Dura
       const now = clock.now();
       await store().enqueue(msg, 1, now + (o.delay ?? 0) * 1000, now);
       // Next macrotask, so job code never runs inside the dispatching request's await chain.
-      if (active) setTimeout(() => void pump(), 0);
+      // One timer however many sends arrive before it fires.
+      if (active && kickTimer === undefined) {
+        kickTimer = setTimeout(() => {
+          kickTimer = undefined;
+          if (active) void pump();
+        }, 0);
+      }
     },
     setup() {
       if (active) return;
@@ -286,6 +300,22 @@ export function durableQueue(name: string, backend: DurableBackend | (() => Dura
       void pump();
     },
     stop,
+    schedulesChanged() {
+      if (!active) return;
+      if (runtime().schedules.length) {
+        if (scheduleTimers.size === 0) armSchedules();
+      } else {
+        for (const h of scheduleTimers) clock.clearTimeout(h);
+        scheduleTimers.clear();
+      }
+    },
+    async cancel(id) {
+      const b = store();
+      if (!b.cancel) throw queueErrors.config(`This ${name} backend cannot cancel messages`, "Implement cancel(id) in the DurableBackend.");
+      const ok = await b.cancel(id);
+      if (ok) notify();
+      return ok;
+    },
     close() {
       stop();
       be?.close?.();

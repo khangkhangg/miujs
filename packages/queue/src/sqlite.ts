@@ -47,8 +47,11 @@ const claimed = (rows: unknown[]): Claimed[] =>
 
 function sqliteBackend(open: () => SqliteDatabaseLike, table: string, path: string | undefined, owned: boolean): DurableBackend {
   let db: SqliteDatabaseLike | undefined;
+  let closed = false;
   const get = (): SqliteDatabaseLike => {
     if (db) return db;
+    // Never reopen behind close(): a job finishing late would otherwise leave a handle open.
+    if (closed) throw new Error("the queue was closed");
     const d = open();
     if (owned) d.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
     d.exec(
@@ -105,6 +108,7 @@ function sqliteBackend(open: () => SqliteDatabaseLike, table: string, path: stri
     reap: g("reap", (d, now: number, leaseUntil: number) =>
       claimed(d.query(`UPDATE ${table} SET lease_until = ? WHERE lease_until IS NOT NULL AND lease_until <= ? RETURNING ${COLS}`).all(leaseUntil, now)),
     ),
+    cancel: g("cancel", (d, id: string) => d.query(`DELETE FROM ${table} WHERE id = ? AND lease_until IS NULL`).run(id).changes === 1),
     nextRunAt: g("next", (d) => {
       const r = d.query(`SELECT MIN(run_at) AS t FROM ${table} WHERE lease_until IS NULL`).get() as { t: number | null } | null;
       return r?.t ?? undefined;
@@ -132,6 +136,7 @@ function sqliteBackend(open: () => SqliteDatabaseLike, table: string, path: stri
       ),
     ),
     close() {
+      closed = true;
       if (owned) db?.close?.();
       db = undefined;
     },

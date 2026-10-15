@@ -20,21 +20,47 @@ export interface RateLimiter {
  * In-process counters. The default; exact on a single Bun/Deno/Node server. On Workers each isolate
  * counts separately, so limits are approximate there: use `cloudflareRateLimiter` or Turnstile too.
  */
-export function memoryRateLimiter(opts: { now?: () => number; maxKeys?: number } = {}): RateLimiter {
+export function memoryRateLimiter(opts: { now?: () => number; maxKeys?: number } = {}): RateLimiter & { readonly size: number } {
   const now = opts.now ?? Date.now;
   const maxKeys = opts.maxKeys ?? 50_000;
-  const windows = new Map<string, { count: number; resetAt: number }>();
+  const windows = new Map<string, { count: number; resetAt: number; limit: number }>();
+  let sweepAt = Math.min(maxKeys, 1024);
+
+  // Expired windows are swept whenever the map has doubled since the last sweep (O(1) per new key,
+  // amortized). At `maxKeys`, the oldest windows that are not over their limit go first, in a
+  // batch: a flood of fresh emails or IPs cannot reset a counter that is currently blocking.
+  const makeRoom = (t: number) => {
+    for (const [k, v] of windows) if (v.resetAt <= t) windows.delete(k);
+    if (windows.size >= maxKeys) {
+      const target = maxKeys - Math.max(1, maxKeys >> 4);
+      for (const [k, v] of windows) {
+        if (windows.size <= target) break;
+        if (v.count < v.limit) windows.delete(k);
+      }
+      for (const k of windows.keys()) {
+        if (windows.size <= target) break;
+        windows.delete(k);
+      }
+    }
+    sweepAt = Math.min(maxKeys, Math.max(1024, windows.size * 2));
+  };
+
   return {
     kind: "memory",
+    get size() {
+      return windows.size;
+    },
     async hit(key, limit, windowSeconds) {
       const t = now();
       let w = windows.get(key);
       if (!w || w.resetAt <= t) {
-        if (windows.size >= maxKeys) for (const [k, v] of windows) if (v.resetAt <= t) windows.delete(k);
-        w = { count: 0, resetAt: t + windowSeconds * 1000 };
+        if (w) windows.delete(key);
+        else if (windows.size >= sweepAt) makeRoom(t);
+        w = { count: 0, resetAt: t + windowSeconds * 1000, limit };
         windows.set(key, w);
       }
       w.count++;
+      w.limit = limit;
       return { ok: w.count <= limit, retryAfter: Math.max(1, Math.ceil((w.resetAt - t) / 1000)) };
     },
   };

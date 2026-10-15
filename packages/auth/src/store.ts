@@ -151,10 +151,14 @@ export function memoryUserStore(): UserStore {
   const users = new Map<string, StoredUser>();
   const byEmail = new Map<string, string>();
   const tokens = new Map<string, ApiTokenRecord>();
+  /** tokenHash → token id, so bearer-token requests are one lookup, not a scan. */
+  const tokenByHash = new Map<string, string>();
   const oneTime = new Map<string, OneTimeTokenRecord>();
   const oauth = new Map<string, OAuthAccountRecord>();
   const passkeys = new Map<string, PasskeyRecord>();
   const challenges = new Map<string, ChallengeRecord>();
+  // Expired challenges are swept when the map has doubled since the last sweep (amortized O(1)).
+  let challengeSweepAt = 64;
   const clone = <T>(v: T | undefined): T | null => (v === undefined ? null : structuredClone(v));
   return {
     kind: "memory",
@@ -178,21 +182,25 @@ export function memoryUserStore(): UserStore {
       if (u) u.passwordHash = hash;
     },
     async createToken(t) {
+      const old = tokens.get(t.id);
+      if (old) tokenByHash.delete(old.tokenHash);
       tokens.set(t.id, structuredClone(t));
+      tokenByHash.set(t.tokenHash, t.id);
     },
     async findTokenByHash(hash) {
-      for (const t of tokens.values()) if (t.tokenHash === hash) return structuredClone(t);
-      return null;
+      const id = tokenByHash.get(hash);
+      return clone(id === undefined ? undefined : tokens.get(id));
     },
     async deleteToken(id, userId) {
       const t = tokens.get(id);
       if (!t || t.userId !== userId) return false;
       tokens.delete(id);
+      tokenByHash.delete(t.tokenHash);
       return true;
     },
     async deleteUserTokens(userId) {
       let n = 0;
-      for (const [k, t] of tokens) if (t.userId === userId) (tokens.delete(k), n++);
+      for (const [k, t] of tokens) if (t.userId === userId) (tokens.delete(k), tokenByHash.delete(t.tokenHash), n++);
       return n;
     },
     async markEmailVerified(id, at) {
@@ -265,13 +273,22 @@ export function memoryUserStore(): UserStore {
       return false;
     },
     async createChallenge(c) {
-      const now = Date.now();
-      for (const [k, v] of challenges) if (v.expiresAt <= now) challenges.delete(k);
       challenges.set(c.challenge, structuredClone(c));
+      if (challenges.size >= challengeSweepAt) {
+        const now = Date.now();
+        for (const [k, v] of challenges) if (v.expiresAt <= now) challenges.delete(k);
+        challengeSweepAt = Math.max(64, challenges.size * 2);
+      }
     },
     async consumeChallenge(challenge, purpose) {
       const c = challenges.get(challenge);
-      if (!c || c.purpose !== purpose) return null;
+      if (!c) return null;
+      // Expired ones are as good as swept (the caller rejects them either way).
+      if (c.expiresAt <= Date.now()) {
+        challenges.delete(challenge);
+        return null;
+      }
+      if (c.purpose !== purpose) return null;
       challenges.delete(challenge);
       return c;
     },

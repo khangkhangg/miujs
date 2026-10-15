@@ -77,7 +77,7 @@ On Bun, Deno and Node the adapter fires schedules itself. On Workers they run fr
 
 ### Memory (default off Workers)
 
-`memoryQueue({ concurrency, clock })` runs jobs in this process; they are lost if it exits. It keeps `deadLetters` in memory and `drain()` resolves once nothing is queued, running or delayed. With `manualClock()`, `drain()` skips delays and backoff, which makes job tests fast.
+`memoryQueue({ concurrency, clock, maxDeadLetters })` runs jobs in this process; they are lost if it exits. It keeps the newest `maxDeadLetters` (default 1000) dead letters in memory, and `drain()` resolves once nothing is queued, running or delayed. With `manualClock()`, `drain()` skips delays and backoff, which makes job tests fast. Its timers (schedules, delays, retry backoff) are unref'd, so they never keep the process alive on their own: a delayed job that has not run when the process exits is lost, like any in-process job. Use `sqliteQueue` or `redisQueue` when delayed jobs must survive.
 
 <!-- test -->
 ```ts
@@ -103,7 +103,7 @@ console.log(failures, adapter.deadLetters.length); // 2 1
 q.stop();
 ```
 
-The plugin's own `dispatch(job, input, opts?, env?)` works outside requests (scripts, tests); `stop()` clears schedule and delay timers.
+The plugin's own `dispatch(job, input, opts?, env?)` works outside requests (scripts, tests); `stop()` clears schedule and delay timers. `cancel(id)` (also `ctx.queue.cancel(id)`) removes a message that has not started, e.g. a delayed one, by the id `dispatch` returned; it resolves false when the message already ran or is running (memory, SQLite and Redis; Cloudflare Queues cannot cancel). `addSchedule(schedule(...))` and `removeSchedule(s)` change cron schedules at runtime: on Bun, Deno and Node the minute scheduler starts with the first schedule and stops with the last; on Workers a cron fires only if it is also a Cron Trigger in wrangler.toml.
 
 ### SQLite (Bun only)
 
@@ -137,7 +137,7 @@ import { queue, redisQueue } from "@miujs/queue";
 queue({ jobs, adapter: redisQueue(bunRedis(), { concurrency: 4 }) });
 ```
 
-SQLite and Redis adapters are `DurableQueue`s: `drain()`, `stop()`, `close()`, `listDeadLetters()` and `stats()`. Jobs receive the process env, not the dispatching request's env.
+SQLite and Redis adapters are `DurableQueue`s: `drain()`, `stop()`, `close()`, `listDeadLetters()` and `stats()`. Jobs receive the process env, not the dispatching request's env. Their poll, schedule and lease-renewal timers are unref'd, so an idle app exits without calling `stop()`. After `stop()` a job that is still running finishes, but the worker claims nothing more; after `close()` the queue never reopens its database. Dead letters are kept in storage (`<table>_dead`, or the `dead` list in Redis) until you delete them, so prune them periodically if jobs fail often.
 
 ### Cloudflare Queues (default on Workers)
 

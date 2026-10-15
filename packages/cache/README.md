@@ -46,7 +46,7 @@ export default app;
 | `remember<T>(key, ttlSeconds, fn)` | Returns the cached value or runs `fn`, caches its result and returns it. Errors and `undefined` are not cached. |
 | `invalidateTag(tag)` | Deletes every key that was `set` with this tag. |
 
-Tag indexes are stored under keys starting with `TAG_PREFIX` (`"__miu:tag:"`); do not use that prefix for your own keys.
+Tag indexes are stored under keys starting with `TAG_PREFIX` (`"__miu:tag:"`); do not use that prefix for your own keys. An index drops keys that expired or were deleted once it has doubled in size, and when all of its keys have a TTL it expires a minute after the last one, so tags that are never invalidated do not pile up in Redis or KV.
 
 <!-- test -->
 ```ts

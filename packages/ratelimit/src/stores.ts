@@ -18,28 +18,58 @@ export interface RateLimitStore {
 const missingBinding = (binding: string, what: string, fix: string) =>
   errors.config("MIU_E_RATELIMIT_BINDING", `Rate limit ${what} binding "${binding}" is not configured`, fix);
 
+interface MemoryEntry {
+  state: unknown;
+  exp: number;
+  /** The last hit used up the limit (or was denied). Such keys are evicted last. */
+  blocked: boolean;
+}
+
+/**
+ * Makes room in a Map of rate limit windows, oldest first: drops expired entries, then (when still
+ * at `maxKeys`) a batch of the least recently allowed keys that are not blocked, and only then
+ * blocked ones. Evicting in batches keeps the cost O(1) per new key, amortized; sparing blocked
+ * keys means a flood of fresh keys cannot reset an attacker's own exhausted counter.
+ * Returns the size at which the next sweep should run.
+ */
+function sweepWindows<E extends { blocked: boolean }>(map: Map<string, E>, maxKeys: number, expired: (e: E) => boolean): number {
+  for (const [k, v] of map) if (expired(v)) map.delete(k);
+  if (map.size >= maxKeys) {
+    const target = maxKeys - Math.max(1, maxKeys >> 4);
+    for (const [k, v] of map) {
+      if (map.size <= target) break;
+      if (!v.blocked) map.delete(k);
+    }
+    for (const k of map.keys()) {
+      if (map.size <= target) break;
+      map.delete(k);
+    }
+  }
+  return Math.min(maxKeys, Math.max(1024, map.size * 2));
+}
+
 /**
  * In-process counters: exact on one Bun/Deno/Node server; per isolate (approximate) on Workers.
- * Bounded by `maxKeys`: expired keys are swept first, then the oldest keys are evicted.
+ * Bounded by `maxKeys`. Expired windows are swept whenever the store has doubled since the last
+ * sweep; when it is full, the least recently allowed keys that are not blocked are evicted first,
+ * so a flood of new keys cannot reset a client that is currently rate limited.
  */
 export function memoryStore(opts: { maxKeys?: number } = {}): RateLimitStore {
   const maxKeys = opts.maxKeys ?? 100_000;
-  const map = new Map<string, { state: unknown; exp: number }>();
+  const map = new Map<string, MemoryEntry>();
+  let sweepAt = Math.min(maxKeys, 1024);
   return {
     kind: "memory",
     async consume(key, policy, now) {
       const e = map.get(key);
       const r = step(e && e.exp > now ? e.state : null, policy, now);
       if (r.decision.allowed) {
-        if (!e && map.size >= maxKeys) {
-          for (const [k, v] of map) if (v.exp <= now) map.delete(k);
-          // Still full: evict the oldest. Under a flood of distinct keys this can forget a hot key.
-          for (const k of map.keys()) {
-            if (map.size < maxKeys) break;
-            map.delete(k);
-          }
-        }
-        map.set(key, { state: r.state, exp: now + r.ttlMs });
+        // Re-inserted, so Map order is least recently allowed first.
+        if (e) map.delete(key);
+        else if (map.size >= sweepAt) sweepAt = sweepWindows(map, maxKeys, (v) => v.exp <= now);
+        map.set(key, { state: r.state, exp: now + r.ttlMs, blocked: r.decision.remaining === 0 });
+      } else if (e) {
+        e.blocked = true;
       }
       return r.decision;
     },

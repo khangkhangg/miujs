@@ -25,9 +25,20 @@ export interface SessionStore {
 
 // ---------------------------------------------------------------------------------------------
 
-/** In-process store. Sessions are lost on restart and not shared between instances; for dev and tests. */
-export function memorySessionStore(): SessionStore & { readonly size: number } {
+/**
+ * In-process store. Sessions are lost on restart and not shared between instances; for dev and tests.
+ * Expired sessions are swept whenever the store has doubled since the last sweep, so it holds at
+ * most about twice the live sessions.
+ */
+export function memorySessionStore(opts: { now?: () => number } = {}): SessionStore & { readonly size: number } {
+  const now = opts.now ?? Date.now;
   const map = new Map<string, SessionRecord>();
+  let sweepAt = 64;
+  const sweep = () => {
+    const t = now();
+    for (const [k, r] of map) if (r.e <= t) map.delete(k);
+    sweepAt = Math.max(64, map.size * 2);
+  };
   return {
     kind: "memory",
     get size() {
@@ -36,7 +47,7 @@ export function memorySessionStore(): SessionStore & { readonly size: number } {
     async get(id) {
       const r = map.get(id);
       if (!r) return null;
-      if (r.e <= Date.now()) {
+      if (r.e <= now()) {
         map.delete(id);
         return null;
       }
@@ -44,6 +55,7 @@ export function memorySessionStore(): SessionStore & { readonly size: number } {
     },
     async set(id, record) {
       map.set(id, structuredClone(record));
+      if (map.size >= sweepAt) sweep();
     },
     async delete(id) {
       map.delete(id);

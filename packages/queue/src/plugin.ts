@@ -1,7 +1,7 @@
 import { createLogger, definePlugin, targetRuntime, isMiuError, type App, type CloudflareNeeds, type Context, type Env, type Logger } from "miujs";
 import type { QueueAdapter, QueueMessage, QueueRuntime, RunResult } from "./adapter.ts";
 import { queueErrors } from "./errors.ts";
-import { backoffSeconds, checkInput, type Dispatch, type DispatchOptions, type JobDef, type JobInput, type Schedule } from "./job.ts";
+import { backoffSeconds, checkInput, isJob, type Dispatch, type DispatchOptions, type JobDef, type JobInput, type Schedule } from "./job.ts";
 import { memoryQueue } from "./memory.ts";
 
 declare module "miujs" {
@@ -14,6 +14,11 @@ declare module "miujs" {
 export interface QueueClient {
   /** Validate `input` and enqueue `job`. Resolves once the message is accepted, not when it has run. */
   dispatch: Dispatch;
+  /**
+   * Remove a message that has not started yet (e.g. a delayed one) by the id `dispatch` returned.
+   * False when it already ran, is running, or never existed. Not supported on Cloudflare Queues.
+   */
+  cancel(id: string): Promise<boolean>;
 }
 
 export interface QueueOptions {
@@ -56,13 +61,15 @@ export function _setWorkersDefault(fn: () => QueueAdapter): void {
 export function queue(opts: QueueOptions = {}) {
   // Decided per plugin (not at import) so `miu deploy cloudflare` (MIU_TARGET) picks Workers defaults.
   const adapter = opts.adapter ?? (targetRuntime() === "workerd" && workersAdapterFactory ? workersAdapterFactory() : memoryQueue());
+  // Kept as given (not copied), so the adapters always see the live list.
   const schedules = opts.schedules ?? [];
   const jobs = new Map<string, JobDef<any>>();
-  for (const job of [...(opts.jobs ?? []), ...schedules.map((s) => s.job)]) {
+  const addJob = (job: JobDef<any>) => {
     const prev = jobs.get(job.name);
     if (prev && prev !== job) throw queueErrors.duplicateJob(job.name);
     jobs.set(job.name, job);
-  }
+  };
+  for (const job of [...(opts.jobs ?? []), ...schedules.map((s) => s.job)]) addJob(job);
   let log: Logger = createLogger("info", { plugin: "queue" });
 
   const dispatch = async (job: JobDef<any>, input: unknown, o: DispatchOptions | undefined, env: Env): Promise<{ id: string }> => {
@@ -76,6 +83,14 @@ export function queue(opts: QueueOptions = {}) {
   };
 
   const dispatcherFor = (env: Env): Dispatch => (job, input, o) => dispatch(job, input, o, env);
+
+  const cancel = (id: string, env: Env): Promise<boolean> => {
+    if (!adapter.cancel) {
+      return Promise.reject(queueErrors.config(`The ${adapter.name} queue adapter cannot cancel messages`, "Use memoryQueue(), sqliteQueue() or redisQueue(), or have the job check whether it is still wanted when it runs."));
+    }
+    if (typeof id !== "string" || id === "") return Promise.resolve(false);
+    return adapter.cancel(id, env);
+  };
 
   const run = async (msg: QueueMessage, attempt: number, env: Env): Promise<RunResult> => {
     const job = jobs.get(msg.job);
@@ -126,11 +141,38 @@ export function queue(opts: QueueOptions = {}) {
       await adapter.setup?.(app);
     },
     onRequest(ctx: Context) {
-      ctx.queue = { dispatch: dispatcherFor(ctx.env) };
+      const env = ctx.env;
+      ctx.queue = { dispatch: dispatcherFor(env), cancel: (id) => cancel(id, env) };
     },
     /** Dispatch outside a request (scripts, tests). `env` defaults to the process env. */
     dispatch<J extends JobDef<any>>(job: J, input: JobInput<J>, o?: DispatchOptions, env: Env = processEnv()): Promise<{ id: string }> {
       return dispatch(job, input, o, env);
+    },
+    /** Cancel a message that has not started (see `QueueClient.cancel`). */
+    cancel(id: string, env: Env = processEnv()): Promise<boolean> {
+      return cancel(id, env);
+    },
+    /**
+     * Add a cron schedule at runtime (its job is registered too). On Bun/Deno/Node the minute
+     * scheduler starts with the first schedule and stops when the last is removed. On Workers,
+     * crons fire only if they are also listed as Cron Triggers in wrangler.toml.
+     */
+    addSchedule<S extends Schedule<any>>(s: S): S {
+      if (!s || typeof s !== "object" || !isJob(s.job) || typeof s.cron?.matches !== "function") {
+        throw queueErrors.config("addSchedule needs a schedule from schedule()", 'Pass addSchedule(schedule("*/5 * * * *", job, input)).');
+      }
+      addJob(s.job);
+      schedules.push(s);
+      adapter.schedulesChanged?.();
+      return s;
+    },
+    /** Remove a schedule added with `addSchedule` (or given in `schedules`). False when it was not there. */
+    removeSchedule(s: Schedule<any>): boolean {
+      const i = schedules.indexOf(s);
+      if (i === -1) return false;
+      schedules.splice(i, 1);
+      adapter.schedulesChanged?.();
+      return true;
     },
     /** True when this queue runs the job `name` (from `jobs` or `schedules`). */
     hasJob(name: string): boolean {

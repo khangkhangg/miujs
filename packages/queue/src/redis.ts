@@ -142,6 +142,12 @@ function redisBackend(client: QueueRedisLike, prefix: string): DurableBackend {
       }
       return out;
     }),
+    // ZREM / LREM decide atomically whether this caller removed it before a worker took it.
+    cancel: g("cancel", async (id: string) => {
+      const removed = (await client.zrem(k.delayed, id)) === 1 || (await client.lrem(k.ready, id)) > 0;
+      if (removed) await client.del(k.job(id));
+      return removed;
+    }),
     nextRunAt: g("next", async (now: number) => {
       if ((await client.llen(k.ready)) > 0) return now;
       const [first] = await client.zrangebyscore(k.delayed, -Infinity, Infinity, 1);

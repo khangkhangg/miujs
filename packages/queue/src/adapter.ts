@@ -41,6 +41,10 @@ export interface QueueAdapter {
   setup?(app: App): void | Promise<void>;
   /** Stop timers. */
   stop?(): void;
+  /** Remove a message that has not started yet (delayed, or waiting its turn). False when there was none. */
+  cancel?(id: string, env: Env): Promise<boolean>;
+  /** `QueueRuntime.schedules` gained or lost entries: start or stop the minute scheduler. */
+  schedulesChanged?(): void;
   inspect?(): Record<string, unknown>;
   cloudflare?(): CloudflareNeeds;
 }

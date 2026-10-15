@@ -65,18 +65,37 @@ export function hex(bytes: Uint8Array): string {
   return s;
 }
 
+// Imported HMAC keys by secret. Apps use a handful of secrets; the bound only matters when callers
+// pass many distinct ones (e.g. per-tenant secrets), where it keeps this from growing forever.
 const keyCache = new Map<string, Promise<CryptoKey>>();
+const KEY_CACHE_MAX = 64;
 
 function hmacKey(secret: string): Promise<CryptoKey> {
   let k = keyCache.get(secret);
   if (!k) {
+    if (keyCache.size >= KEY_CACHE_MAX) keyCache.delete(keyCache.keys().next().value as string);
     k = crypto.subtle.importKey("raw", utf8(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
     keyCache.set(secret, k);
+    // A failed import is not cached.
+    k.catch(() => keyCache.get(secret) === k && keyCache.delete(secret));
   }
   return k;
 }
 
+// On Bun, keyed CryptoHasher computes the same HMAC synchronously, ~30x faster than a
+// crypto.subtle round trip. This matters because every signed session cookie is verified per request.
+type BunHasher = new (alg: string, key: string) => { update(d: string): { digest(): Uint8Array } };
+const BunCryptoHasher = (globalThis as { Bun?: { CryptoHasher?: BunHasher } }).Bun?.CryptoHasher;
+
 export async function hmacSha256(secret: string, data: string): Promise<Uint8Array<ArrayBuffer>> {
+  if (BunCryptoHasher) {
+    try {
+      return new Uint8Array(new BunCryptoHasher("sha256", secret).update(data).digest());
+    } catch {
+      // Bun 1.4 surfaces a stale BoringSSL error left by an earlier failed Web Crypto call (e.g.
+      // importing an EC point not on the curve) from CryptoHasher; Web Crypto below is unaffected.
+    }
+  }
   return new Uint8Array(await crypto.subtle.sign("HMAC", await hmacKey(secret), utf8(data)));
 }
 

@@ -353,8 +353,9 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
       }
       return d as unknown as Discovery;
     })();
-    discoveries.set(p.id, { at: Date.now(), doc });
-    doc.catch(() => discoveries.delete(p.id));
+    const entry = { at: Date.now(), doc };
+    discoveries.set(p.id, entry);
+    doc.catch(() => discoveries.get(p.id) === entry && discoveries.delete(p.id));
     return doc;
   }
 
@@ -374,7 +375,8 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
     if (!entry || now - entry.at > JWKS_TTL) {
       entry = { at: now, missAt: 0, keys: fetchKeys(uri, p) };
       jwks.set(uri, entry);
-      entry.keys.catch(() => jwks.delete(uri));
+      const e = entry;
+      e.keys.catch(() => jwks.get(uri) === e && jwks.delete(uri));
     }
     const found = pick(await entry.keys);
     if (found) return found;
@@ -383,7 +385,7 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
     if (now - entry.missAt < JWKS_MISS_REFETCH) return null;
     const fresh = { at: now, missAt: now, keys: fetchKeys(uri, p) };
     jwks.set(uri, fresh);
-    fresh.keys.catch(() => jwks.delete(uri));
+    fresh.keys.catch(() => jwks.get(uri) === fresh && jwks.delete(uri));
     return pick(await fresh.keys);
   }
 
