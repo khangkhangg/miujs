@@ -181,6 +181,8 @@ const JSON_HEADERS = new Headers({ "content-type": JSON_TYPE });
 const TEXT_HEADERS = new Headers({ "content-type": TEXT_TYPE });
 const TEXT_INIT: ResponseInit = { headers: TEXT_HEADERS };
 
+const MAX_SUGGEST_PATH = 200;
+
 function levenshtein(a: string, b: string): number {
   const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
   for (let i = 1; i <= a.length; i++) {
@@ -221,6 +223,7 @@ export class App {
   private errorHooks: NonNullable<Plugin["onError"]>[] = [];
   private background = new Set<Promise<unknown>>();
   private services = new Map<string, unknown>();
+  private suggestKeys: string[] | undefined;
   private maxBodySize: number;
   private workers: { queue: WorkersHandler[]; scheduled: WorkersHandler[] } = { queue: [], scheduled: [] };
   private staticEnv: Record<string, unknown>;
@@ -578,16 +581,25 @@ export class App {
         })
         .toResponse({ allow: allowed.join(", ") });
     }
+    // Suggestions cost O(path × route length) per route, so only real typos get them: long paths
+    // (scanners, garbage) and routes of very different length are skipped. Keeps 404s cheap.
     let best: { d: number; label: string } | null = null;
-    for (const c of this.compiled) {
-      const d = levenshtein(ctx.path, c.path.replace(/:[^/]+/g, "x"));
-      if (!best || d < best.d) best = { d, label: `${c.method} ${c.path}` };
+    const path = ctx.path;
+    const maxD = Math.max(3, path.length / 3);
+    if (path.length <= MAX_SUGGEST_PATH) {
+      const keys = (this.suggestKeys ??= this.compiled.map((c) => c.path.replace(/:[^/]+/g, "x")));
+      for (let i = 0; i < keys.length; i++) {
+        if (Math.abs(keys[i].length - path.length) > maxD) continue;
+        const d = levenshtein(path, keys[i]);
+        if (!best || d < best.d) best = { d, label: `${this.compiled[i].method} ${this.compiled[i].path}` };
+      }
     }
     const fix =
-      best && best.d <= Math.max(3, ctx.path.length / 3)
+      best && best.d <= maxD
         ? `Did you mean ${best.label}? Run \`miu inspect\` or GET /_miu/app.json in dev to list routes.`
         : "Run `miu inspect` or GET /_miu/app.json in dev to list routes.";
-    return errors.custom({ code: "MIU_E_ROUTE_NOT_FOUND", status: 404, message: `No route for ${ctx.method} ${ctx.path}`, fix }).toResponse();
+    const shown = path.length > MAX_SUGGEST_PATH ? `${path.slice(0, MAX_SUGGEST_PATH)}…` : path;
+    return errors.custom({ code: "MIU_E_ROUTE_NOT_FOUND", status: 404, message: `No route for ${ctx.method} ${shown}`, fix }).toResponse();
   }
 
   private errorResponse(err: unknown, ctx: RequestContext): Response {
