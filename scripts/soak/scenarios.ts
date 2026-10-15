@@ -122,15 +122,16 @@ const quiz: Scenario = {
       if (game % 5 === 1) await c.req("GET /rooms/code/:code", `/rooms/code/${created.json.code}`);
       const url = wsBase + created.json.join;
       const clients: RoomClient[] = [];
-      const join = (name: string) => {
-        const cl = connect(url, { name, reconnect: false });
+      const join = (name: string, host = false) => {
+        // The host joins with the creator's hostKey (requireHostKey: joining first is not enough).
+        const cl = connect(url, host ? { name, role: "host", hostKey: created.json.hostKey, reconnect: false } : { name, reconnect: false });
         cl.on("state", () => rec.wsFramesIn++);
         cl.on("error", (e: any) => rec.err("ws", e.code));
         clients.push(cl);
         return cl;
       };
       try {
-        const host = join("Host");
+        const host = join("Host", true);
         if (!(await timed(rec, "ws join (host)", host.ready))) continue;
         const players: RoomClient[] = [];
         const n = 3 + rand(5);

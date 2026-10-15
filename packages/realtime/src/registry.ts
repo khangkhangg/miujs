@@ -16,6 +16,8 @@ export interface LocalRoomsOptions {
   onError?: RoomHooks["onError"];
   /** `room.env` for rooms made here (called per room). Default: {}. */
   env?: () => Record<string, unknown>;
+  /** A room closed (disposed, closed by its code, or shutdown). */
+  onRoomClose?: (type: string, id: string) => void;
 }
 
 export class LocalRooms {
@@ -26,6 +28,7 @@ export class LocalRooms {
   private emptyMs: number;
   private onError?: RoomHooks["onError"];
   private env?: () => Record<string, unknown>;
+  private onRoomClose?: (type: string, id: string) => void;
   /** Sharded rooms, by `type:id`: creation data and the last published aggregate. */
   private sharded = new Map<string, { data?: unknown; aggregate?: unknown; publishing: boolean }>();
   /** Sharded rooms made with create() that nobody joined yet: their entry is dropped after `emptyMs`. */
@@ -37,6 +40,7 @@ export class LocalRooms {
     this.emptyMs = opts.emptyMs ?? 30_000;
     this.onError = opts.onError;
     this.env = opts.env;
+    this.onRoomClose = opts.onRoomClose;
   }
 
   has(type: string): boolean {
@@ -69,6 +73,7 @@ export class LocalRooms {
           if (h) this.clock.clearTimeout(h);
           this.disposing.delete(inst);
           extra.onClose?.();
+          this.onRoomClose?.(type, id);
         },
         onError: this.onError,
       },
@@ -85,7 +90,14 @@ export class LocalRooms {
     const def = this.types.get(type);
     if (!def) return null;
     const cfg = shardConfig(def);
-    if (!cfg) return this.open(type, id);
+    if (!cfg) {
+      // Only server-made rooms (createRoom) exist: a connection never conjures one.
+      if (def.def.createOnJoin === false) {
+        const live = this.get(type, id);
+        return live && !live.isClosed ? live : null;
+      }
+      return this.open(type, id);
+    }
     const n = shardFromToken(join.resume, cfg.maxShards) ?? pickShard((i) => this.get(type, shardId(id, i))?.seated ?? 0, cfg, join.role);
     return this.openShard(type, id, n, cfg);
   }
@@ -101,6 +113,15 @@ export class LocalRooms {
     const inst = this.open(type, id, data);
     if (inst && inst.connections === 0 && inst.isEmpty) this.scheduleDispose(inst);
     return inst;
+  }
+
+  /** False when connecting to `type:id` would be refused (`createOnJoin: false` and no such room). */
+  joinable(type: string, id: string): boolean {
+    const def = this.types.get(type);
+    if (!def) return false;
+    if (def.def.createOnJoin !== false || shardConfig(def)) return true;
+    const live = this.get(type, id);
+    return !!live && !live.isClosed;
   }
 
   /** Live shard rooms of sharded room `type:id`, by shard number. */
@@ -123,8 +144,8 @@ export class LocalRooms {
   }
 
   /** Tell the registry a socket closed (so empty rooms can be disposed). */
-  disconnected(room: RoomInstance, socket: MiuSocket): void {
-    room.disconnect(socket);
+  disconnected(room: RoomInstance, socket: MiuSocket, code?: number): void {
+    room.disconnect(socket, code);
     if (room.isEmpty) this.scheduleDispose(room);
   }
 

@@ -16,7 +16,7 @@
 
 import { definePlugin, errors, isMiuError, route, t, type CloudflareNeeds, type Context, type Env } from "miujs";
 import type { DatabaseSource } from "@miujs/db";
-import { CODE_RE, KvCodeStore, MemoryCodeStore, allocateCode, systemClock, type Clock, type CodeStore, type KvLike } from "@miujs/realtime";
+import { CODE_RE, KeyedLimiter, KvCodeStore, MemoryCodeStore, allocateCode, systemClock, type Clock, type CodeStore, type KvLike } from "@miujs/realtime";
 import type { AchievementSet } from "./achievements.ts";
 import type { CfWebSocketLike, NamespaceLike } from "./cloudflare.ts";
 import { defaultDatabase, isD1Ref } from "./db.ts";
@@ -45,6 +45,13 @@ export interface LobbiesOptions {
   /** Code (and local lobby) lifetime. Default 6 hours. */
   codeTtlMs?: number;
   ticketTtlMs?: number;
+  /**
+   * Wrong join codes allowed per player (and per IP), against guessing other people's lobbies.
+   * Default 30/min, burst 10. Only misses count; a player out of guesses waits for any join.
+   */
+  joinGuesses?: { perMinute?: number; burst?: number };
+  /** Lobbies a player may create, against exhausting the 6-digit code space. Default 10/min, burst 5. */
+  creates?: { perMinute?: number; burst?: number };
   path?: string;
   binding?: string;
   className?: string;
@@ -176,6 +183,13 @@ export function lobbies(opts: LobbiesOptions) {
     return issueTicket(key(), { userId, name: m.name, roomType: lobby.room.type, roomId: lobby.room.id, matchId: lobby.matchId, team: m.team }, clock.now(), ticketTtl);
   }
 
+  // In memory per process (per isolate on Workers, where they slow a guesser down rather than stop a botnet).
+  const guessesPerMinute = opts.joinGuesses?.perMinute ?? 30;
+  const guesses = new KeyedLimiter({ perSecond: guessesPerMinute / 60, burst: opts.joinGuesses?.burst ?? 10 });
+  const createsPerMinute = opts.creates?.perMinute ?? 10;
+  const creates = new KeyedLimiter({ perSecond: createsPerMinute / 60, burst: opts.creates?.burst ?? 5 });
+  const guessKeys = (ctx: { user: { id: string }; ip?: string }) => (ctx.ip ? [`u:${ctx.user.id}`, `ip:${ctx.ip}`] : [`u:${ctx.user.id}`]);
+
   const nameOf = (user: { id: string; name?: unknown }) => (typeof user.name === "string" && user.name ? user.name.slice(0, 32) : user.id);
   const idParam = t.object({ id: t.string({ pattern: /^l[0-9a-f]{16}$/ }) });
 
@@ -187,6 +201,7 @@ export function lobbies(opts: LobbiesOptions) {
       auth: "required",
       mcp: false,
       handler: async (ctx) => {
+        if (!creates.take(ctx.user.id, clock.now())) throw gameErrors.lobbyRateLimited("new lobbies", createsPerMinute);
         const id = lobbyId();
         const code = await allocateCode(codeStore(ctx as unknown as Context), { type: "lobby", id }, codeTtl);
         const init: LobbyInit = { id, code, roomType: opts.room, hostId: ctx.user.id, hostName: nameOf(ctx.user), minPlayers, maxPlayers, teams, now: clock.now() };
@@ -201,8 +216,14 @@ export function lobbies(opts: LobbiesOptions) {
       mcp: false,
       body: t.object({ code: t.string({ pattern: /^\d{6}$/ }) }),
       handler: async (ctx) => {
+        const keys = guessKeys(ctx as unknown as { user: { id: string }; ip?: string });
+        const now = clock.now();
+        if (!keys.every((k) => guesses.allowed(k, now))) throw gameErrors.lobbyRateLimited("wrong lobby codes", guessesPerMinute);
         const found = CODE_RE.test(ctx.body.code) ? await codeStore(ctx as unknown as Context).get(ctx.body.code) : null;
-        if (!found || found.type !== "lobby") throw gameErrors.lobbyNotFound();
+        if (!found || found.type !== "lobby") {
+          for (const k of keys) guesses.take(k, now); // only misses spend the budget
+          throw gameErrors.lobbyNotFound();
+        }
         return host(ctx as unknown as Context).exec(found.id, { op: "join", userId: ctx.user.id, name: nameOf(ctx.user) });
       },
     }),

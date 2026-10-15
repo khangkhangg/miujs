@@ -60,7 +60,7 @@ test("a full game with a host and 3 players: scoring, phases, leaderboard, no ea
   const { clock, inst, say } = setup();
   const host = client();
   const [ann, bob, cat] = [client(), client(), client()];
-  inst.connect(host, { name: "Host" });
+  inst.connect(host, { name: "Host", role: "host", hostKey: inst.hostKey }); // the creator's key (POST /api/games returns it)
   inst.connect(ann, { name: "Ann" });
   inst.connect(bob, { name: "Bob" });
   inst.connect(cat, { name: "Cat" });
@@ -136,7 +136,7 @@ test("a full game with a host and 3 players: scoring, phases, leaderboard, no ea
 test("seating players fans out to the host only, not to every player (no O(N²) join frames)", () => {
   const { clock, inst } = setup();
   const host = client();
-  inst.connect(host, { name: "Host" });
+  inst.connect(host, { name: "Host", role: "host", hostKey: inst.hostKey }); // the creator's key (POST /api/games returns it)
   const players: Client[] = [];
   for (let i = 0; i < 200; i++) {
     const c = client();
@@ -154,7 +154,7 @@ test("seating players fans out to the host only, not to every player (no O(N²) 
 test("an answer reaches only the host and the player who answered", () => {
   const { clock, inst, say } = setup();
   const host = client();
-  inst.connect(host, { name: "Host" });
+  inst.connect(host, { name: "Host", role: "host", hostKey: inst.hostKey }); // the creator's key (POST /api/games returns it)
   const [ann, bob, cat] = [client(), client(), client()];
   for (const [c, name] of [[ann, "Ann"], [bob, "Bob"], [cat, "Cat"]] as const) inst.connect(c, { name });
   clock.advance(50);
@@ -170,7 +170,7 @@ test("leaving players drop out of the host's roster; the leaderboard is only bui
   const host = client();
   const ann = client();
   const bob = client();
-  inst.connect(host, { name: "Host" });
+  inst.connect(host, { name: "Host", role: "host", hostKey: inst.hostKey }); // the creator's key (POST /api/games returns it)
   inst.connect(ann, { name: "Ann" });
   inst.connect(bob, { name: "Bob" });
   clock.advance(50);
@@ -188,7 +188,7 @@ test("answers sent outside a question are rejected", () => {
   const { inst, say } = setup();
   const host = client();
   const ann = client();
-  inst.connect(host, { name: "Host" });
+  inst.connect(host, { name: "Host", role: "host", hostKey: inst.hostKey }); // the creator's key (POST /api/games returns it)
   inst.connect(ann, { name: "Ann" });
   say(ann, "answer", { choice: 0 });
   expect(ann.errors.at(-1).code).toBe("MIU_E_QUIZ_NOT_ACCEPTING");
@@ -199,7 +199,7 @@ test("answers sent outside a question are rejected", () => {
 test("starting needs at least one player", () => {
   const { inst, say } = setup();
   const host = client();
-  inst.connect(host, { name: "Host" });
+  inst.connect(host, { name: "Host", role: "host", hostKey: inst.hostKey }); // the creator's key (POST /api/games returns it)
   say(host, "start");
   expect(host.errors.at(-1).code).toBe("MIU_E_QUIZ_NO_PLAYERS");
 });
@@ -209,7 +209,7 @@ test("the built-in question set never ships answers in state", () => {
   const def = createQuiz(QUESTIONS);
   const inst = createRoomInstance(def, { id: "1", clock: new FakeClock() });
   const host = client();
-  inst.connect(host, { name: "Host" });
+  inst.connect(host, { name: "Host", role: "host", hostKey: inst.hostKey }); // the creator's key (POST /api/games returns it)
   inst.connect(client(), { name: "Ann" });
   inst.receive(host, JSON.stringify({ t: "msg", type: "start", data: {} }));
   expect(JSON.stringify(inst.room.state)).not.toContain('"answer"');
@@ -220,7 +220,7 @@ test("the question deadline is a named timer, so it survives hibernation (snapsh
   const { clock, inst, say } = setup();
   const host = client();
   const ann = client();
-  inst.connect(host, { name: "Host" });
+  inst.connect(host, { name: "Host", role: "host", hostKey: inst.hostKey }); // the creator's key (POST /api/games returns it)
   inst.connect(ann, { name: "Ann" });
   say(host, "start");
   const snap = JSON.parse(JSON.stringify(inst.snapshot()));
@@ -239,7 +239,7 @@ test("a stale deadline from an earlier round never reveals the next question ear
   const { clock, inst, say } = setup();
   const host = client();
   const ann = client();
-  inst.connect(host, { name: "Host" });
+  inst.connect(host, { name: "Host", role: "host", hostKey: inst.hostKey }); // the creator's key (POST /api/games returns it)
   inst.connect(ann, { name: "Ann" });
   say(host, "start");
   clock.advance(1_000);

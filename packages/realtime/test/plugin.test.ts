@@ -122,7 +122,7 @@ test("MCP tools rooms_list and room_state let agents observe rooms", async () =>
   await room.receive(a, JSON.stringify({ t: "msg", type: "say", data: { text: "hi" } }));
   const tools = plugin.mcpTools();
   expect(tools.map((x) => x.name)).toEqual(["rooms_list", "room_state"]);
-  const ctx = { runtime: "bun", env: {} } as any;
+  const ctx = { runtime: "bun", env: {}, user: { id: "op", roles: ["admin"] } } as any; // operator tools (see security.test.ts)
   const list: any = await tools[0].call({}, ctx);
   expect(list.rooms).toEqual([expect.objectContaining({ type: "chat", id: "ABC", players: 1 })]);
   const st: any = await tools[1].call({ type: "chat", id: "ABC" }, ctx);

@@ -17,7 +17,7 @@ export async function run(dev: Dev, ctx: SuiteContext) {
     check(r.status === 200 && r.headers.get("content-type")?.includes("text/html") && r.text.includes("MiuJS Quiz"), `status ${r.status}`);
   });
 
-  let room = { id: "", code: "" };
+  let room = { id: "", code: "", hostKey: "" };
   await S("create game: 6-digit code stored in KV, resolves to the room", async () => {
     const r = await c.post("/api/games");
     check(/^\d{6}$/.test(r.json?.code), `create: ${r.text.slice(0, 300)}`);
@@ -34,11 +34,28 @@ export async function run(dev: Dev, ctx: SuiteContext) {
     check(ws.status === 404 || ws.status === 426, `unknown type ${ws.status}`);
   });
 
+  await S("security: random room ids are 404, a first joiner is not host, DO internals unreachable", async () => {
+    // createOnJoin: false — the Durable Object refuses to conjure a room for a URL nobody created.
+    const random = await c.get("/rooms/quiz/rattacker0001?name=Eve", { headers: { upgrade: "websocket" } });
+    eq([random.status, random.json?.error?.code], [404, "MIU_E_ROOM_NOT_FOUND"], "random room id");
+    // The Durable Object's /_miu/* endpoints are not reachable through the Worker, by any path.
+    for (const path of [`/_miu/admin?type=quiz&id=${room.id}`, `/_miu/room?type=quiz&id=${room.id}`, `/_miu/stats?type=quiz&id=${room.id}`, `/rooms/_miu/admin`, `/rooms/quiz/_miu`]) {
+      const r = await c.req("POST", path, { json: { op: "close" } });
+      check(r.status === 404 || r.status === 405 || r.status === 400, `${path} answered ${r.status}`);
+    }
+    // requireHostKey: a player racing the host to a fresh game is a plain player.
+    const fresh = (await c.post("/api/games")).json;
+    const eve = connect(`${dev.ws}/rooms/quiz/${fresh.id}`, { name: "Eve", reconnect: false });
+    await eve.ready;
+    eq(eve.me?.role, "player", "first joiner without the hostKey");
+    eve.close();
+  });
+
   await S("host + 2 players: start, question without the answer, answers, reveal broadcast, next", async () => {
     const url = `${dev.ws}/rooms/quiz/${room.id}`;
-    const host = connect(url, { name: "Host", reconnect: false });
+    const host = connect(url, { name: "Host", role: "host", hostKey: room.hostKey, reconnect: false });
     await host.ready;
-    eq(host.me?.role, "host", "first joiner is host");
+    eq(host.me?.role, "host", "the creator (hostKey from POST /api/games) is host");
     const ann = connect(url, { name: "Ann", reconnect: false });
     const bob = connect(url, { name: "Bob", reconnect: false });
     await Promise.all([ann.ready, bob.ready]);
@@ -59,17 +76,19 @@ export async function run(dev: Dev, ctx: SuiteContext) {
     for (const x of [host, ann, bob]) x.close();
   });
 
-  await S("MCP: room_state reads the Durable Object", async () => {
+  await S("MCP: room_state / rooms_list refuse anonymous callers (no room enumeration, no raw state)", async () => {
     const tools = (await mcp(c, "tools/list")).result.tools.map((x: { name: string }) => x.name);
     check(tools.includes("room_state"), `tools: ${tools}`);
     const r = await mcp(c, "tools/call", { name: "room_state", arguments: { type: "quiz", id: room.id } });
-    check(JSON.stringify(r).includes("leaderboard"), JSON.stringify(r).slice(0, 400));
+    check(r.result?.isError === true && !JSON.stringify(r).includes("leaderboard"), JSON.stringify(r).slice(0, 400));
+    const l = await mcp(c, "tools/call", { name: "rooms_list", arguments: {} });
+    check(l.result?.isError === true && !JSON.stringify(l).includes(room.id), JSON.stringify(l).slice(0, 400));
   });
 
   await S(`broadcast to ${ctx.players} players: question (host action) and reveal (DO alarm at the deadline)`, async () => {
     const created = (await c.post("/api/games")).json;
     const url = `${dev.ws}/rooms/quiz/${created.id}`;
-    const host = connect(url, { name: "Host", reconnect: false });
+    const host = connect(url, { name: "Host", role: "host", hostKey: created.hostKey, reconnect: false });
     await host.ready;
     const n = ctx.players;
     interface P {
@@ -154,7 +173,7 @@ export async function run(dev: Dev, ctx: SuiteContext) {
   await S("room survives a workerd restart: state, seat (resume token) and pending timer persist", async () => {
     const created = (await c.post("/api/games")).json;
     const url = `${dev.ws}/rooms/quiz/${created.id}`;
-    const host = connect(url, { name: "Host", reconnect: false });
+    const host = connect(url, { name: "Host", role: "host", hostKey: created.hostKey, reconnect: false });
     await host.ready;
     const ann = connect(url, { name: "Ann", reconnect: false });
     await ann.ready;

@@ -1,0 +1,59 @@
+  t=15s heap(after GC) 13.6 MB, RSS 97.1 MB, 1206 rooms, 540 sockets, 211610 objects
+  t=30s heap(after GC) 21.3 MB, RSS 114.1 MB, 2108 rooms, 489 sockets, 353301 objects
+  t=45s heap(after GC) 21.3 MB, RSS 126.7 MB, 1998 rooms, 544 sockets, 349903 objects
+  t=60s heap(after GC) 22.4 MB, RSS 130.7 MB, 2077 rooms, 519 sockets, 369870 objects
+  t=76s heap(after GC) 23.7 MB, RSS 132.6 MB, 2251 rooms, 538 sockets, 392920 objects
+  t=91s heap(after GC) 24.5 MB, RSS 133.0 MB, 2321 rooms, 535 sockets, 403913 objects
+  t=106s heap(after GC) 23.2 MB, RSS 138.3 MB, 2164 rooms, 497 sockets, 380671 objects
+  t=121s heap(after GC) 24.0 MB, RSS 135.9 MB, 2321 rooms, 498 sockets, 398488 objects
+  t=136s heap(after GC) 24.9 MB, RSS 133.3 MB, 2461 rooms, 480 sockets, 415796 objects
+  t=151s heap(after GC) 23.9 MB, RSS 137.3 MB, 2317 rooms, 481 sockets, 395052 objects
+  t=166s heap(after GC) 22.8 MB, RSS 136.0 MB, 2123 rooms, 518 sockets, 371433 objects
+  t=181s heap(after GC) 22.7 MB, RSS 135.7 MB, 2118 rooms, 515 sockets, 373578 objects
+  t=196s heap(after GC) 24.3 MB, RSS 136.7 MB, 2318 rooms, 532 sockets, 402139 objects
+  t=211s heap(after GC) 25.3 MB, RSS 141.7 MB, 2469 rooms, 530 sockets, 421183 objects
+  t=226s heap(after GC) 25.6 MB, RSS 143.3 MB, 2504 rooms, 558 sockets, 427951 objects
+  t=242s heap(after GC) 25.0 MB, RSS 145.6 MB, 2421 rooms, 544 sockets, 415298 objects
+  t=257s heap(after GC) 25.4 MB, RSS 144.3 MB, 2508 rooms, 537 sockets, 424630 objects
+  t=272s heap(after GC) 27.1 MB, RSS 143.3 MB, 2725 rooms, 550 sockets, 457220 objects
+  t=287s heap(after GC) 28.0 MB, RSS 143.4 MB, 2856 rooms, 505 sockets, 477333 objects
+  t=302s heap(after GC) 28.4 MB, RSS 148.2 MB, 2941 rooms, 478 sockets, 483648 objects
+  t=317s heap(after GC) 28.4 MB, RSS 153.5 MB, 2937 rooms, 510 sockets, 483834 objects
+  t=332s heap(after GC) 26.4 MB, RSS 148.4 MB, 2634 rooms, 571 sockets, 447034 objects
+  t=347s heap(after GC) 24.0 MB, RSS 146.8 MB, 2362 rooms, 524 sockets, 400644 objects
+  t=362s heap(after GC) 24.2 MB, RSS 144.6 MB, 2386 rooms, 519 sockets, 403786 objects
+  t=377s heap(after GC) 24.8 MB, RSS 140.5 MB, 2452 rooms, 494 sockets, 414382 objects
+  t=392s heap(after GC) 25.1 MB, RSS 141.5 MB, 2495 rooms, 531 sockets, 420696 objects
+  t=408s heap(after GC) 26.8 MB, RSS 141.6 MB, 2715 rooms, 519 sockets, 453275 objects
+  t=423s heap(after GC) 26.0 MB, RSS 154.2 MB, 2608 rooms, 529 sockets, 437740 objects
+  t=438s heap(after GC) 24.5 MB, RSS 150.5 MB, 2446 rooms, 484 sockets, 410653 objects
+  t=453s heap(after GC) 26.4 MB, RSS 146.7 MB, 2704 rooms, 438 sockets, 447090 objects
+  t=468s heap(after GC) 26.6 MB, RSS 144.5 MB, 2701 rooms, 511 sockets, 450109 objects
+  t=483s heap(after GC) 25.5 MB, RSS 143.9 MB, 2536 rooms, 519 sockets, 427301 objects
+  t=498s heap(after GC) 25.5 MB, RSS 144.4 MB, 2530 rooms, 513 sockets, 427295 objects
+  t=513s heap(after GC) 26.9 MB, RSS 148.6 MB, 2725 rooms, 514 sockets, 454650 objects
+  t=528s heap(after GC) 30.6 MB, RSS 155.6 MB, 3186 rooms, 471 sockets, 524338 objects
+  t=543s heap(after GC) 35.9 MB, RSS 156.9 MB, 3862 rooms, 464 sockets, 625478 objects
+  t=558s heap(after GC) 38.1 MB, RSS 163.2 MB, 4139 rooms, 463 sockets, 661284 objects
+  t=573s heap(after GC) 35.9 MB, RSS 171.2 MB, 3889 rooms, 458 sockets, 625399 objects
+  t=589s heap(after GC) 36.5 MB, RSS 166.1 MB, 3912 rooms, 522 sockets, 635887 objects
+  t=604s heap(after GC) 38.3 MB, RSS 166.7 MB, 4147 rooms, 489 sockets, 670052 objects
+  t=619s heap(after GC) 40.7 MB, RSS 171.5 MB, 4446 rooms, 528 sockets, 716529 objects
+  t=634s heap(after GC) 42.3 MB, RSS 177.8 MB, 4582 rooms, 503 sockets, 735401 objects
+  t=649s heap(after GC) 41.5 MB, RSS 184.0 MB, 4485 rooms, 448 sockets, 720698 objects
+  t=664s heap(after GC) 40.9 MB, RSS 185.7 MB, 4395 rooms, 515 sockets, 710282 objects
+  t=679s heap(after GC) 39.5 MB, RSS 182.6 MB, 4229 rooms, 518 sockets, 682595 objects
+  t=694s heap(after GC) 39.6 MB, RSS 180.6 MB, 4252 rooms, 507 sockets, 683649 objects
+  t=709s heap(after GC) 39.8 MB, RSS 178.4 MB, 4280 rooms, 472 sockets, 686868 objects
+  t=724s heap(after GC) 34.5 MB, RSS 170.3 MB, 3762 rooms, 179 sockets, 604218 objects
+soak 12 min, 80 VUs: frames in 45,782,040, out 6,254,971; peak rooms 4582
+  quiz join (all players): n=57399 p50 21.5 p95 69.2 p99 137 max 440.5 ms
+  quiz answers → reveal: n=286945 p50 16.7 p95 42.2 p99 78.6 max 20064.6 ms
+  action resume: n=13707 p50 24.2 p95 97.6 p99 180 max 400 ms
+  quiz resume: n=57393 p50 17.2 p95 65 p99 127 max 426.9 ms
+  quiz game: n=57399 p50 321 p95 662 p99 1060 max 21192 ms
+  action game (2-8 s at 20 Hz): n=5591 p50 5060 p95 7730 p99 7960 max 8043.5 ms
+  errors: {"quiz: player join":11,"ws: MIU_E_ROOM_RESUME_EXPIRED":4,"ws: MIU_E_ROOM_JOIN_TIMEOUT":3,"quiz: host join":3,"vu: TypeError: ECONNRESET: The socket connection was closed unexpectedly. For more i":1}
+  heap after GC: base 0.6 → end 17.6 → settled 2.3 MB; steady-state slope 1963.9 KB/min, 35791 objects/min
+  RSS: base 49.9, peak 185.7, end 166.5, settled 101.3 MB; settled rooms 0, sockets 0; exit after stop 15 ms (clean)
+  object types grown settled vs base: {"string":806,"Structure":333,"FunctionCodeBlock":267,"StructureRareData":248,"UnlinkedFunctionCodeBlock":135,"Function":130,"Cell Butterfly":118,"FunctionExecutable":114}

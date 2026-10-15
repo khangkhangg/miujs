@@ -85,6 +85,21 @@ CREATE TABLE IF NOT EXISTS leaderboard_scores (
 CREATE INDEX IF NOT EXISTS leaderboard_scores_rank ON leaderboard_scores (board, period, score);
 `,
   },
+  {
+    // Used score-proof nonces, shared by every isolate (an in-memory set let a proof be replayed
+    // on another Workers isolate).
+    id: "game_004_score_nonces",
+    sql: `
+CREATE TABLE IF NOT EXISTS leaderboard_nonces (
+  board TEXT NOT NULL,
+  player_id TEXT NOT NULL,
+  nonce TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY (board, player_id, nonce)
+);
+CREATE INDEX IF NOT EXISTS leaderboard_nonces_expiry ON leaderboard_nonces (expires_at);
+`,
+  },
 ];
 
 export interface RatingRow extends Glicko {

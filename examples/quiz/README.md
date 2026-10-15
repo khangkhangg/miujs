@@ -42,6 +42,12 @@ With the server running, MCP is at `POST /mcp`:
 - `rooms_list` → active rooms and player counts
 - `room_state` `{ "type": "quiz", "id": "123456" }` → current state and players (never the answers)
 
+Both are operator tools: they need a signed-in user with the `admin` role (they would otherwise list every game id, which bypasses the join codes).
+
+## Who is host
+
+`POST /api/games` returns `{ id, code, hostKey }`. The room has `requireHostKey: true`, so only the browser that created the game (it keeps the `hostKey`) is host; a player who joins first is just a player, and nobody is promoted if the host leaves. Rooms exist only once `POST /api/games` made them (`createOnJoin: false`), hold at most 500 players, and one IP may create 20 games a minute.
+
 ## Cloudflare Workers
 
 `app.ts` already exports the Durable Object class. Bind it as `MIU_ROOMS`:

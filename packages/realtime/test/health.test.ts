@@ -63,6 +63,48 @@ describe("realtime does not leak", () => {
     expect(clock.pending).toBe(0);
   }, 60_000);
 
+  test("server-made rooms (codes, hostKey), unjoined sockets timing out, batched moves, clean and dropped leaves", async () => {
+    const clock = new FakeClock(0);
+    const arena = defineRoom("arenaH", {
+      state: t.object({ pos: t.record(t.number()) }),
+      client: { move: t.object({ x: t.number() }) },
+      init: () => ({ pos: {} }),
+      createOnJoin: false,
+      requireHostKey: true,
+      patchBatchMs: 16,
+      reconnectMs: 1_000,
+      rateLimit: false,
+      onJoin: ({ room, player }) => void (room.state.pos[player.id] = 0),
+      onLeave: ({ room, player }) => void delete room.state.pos[player.id],
+      on: { move: ({ room, sender, msg }) => void (room.state.pos[sender.id] = msg.x) },
+    });
+    const { rooms } = await import("../src/plugin.ts");
+    const realtime = rooms({ rooms: [arena], clock, emptyMs: 500 });
+    const reg = realtime.registry;
+    const r = await leakCheck("server-made rooms", async (i) => {
+      const { id, hostKey } = await realtime.createRoom("arenaH");
+      const room = reg.route("arenaH", id, {})!;
+      const host = fakeSocket();
+      const p = fakeSocket();
+      const idle = fakeSocket();
+      room.connect(host, { name: "H", role: "host", hostKey });
+      room.connect(p, { name: "P" });
+      room.connect(idle, {}); // never joins: closed by the join deadline
+      for (let k = 0; k < 5; k++) room.receive(p, JSON.stringify({ t: "msg", type: "move", data: { x: k } }));
+      clock.advance(20); // batch window
+      reg.disconnected(room, host, 1000); // clean leave
+      reg.disconnected(room, p, 1006); // dropped: grace
+      clock.advance(10_000); // join deadline, grace
+      reg.disconnected(room, idle, 4002);
+      clock.advance(500); // emptyMs
+      if (i % 1000 === 0 && reg.list().length) throw new Error("room not disposed");
+    }, { perRound: 1000 });
+    expect(r.leaking, describeLeak(r)).toBe(false);
+    expect(reg.list()).toEqual([]);
+    expect(clock.pending).toBe(0);
+    realtime.stop();
+  }, 60_000);
+
   test("rooms made with create() that nobody joins are disposed", async () => {
     const clock = new FakeClock(0);
     const reg = new LocalRooms([chat], { clock, emptyMs: 500 });

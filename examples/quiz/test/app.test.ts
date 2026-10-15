@@ -17,8 +17,9 @@ test("serves the web client and hands out 6-digit game codes that resolve to the
 test("host and player play over real WebSockets; the question arrives without its answer", async () => {
   const s = await app.listen(0);
   try {
-    const url = s.url.replace("http", "ws") + "rooms/quiz/654321";
-    const host = connect(url, { name: "Host" });
+    const created = await (await fetch(s.url + "api/games", { method: "POST" })).json();
+    const url = s.url.replace("http", "ws") + `rooms/quiz/${created.id}`;
+    const host = connect(url, { name: "Host", role: "host", hostKey: created.hostKey });
     await host.ready;
     const ann = connect(url, { name: "Ann" });
     await ann.ready;

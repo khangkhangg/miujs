@@ -101,6 +101,8 @@ interface Conn {
   /** Start of the current over-the-limit streak. */
   overSince?: number | null;
   lastDrop?: number;
+  /** When the socket opened, while it has not joined (join deadline). */
+  openedAt?: number;
 }
 
 interface ErrorFrame {
@@ -283,8 +285,10 @@ export class RoomInstance<S = any, X = any> {
   /** Whether `wake` keeps the process alive (only while named timers are pending). */
   private wakeRef = true;
   private draining = false;
-  private hostKey: string;
+  private readonly key: string;
   private closed = false;
+  /** One clock timer closing sockets that never joined (see `joinTimeoutMs`). */
+  private joinSweep: unknown = null;
 
   constructor(roomType: RoomType<S, X>, opts: RoomInstanceOptions) {
     this.type = roomType.type;
@@ -298,7 +302,7 @@ export class RoomInstance<S = any, X = any> {
     const r = opts.restore;
     if (r) {
       this.createdAt = r.createdAt;
-      this.hostKey = r.hostKey;
+      this.key = r.hostKey;
       this.state = r.state as S;
       this.secret = r.secret as X;
       for (const p of r.players) {
@@ -311,7 +315,7 @@ export class RoomInstance<S = any, X = any> {
       for (const x of r.timers ?? []) this.pending.set(x.id, { ...x });
     } else {
       this.createdAt = this.clock.now();
-      this.hostKey = randomId(16);
+      this.key = randomId(16);
       const ctx: InitContext = { id: this.id, type: this.type, data: opts.data, now: this.createdAt };
       this.state = this.def.init(ctx);
       this.secret = this.def.secret ? this.def.secret(ctx) : (undefined as X);
@@ -374,6 +378,33 @@ export class RoomInstance<S = any, X = any> {
     }
     if (this.closed) return this.reject(socket, roomClosed(), 4004);
     if (join.name !== undefined || join.resume !== undefined) this.join(socket, join);
+    this.awaitJoin(socket.id);
+  }
+
+  /** A socket that has not joined must do so within `joinTimeoutMs`, or it is closed (4002). */
+  private awaitJoin(sid: string): void {
+    const conn = this.conns.get(sid);
+    if (!conn || conn.playerId || this.closed) return;
+    conn.openedAt ??= this.clock.now();
+    if (this.joinSweep === null) this.armJoinSweep(conn.openedAt);
+  }
+
+  private armJoinSweep(openedAt: number): void {
+    const ms = this.def.joinTimeoutMs ?? 10_000;
+    if (!(ms > 0) || ms === Infinity) return;
+    this.joinSweep = this.clock.setTimeout(() => {
+      this.joinSweep = null;
+      const now = this.clock.now();
+      let next: number | null = null;
+      for (const c of [...this.conns.values()]) {
+        if (c.playerId || c.openedAt === undefined) continue;
+        if (now - c.openedAt >= ms) {
+          this.kick(c.socket, { code: "MIU_E_ROOM_JOIN_TIMEOUT", message: `No join within ${ms} ms`, fix: "Connect with ?name=... (or ?resume=...), or send {\"t\":\"join\",\"name\":\"...\"} right after the socket opens." }, 4002);
+        } else if (next === null || c.openedAt < next) next = c.openedAt;
+      }
+      if (next !== null) this.armJoinSweep(next);
+    }, Math.max(0, openedAt + ms - this.clock.now()));
+    setTimerRef(this.joinSweep, false); // housekeeping: never keeps a process alive
   }
 
   /** Re-attach a live socket to a player after a restore (Durable Object hibernation wake-up). */
@@ -391,7 +422,10 @@ export class RoomInstance<S = any, X = any> {
   receive(socket: MiuSocket, raw: string | Uint8Array | ArrayBuffer): void | Promise<void> {
     if (this.kicked.has(socket)) return; // frames already in flight when we closed it
     let conn = this.conns.get(socket.id);
-    if (!conn) this.conns.set(socket.id, (conn = { socket, playerId: null, enc: "json" }));
+    if (!conn) {
+      this.conns.set(socket.id, (conn = { socket, playerId: null, enc: "json" }));
+      this.awaitJoin(socket.id);
+    }
     if (!this.admit(conn)) return;
     const max = this.def.maxMessageBytes ?? 16_384;
     if (byteLength(raw, max) > max) {
@@ -434,8 +468,11 @@ export class RoomInstance<S = any, X = any> {
     }
   }
 
-  /** A socket closed. The player keeps their seat for `reconnectMs`. */
-  disconnect(socket: MiuSocket): void {
+  /**
+   * A socket closed. The player keeps their seat for `reconnectMs`, unless the client closed
+   * cleanly with 1000 (`client.close()`: a deliberate leave), which frees the seat at once.
+   */
+  disconnect(socket: MiuSocket, code?: number): void {
     const conn = this.conns.get(socket.id);
     this.conns.delete(socket.id);
     this.fresh.delete(socket.id);
@@ -445,6 +482,10 @@ export class RoomInstance<S = any, X = any> {
     if (!seat || seat.socket !== socket) return;
     seat.socket = null;
     seat.player.connected = false;
+    if (code === 1000) {
+      if (seat.graceUntil !== null) this.cancelGrace(seat);
+      return this.removeSeat(seat);
+    }
     this.startGrace(seat);
   }
 
@@ -458,7 +499,7 @@ export class RoomInstance<S = any, X = any> {
       type: this.type,
       id: this.id,
       createdAt: this.createdAt,
-      hostKey: this.hostKey,
+      hostKey: this.key,
       state: copy ? clone(this.state) : this.state,
       secret: copy ? clone(this.secret) : this.secret,
       players: [...this.seats.values()].map((s) => {
@@ -529,6 +570,11 @@ export class RoomInstance<S = any, X = any> {
     return this.timersRev;
   }
 
+  /** The key that makes a joiner host (`?role=host&hostKey=`). Server side only: give it to the room's creator. */
+  get hostKey(): string {
+    return this.key;
+  }
+
   get isClosed(): boolean {
     return this.closed;
   }
@@ -579,6 +625,8 @@ export class RoomInstance<S = any, X = any> {
     this.wake = null;
     if (this.flushTimer !== null) this.clock.clearTimeout(this.flushTimer);
     this.flushTimer = null;
+    if (this.joinSweep !== null) this.clock.clearTimeout(this.joinSweep);
+    this.joinSweep = null;
     this.ahead.clear();
     for (const c of this.conns.values()) safeClose(c.socket, 1000, reason);
     this.conns.clear();
@@ -604,7 +652,7 @@ export class RoomInstance<S = any, X = any> {
       seat.graceUntil = null;
       this.rearm();
     }
-    this.removeSeat(seat);
+    this.removeSeat(seat, true);
     return true;
   }
 
@@ -650,9 +698,18 @@ export class RoomInstance<S = any, X = any> {
     }
     let role = requested as Role;
     const hasHost = [...this.seats.values()].some((s) => s.player.role === "host");
-    if (!hasHost && role !== "spectator") role = "host";
-    else if (role === "host" && p.hostKey !== this.hostKey) {
+    if (this.def.requireHostKey) {
+      // Host only with the key, never by joining first.
+      if (role === "host" && !sameKey(p.hostKey, this.key)) {
+        return this.reject(socket, { code: "MIU_E_ROOM_HOST_KEY", message: "Only the room's creator can be host", fix: "Join as a player, or pass the hostKey returned by createRoom() (?role=host&hostKey=...)." }, 4003);
+      }
+    } else if (!hasHost && role !== "spectator") role = "host";
+    else if (role === "host" && !sameKey(p.hostKey, this.key)) {
       return this.reject(socket, { code: "MIU_E_ROOM_HOST_KEY", message: "This room already has a host", fix: "Join as a player, or pass the hostKey from the host's welcome frame (?hostKey=...)." }, 4003);
+    }
+    const maxMembers = this.def.maxMembers ?? 5_000;
+    if (this.seats.size >= maxMembers) {
+      return this.reject(socket, { code: "MIU_E_ROOM_FULL", message: `Room is full (${maxMembers} members)`, fix: "Join another room." }, 4005);
     }
     const max = this.def.maxPlayers;
     if (max !== undefined && role !== "spectator") {
@@ -673,6 +730,10 @@ export class RoomInstance<S = any, X = any> {
       }
       if (!ROLES.includes(player.role)) player.role = "spectator";
     }
+    if (this.def.requireHostKey && player.role === "host") {
+      // The key holder takes over: an old host seat (e.g. a stale tab in grace) steps down.
+      for (const s of this.seats.values()) if (s.player.role === "host") s.player.role = "player";
+    }
     const seat: Seat = { player, token: this.tokenPrefix + randomId(16), socket, graceUntil: null };
     this.seats.set(player.id, seat);
     this.tokens.set(seat.token, player.id);
@@ -686,7 +747,7 @@ export class RoomInstance<S = any, X = any> {
   private welcome(seat: Seat, resumed: boolean): void {
     const { id, name, role } = seat.player;
     const w: Record<string, unknown> = { t: "welcome", me: { id, name, role }, room: { type: this.type, id: this.id }, resumeToken: seat.token, resumed };
-    if (role === "host") w.hostKey = this.hostKey;
+    if (role === "host") w.hostKey = this.key;
     if (seat.socket) {
       this.write(seat.socket, w);
       this.fresh.add(seat.socket.id);
@@ -704,12 +765,12 @@ export class RoomInstance<S = any, X = any> {
     this.rearm();
   }
 
-  private removeSeat(seat: Seat): void {
+  private removeSeat(seat: Seat, kicked = false): void {
     if (this.closed) return;
     this.seats.delete(seat.player.id);
     this.tokens.delete(seat.token);
     this.views.delete(seat.player.id);
-    if (seat.player.role === "host") {
+    if (seat.player.role === "host" && !this.def.requireHostKey) {
       const next = [...this.seats.values()].find((s) => s.player.role === "player") ?? [...this.seats.values()].find((s) => s.player.role !== "spectator");
       if (next) {
         next.player.role = "host";
@@ -717,7 +778,7 @@ export class RoomInstance<S = any, X = any> {
       }
     }
     const onLeave = this.def.onLeave;
-    if (onLeave) this.run(() => onLeave({ room: this.room, player: seat.player, now: this.clock.now() }), "onLeave", undefined, undefined, true);
+    if (onLeave) this.run(() => onLeave({ room: this.room, player: seat.player, now: this.clock.now(), kicked }), "onLeave", undefined, undefined, true);
     else this.flushLazy();
     if (this.seats.size === 0) this.hooks.onEmpty?.();
   }
@@ -764,7 +825,8 @@ export class RoomInstance<S = any, X = any> {
    */
   private run(fn: () => unknown, where: string, socket?: MiuSocket, reqId?: unknown, presence = false): void | Promise<void> {
     if (this.closed) return;
-    const done = () => (presence ? this.flushLazy() : this.flush());
+    const batchMs = this.def.patchBatchMs ?? 0;
+    const done = () => (presence ? this.flushLazy() : batchMs > 0 ? this.flushLazy(undefined, batchMs) : this.flush());
     const fail = (err: unknown) => {
       this.state = this.rollbackPoint();
       if (isMiuError(err)) {
@@ -773,7 +835,8 @@ export class RoomInstance<S = any, X = any> {
       }
       (this.hooks.onError ?? defaultOnError)(err, `${this.type}/${this.id} ${where}`);
       if (socket) {
-        this.error(socket, { code: "MIU_E_ROOM_HANDLER_FAILED", message: `The ${where} handler failed: ${err instanceof Error ? err.message : String(err)}`, fix: "Check the server log; state was rolled back." }, reqId);
+        // The message stays generic: internal errors (SQL, paths, secrets) are for the server log only.
+        this.error(socket, { code: "MIU_E_ROOM_HANDLER_FAILED", message: `The ${where} handler failed`, fix: "Check the server log; state was rolled back." }, reqId);
       }
     };
     let result: unknown;
@@ -815,8 +878,12 @@ export class RoomInstance<S = any, X = any> {
       }
     }
     // The diff against `sent` is the patch flush() needs: reuse it instead of diffing twice.
-    const patch = !issues && from === this.sent ? ops : undefined;
+    const delta = issues ? [] : ops;
+    const patch = from === this.sent ? delta : undefined;
+    const batchMs = this.def.patchBatchMs ?? 0;
     if (presence) this.flushLazy(patch);
+    // Batched: the window's rollback point moves forward by this change only (O(change)).
+    else if (batchMs > 0) this.flushLazy(patch, batchMs, from, delta);
     else this.flush(patch);
   }
 
@@ -898,14 +965,14 @@ export class RoomInstance<S = any, X = any> {
    * Flush for joins and leaves (see `presenceBatchMs`): at once when no patch went out within the
    * window, else later in one batch. Sockets that just joined get the current state right away.
    */
-  private flushLazy(pre?: PatchOp[]): void {
+  private flushLazy(pre?: PatchOp[], ms = this.def.presenceBatchMs ?? 50, from?: unknown, delta?: readonly PatchOp[]): void {
     if (this.closed) return;
-    const ms = this.def.presenceBatchMs ?? 50;
     const now = this.clock.now();
     if (!(ms > 0) || (this.flushTimer === null && now - this.lastFlushAt >= ms)) return this.flush(pre);
     // The rollback point for the window, and the state this join's sockets are sent. Never
-    // changed afterwards (a full copy measured faster here than diff + copy-on-write).
-    const base = (this.committed = clone(this.state));
+    // changed afterwards. For joins a full copy measured faster than diff + copy-on-write; for
+    // batched messages (many per window) the caller's diff is applied copy-on-write instead.
+    const base = (this.committed = (delta ? (delta.length ? applyCloned(from, delta) : from) : clone(this.state)) as S);
     if (this.fresh.size) {
       const full = this.def.view ? null : frame({ t: "state", state: base });
       for (const c of this.conns.values()) {
@@ -1094,7 +1161,17 @@ export class RoomInstance<S = any, X = any> {
 
   /** Send a frame in the socket's negotiated encoding. */
   private deliver(socket: MiuSocket, f: Frame): void {
-    safeSend(socket, encodeFrame(f, this.conns.get(socket.id)?.enc ?? "json"));
+    // Bun returns 0 when it dropped the frame (the socket is past its backpressure limit: a client
+    // that stopped reading). Later patches would apply to a state it never got, so close it now;
+    // the seat is kept and the client resumes with a fresh full state.
+    if (safeSend(socket, encodeFrame(f, this.conns.get(socket.id)?.enc ?? "json")) === 0) this.dropSlow(socket);
+  }
+
+  private dropSlow(socket: MiuSocket): void {
+    if (this.kicked.has(socket)) return;
+    this.kicked.add(socket);
+    this.disconnect(socket);
+    safeClose(socket, 1013, "slow consumer");
   }
 
   private error(socket: MiuSocket, e: ErrorFrame, reqId?: unknown): void {
@@ -1150,15 +1227,25 @@ function byteLength(raw: string | Uint8Array | ArrayBuffer, max: number): number
   return utf8.encode(raw).length;
 }
 
+/** Constant-time string compare for the host key. */
+function sameKey(given: unknown, key: string): boolean {
+  if (typeof given !== "string" || given.length !== key.length) return false;
+  let d = 0;
+  for (let i = 0; i < key.length; i++) d |= given.charCodeAt(i) ^ key.charCodeAt(i);
+  return d === 0;
+}
+
 function roomClosed(): ErrorFrame {
   return { code: "MIU_E_ROOM_CLOSED", message: "This room has been closed", fix: "Join or create another room." };
 }
 
-function safeSend(socket: MiuSocket, data: string | Uint8Array): void {
+/** What the runtime returned (Bun: bytes sent, -1 queued, 0 dropped), or undefined. */
+function safeSend(socket: MiuSocket, data: string | Uint8Array): unknown {
   try {
-    socket.send(data);
+    return (socket.send as (d: string | Uint8Array) => unknown)(data);
   } catch {
     // Socket already gone; its close event will clean up.
+    return undefined;
   }
 }
 

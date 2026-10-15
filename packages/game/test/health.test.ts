@@ -25,7 +25,7 @@ function gameApp() {
   const arena = gameRoom("arena", { state: t.object({ ok: t.boolean() }), init: () => ({ ok: true }) }, { secret: SECRET });
   const realtime = rooms({ rooms: [arena], clock, emptyMs: 1_000 });
   const mm = matchmaker({ rooms: realtime, secret: SECRET, database: db, clock, queues: { ranked: { room: "arena", teamSize: 1, rating: "elo", widenAfterMs: 1_000, maxWaitMs: 10_000, statusTtlMs: 5_000 } } });
-  const party = lobbies({ rooms: realtime, room: "arena", secret: SECRET, database: db, clock, codeTtlMs: 60_000 });
+  const party = lobbies({ rooms: realtime, room: "arena", secret: SECRET, database: db, clock, codeTtlMs: 60_000, creates: { perMinute: 1e9, burst: 1e9 } }); // the create limit is tested in security.test.ts
   const app = miu({ plugins: [testAuth(), realtime, mm, party], logLevel: "silent" });
   const req = (user: string, path: string, method = "POST", body: unknown = {}) => app.request(path, as(user, method === "GET" ? {} : { method, body: JSON.stringify(body) }));
   return { clock, app, realtime, mm, party, req };

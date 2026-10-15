@@ -73,7 +73,7 @@ test("local rooms get the process env; the plugin exposes its path; createRoom({
   const realtime = rooms({ rooms: [chat], path: "/play/" });
   expect(realtime.path).toBe("/play");
   const made = await realtime.createRoom("kickchat", { code: false });
-  expect(made).toEqual({ id: made.id });
+  expect(made).toEqual({ id: made.id, hostKey: expect.any(String) });
   expect(realtime.registry.get("kickchat", made.id)!.room.env.MIU_KICK_ENV_TEST).toBe("yes");
   const withCode = await realtime.createRoom("kickchat");
   expect(withCode.code).toMatch(/^\d{6}$/);
@@ -88,9 +88,9 @@ test("Durable Object rooms see the object's env", async () => {
   };
   const DO = createRoomDurableObject([chat], { clock: new FakeClock(0) });
   const obj = new DO(state as any, { DB: "binding" });
-  const res = await obj.fetch(new Request("https://x/_miu/create?type=kickchat&id=r9", { method: "POST", body: "{}" }));
+  const res = await obj.fetch(new Request("https://miu-room/_miu/create?type=kickchat&id=r9", { method: "POST", body: "{}" }));
   expect(res.status).toBe(200);
-  const res2 = await obj.fetch(new Request("https://x/_miu/room?type=kickchat&id=r9"));
+  const res2 = await obj.fetch(new Request("https://miu-room/_miu/room?type=kickchat&id=r9"));
   expect(res2.status).toBe(200);
   expect((obj as any).inst.room.env).toEqual({ DB: "binding" });
 });

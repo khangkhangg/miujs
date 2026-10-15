@@ -217,6 +217,12 @@ conformance vectors, which `test/protocol-vectors.test.ts` checks against a JS r
 | Leaderboard scores | Room/server: trusted | `maxScore` / `minScore` still apply. |
 | Leaderboard scores | Clients: off by default | With `clientSubmit: { secret }`: a server-signed proof bound to board + player + score, single-use nonce, per-player rate limit. |
 | Profile edits | Owner only | Validated name and avatar key. |
+| Display name in a room | Ticket | The name comes from the ticket (the profile), not from `?name=`. |
+| Host role | Nobody by default | `gameRoom` sets `requireHostKey`: the first ticket holder is a plain player. |
+| Room existence | Matchmaker / lobby only | `gameRoom` sets `createOnJoin: false`: a random room URL (e.g. `?resume=junk`) is a 404 and creates nothing. |
+| Kicked players | Banned for the match | `room.kick()` bans that user: a fresh ticket is refused (secret state, survives hibernation). |
+| Lobby codes | Rate limited | Wrong codes: 30/min per player and per IP (`joinGuesses`); new lobbies: 10/min per player (`creates`). `429 MIU_E_GAME_LOBBY_RATE_LIMITED`. |
+| Score proof nonces | Database | Claimed in `leaderboard_nonces`, so a proof cannot be replayed on another isolate. |
 
 `MIU_GAME_SECRET` (32+ characters) signs tickets and results. Off Workers, a random per-process
 dev secret is used when it is unset, which only works single-process. On Workers it is required.

@@ -24,8 +24,23 @@ export interface RoomsOptions {
   codes?: string;
   /** How long a join code stays valid. Default 6 hours. */
   codeTtlMs?: number;
-  /** Per-IP limit on `GET /rooms/code/:code` (against guessing). Default 30/min, burst 10. */
+  /**
+   * Per-IP limit on wrong guesses at `GET /rooms/code/:code`. Default 30/min, burst 10. Only
+   * misses use it up, so a classroom behind one NAT can all look up the real code; an IP that is
+   * out of guesses waits for any lookup.
+   */
   codeLookups?: { perMinute?: number; burst?: number };
+  /**
+   * Most open room WebSockets per client IP (Bun/Deno/Node; not enforced across Workers isolates).
+   * Default 1000; further upgrades get `429 MIU_E_ROOM_TOO_MANY_CONNECTIONS`.
+   */
+  maxConnectionsPerIp?: number;
+  /**
+   * Who may call the MCP tools `rooms_list` and `room_state`. They list every room id (which
+   * bypasses join codes) and show raw state (which bypasses `view`), so the default `"admin"`
+   * needs a signed-in user with the `admin` role. `"public"`: anyone who can reach /mcp.
+   */
+  mcpAccess?: "admin" | "public";
   /** Dispose local rooms after they stay empty this long. Default 30 000 ms. */
   emptyMs?: number;
   clock?: Clock;
@@ -98,7 +113,20 @@ function roomsPlugin(opts: RoomsOptions) {
   let workerEnv: Record<string, unknown> | undefined;
   let localEnv: Record<string, unknown> | undefined;
   // room.env for in-process rooms: the request env on Workers (no DO binding), else the process env.
-  const registry = new LocalRooms(opts.rooms, { clock, emptyMs: opts.emptyMs, env: () => workerEnv ?? (localEnv ??= processEnv()) });
+  /** In-memory join codes by room (`type:id`), released when the room closes. */
+  const codeOf = new Map<string, string>();
+  const registry = new LocalRooms(opts.rooms, {
+    clock,
+    emptyMs: opts.emptyMs,
+    env: () => workerEnv ?? (localEnv ??= processEnv()),
+    onRoomClose: (type, id) => {
+      const key = `${type}:${id}`;
+      const code = codeOf.get(key);
+      if (code === undefined) return;
+      codeOf.delete(key);
+      memoryCodes.delete(code);
+    },
+  });
   const known = opts.rooms.map((r) => r.type);
   const defs = new Map(opts.rooms.map((r) => [r.type, r] as const));
   const codeTtlMs = opts.codeTtlMs ?? 6 * 3_600_000;
@@ -106,6 +134,9 @@ function roomsPlugin(opts: RoomsOptions) {
   const perMinute = opts.codeLookups?.perMinute ?? 30;
   const lookups = new KeyedLimiter({ perSecond: perMinute / 60, burst: opts.codeLookups?.burst ?? 10 });
   let warned = false;
+  const maxPerIp = opts.maxConnectionsPerIp ?? 1_000;
+  /** Open room sockets per client IP (local transport). */
+  const perIp = new Map<string, number>();
 
   const codeStore = (env: Record<string, unknown> | undefined): CodeStore => {
     const kv = opts.codes ? (env?.[opts.codes] as KvLike | undefined) : undefined;
@@ -113,24 +144,36 @@ function roomsPlugin(opts: RoomsOptions) {
   };
 
   /** Create a room with init data and a 6-digit join code (`code: false` skips the code). */
-  function createRoom(type: string, o: CreateRoomOptions & { code: false }): Promise<{ id: string }>;
-  function createRoom(type: string, o?: CreateRoomOptions): Promise<{ id: string; code: string }>;
-  async function createRoom(type: string, o: CreateRoomOptions = {}): Promise<{ id: string; code?: string }> {
+  //
+  // `hostKey` makes its holder host (`?role=host&hostKey=`): keep it server side and hand it only
+  // to the room's creator. Absent for sharded room types.
+  function createRoom(type: string, o: CreateRoomOptions & { code: false }): Promise<{ id: string; hostKey?: string }>;
+  function createRoom(type: string, o?: CreateRoomOptions): Promise<{ id: string; code: string; hostKey?: string }>;
+  async function createRoom(type: string, o: CreateRoomOptions = {}): Promise<{ id: string; code?: string; hostKey?: string }> {
     if (!registry.has(type)) throw unknownType(type, known);
     const env = o.env ?? workerEnv;
     const id = randomRoomId();
-    const code = o.code === false ? undefined : await allocateCode(codeStore(env), { type, id }, codeTtlMs);
+    const store = o.code === false ? null : codeStore(env);
+    const code = store ? await allocateCode(store, { type, id }, codeTtlMs) : undefined;
     const ns = nsFrom(env, binding);
+    let hostKey: string | undefined;
     if (ns) {
       const url = `https://miu-room/_miu/create?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`;
       const res = await ns.get(ns.idFromName(`${type}:${id}`)).fetch(new Request(url, { method: "POST", body: JSON.stringify({ data: o.data ?? null }) }));
       if (!res.ok) {
         throw errors.custom({ code: "MIU_E_ROOM_CREATE_FAILED", status: 502, message: `The Durable Object for ${type}:${id} answered ${res.status}`, fix: "Pass the same rooms to createRoomDurableObject() and rooms({ rooms })." });
       }
+      const body = (await res.json().catch(() => ({}))) as { hostKey?: unknown };
+      if (typeof body.hostKey === "string") hostKey = body.hostKey;
     } else {
-      registry.create(type, id, o.data);
+      const inst = registry.create(type, id, o.data);
+      if (inst) hostKey = inst.hostKey;
+      if (code !== undefined && store === memoryCodes) codeOf.set(`${type}:${id}`, code);
     }
-    return code === undefined ? { id } : { id, code };
+    const out: { id: string; code?: string; hostKey?: string } = { id };
+    if (code !== undefined) out.code = code;
+    if (hostKey !== undefined) out.hostKey = hostKey;
+    return out;
   }
 
   const resolveCode = route.get(`${prefix}/code/:code`, {
@@ -139,12 +182,14 @@ function roomsPlugin(opts: RoomsOptions) {
     mcp: false,
     handler: async (ctx): Promise<CodeTarget> => {
       const ip = (ctx as unknown as { ip?: string }).ip ?? "unknown";
-      if (!lookups.take(ip, clock.now())) {
-        throw errors.custom({ code: "MIU_E_ROOM_CODE_RATE_LIMITED", status: 429, message: "Too many join-code lookups", fix: `Wait a few seconds; at most ${perMinute} lookups per minute are allowed per IP.` });
-      }
+      const limited = () =>
+        errors.custom({ code: "MIU_E_ROOM_CODE_RATE_LIMITED", status: 429, message: "Too many wrong join codes", fix: `Wait a few seconds; at most ${perMinute} wrong codes per minute are allowed per IP.` });
+      if (!lookups.allowed(ip, clock.now())) throw limited();
       const code = ctx.params.code;
       const found = CODE_RE.test(code) ? await codeStore(ctx.runtime === "workerd" ? ctx.env : undefined).get(code) : null;
       if (!found) {
+        // Only misses spend the budget: guessing is what it limits.
+        if (!lookups.take(ip, clock.now())) throw limited();
         throw errors.custom({ code: "MIU_E_ROOM_CODE_UNKNOWN", status: 404, message: `No room with code ${JSON.stringify(code)}`, fix: "Check the 6-digit code; codes expire a few hours after the room was created." });
       }
       return found;
@@ -167,18 +212,38 @@ function roomsPlugin(opts: RoomsOptions) {
         warned = true;
         ctx.log.warn(`rooms: no Durable Object binding "${binding}"; using in-isolate rooms (not shared across isolates)`);
       }
-      const join = joinParamsFrom(ctx.query);
+      if (!registry.joinable(type, id)) throw notFound(type, id);
+      const ip = (ctx as unknown as { ip?: string }).ip;
+      if (ip !== undefined && (perIp.get(ip) ?? 0) >= maxPerIp) {
+        throw errors.custom({ code: "MIU_E_ROOM_TOO_MANY_CONNECTIONS", status: 429, message: `Too many open room connections from this address (${maxPerIp})`, fix: "Close unused connections; raise rooms({ maxConnectionsPerIp }) if many players share one IP." });
+      }
+      // Dropped once the socket joined: the handlers live as long as the socket, the join params need not.
+      let join: JoinParams | null = joinParamsFrom(ctx.query);
       let inst: RoomInstance | null = null;
+      let counted = false;
       return ctx.upgrade({
         open(socket) {
-          inst = registry.route(type, id, join);
-          inst!.connect(socket, join);
+          if (ip !== undefined) {
+            perIp.set(ip, (perIp.get(ip) ?? 0) + 1);
+            counted = true;
+          }
+          const j = join!;
+          join = null;
+          inst = registry.route(type, id, j);
+          if (!inst) return void socket.close(4004, "MIU_E_ROOM_NOT_FOUND"); // disposed since the check
+          inst.connect(socket, j);
         },
         message(socket, m) {
           return inst?.receive(socket, m) ?? undefined;
         },
-        close(socket) {
-          if (inst) registry.disconnected(inst, socket);
+        close(socket, code) {
+          if (counted) {
+            counted = false;
+            const n = (perIp.get(ip!) ?? 1) - 1;
+            if (n > 0) perIp.set(ip!, n);
+            else perIp.delete(ip!);
+          }
+          if (inst) registry.disconnected(inst, socket, code);
         },
       });
     },
@@ -214,12 +279,21 @@ function roomsPlugin(opts: RoomsOptions) {
     },
   });
 
+  const mcpAccess = opts.mcpAccess ?? "admin";
+  /** Operator tools: refuse callers without the admin role (unless opened with mcpAccess: "public"). */
+  const operator = (ctx: Context) => {
+    if (mcpAccess === "public") return;
+    const user = (ctx as { user?: { roles?: unknown } }).user;
+    if (!user) throw errors.unauthorized("Sign in as an operator to inspect rooms", "rooms_list and room_state need a user with the admin role (or rooms({ mcpAccess: \"public\" })).");
+    if (!Array.isArray(user.roles) || !user.roles.includes("admin")) throw errors.forbidden("Only operators (role admin) can inspect rooms", "Call it as a user with the admin role, or open the tools with rooms({ mcpAccess: \"public\" }).");
+  };
   const tools: McpTool[] = [
     {
       name: "rooms_list",
       description: "List active realtime rooms with player counts.",
       inputSchema: { type: "object", properties: {} },
       call: (_args, ctx) => {
+        operator(ctx);
         if (namespace(ctx, binding)) {
           return { rooms: [], note: "On Cloudflare each room is a Durable Object; use room_state with a known type and id." };
         }
@@ -235,6 +309,7 @@ function roomsPlugin(opts: RoomsOptions) {
         required: ["type", "id"],
       },
       call: async (args, ctx) => {
+        operator(ctx);
         const type = String(args.type ?? "");
         const id = String(args.id ?? "");
         checkRoute(registry, type, id, known);

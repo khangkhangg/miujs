@@ -202,13 +202,20 @@ function readStr(r: Reader, n: number): string {
   return dec.decode(buf.subarray(at, at + n));
 }
 
+/** Every element takes at least one byte: a length the remaining bytes cannot hold is a lie (a bomb). */
+function checkCount(r: Reader, n: number, perItem: number): void {
+  if (n * perItem > r.buf.length - r.pos) throw new RangeError("MessagePack data is truncated");
+}
+
 function readArray(r: Reader, n: number): unknown[] {
+  checkCount(r, n, 1); // before `new Array(n)`: a 5-byte header must not allocate n slots
   const out = new Array(n);
   for (let i = 0; i < n; i++) out[i] = read(r);
   return out;
 }
 
 function readMap(r: Reader, n: number): Record<string, unknown> {
+  checkCount(r, n, 2);
   const out: Record<string, unknown> = {};
   for (let i = 0; i < n; i++) {
     const k = read(r);

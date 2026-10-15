@@ -121,6 +121,12 @@ with `reconnectMs`). Reconnect with `?resume=<resumeToken>`: you get a `welcome`
 
 If the same player connects twice, the older connection is closed with code `4001`.
 
+Closing your socket cleanly with code `1000` (the JS SDK's `room.close()`) is a deliberate leave:
+the seat is freed at once (no grace period) and your resume token stops working.
+
+A socket must join within 10 seconds (`joinTimeoutMs`): pass `name` or `resume` in the URL, or
+send a `join` frame right after opening. Otherwise it is closed with `4002`.
+
 Reconnect to the same URL you joined (`/rooms/<type>/<id>`). In large sharded rooms the token
 starts with `s<n>.`, which routes you back to your shard; treat it as opaque.
 
@@ -145,7 +151,9 @@ connection. JSON stays the default; the JS SDK opts in with `connect(url, { enco
 | 4009 | `MIU_E_ROOM_KICKED`: the server removed you (`room.kick`); seat and resume token are gone | no |
 | 4003 | `MIU_E_ROOM_HOST_KEY`: asked for `host` without the right `hostKey` | no |
 | 4004 | `MIU_E_ROOM_CLOSED`: room was closed | no |
-| 4005 | `MIU_E_ROOM_FULL` | no |
+| 4005 | `MIU_E_ROOM_FULL` (`maxPlayers`, or `maxMembers` seats of any role, default 5000) | no |
+| 4002 | `MIU_E_ROOM_JOIN_TIMEOUT`: the socket did not join within `joinTimeoutMs` | yes, joining right away |
+| 1013 | Slow consumer: the server had to drop frames for you (you stopped reading); your seat is kept | yes, with `resume` (you get a fresh full `state`) |
 | other | Network problem / server restart | yes, with `resume` |
 
 ## Error codes
@@ -161,12 +169,13 @@ connection. JSON stays the default; the JS SDK opts in with `connect(url, { enco
 | `MIU_E_ROOM_NOT_JOINED` | `msg` before joining. |
 | `MIU_E_ROOM_RESUME_EXPIRED` | Unknown or expired resume token and no name. |
 | `MIU_E_ROOM_HOST_KEY` | Asked to be host without the right key (connection closed, 4003). |
-| `MIU_E_ROOM_FULL` | `maxPlayers` reached (connection closed, 4005). |
+| `MIU_E_ROOM_FULL` | `maxPlayers` or `maxMembers` reached (connection closed, 4005). |
+| `MIU_E_ROOM_JOIN_TIMEOUT` | No `join` within `joinTimeoutMs` (connection closed, 4002). |
 | `MIU_E_ROOM_CLOSED` | The room was closed (connection closed, 4004). |
 | `MIU_E_ROOM_KICKED` | The room removed you (connection closed, 4009 unless the room chose another code). |
 | `MIU_E_ROOM_UNKNOWN_MESSAGE` | `msg.type` is not one of the room's client messages (`fix` lists them). |
 | `MIU_E_ROOM_MESSAGE_INVALID` | `msg.data` failed validation; `details.issues` and `details.schema` (JSON Schema) say why. |
-| `MIU_E_ROOM_HANDLER_FAILED` | The server handler crashed; state was rolled back. |
+| `MIU_E_ROOM_HANDLER_FAILED` | The server handler crashed; state was rolled back. The message never carries the internal error (it is in the server log). |
 | `MIU_E_ROOM_STATE_INVALID` | The handler produced state that breaks the schema; rolled back. |
 | any other `MIU_E_*` | Thrown by the room's own handler (e.g. `MIU_E_FORBIDDEN`). |
 
@@ -192,3 +201,11 @@ default). Sharded rooms use `"<type>:<id>"` as the coordinator and `"<type>:<id>
 per shard; `welcome.room.id` is then `<id>:shard<n>`. Join codes live in a KV namespace. Timers
 and the reconnect grace period run from Durable Object alarms, so they fire even after the room
 hibernated. The wire protocol is identical.
+
+## HTTP refusals before the upgrade
+
+| Status | Code | When |
+|--------|------|------|
+| 404 | `MIU_E_ROOM_NOT_FOUND` | The room type has `createOnJoin: false` and no room with this id was made with `createRoom()`. |
+| 429 | `MIU_E_ROOM_TOO_MANY_CONNECTIONS` | This IP already holds `maxConnectionsPerIp` room sockets (default 1000; Bun/Deno/Node). |
+| 429 | `MIU_E_ROOM_CODE_RATE_LIMITED` | Too many wrong join codes from this IP (`GET /rooms/code/:code`; only misses count). |

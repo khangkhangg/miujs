@@ -40,6 +40,8 @@ export const gameErrors = {
   lobbyNotHost: () => e("MIU_E_GAME_LOBBY_NOT_HOST", 403, "Only the lobby host can start the match", "Ask the host to start, or create your own lobby."),
   lobbyNotReady: (missing: string[], min: number) =>
     e("MIU_E_GAME_LOBBY_NOT_READY", 409, `Cannot start: ${missing.length ? `not ready: ${missing.join(", ")}` : `need at least ${min} players`}`, "Every member must POST /lobbies/:id/ready with { ready: true }, and the lobby needs enough players."),
+  lobbyRateLimited: (what: string, perMinute: number) =>
+    e("MIU_E_GAME_LOBBY_RATE_LIMITED", 429, `Too many ${what}`, `Wait a few seconds: at most ${perMinute} ${what} per minute are allowed per player.`),
   lobbyStarted: () => e("MIU_E_GAME_LOBBY_STARTED", 409, "The lobby already started its match", "Connect to the room from GET /lobbies/:id, or create a new lobby."),
   matchUnknown: (id: string) => e("MIU_E_GAME_MATCH_UNKNOWN", 404, `No match "${id}"`, "Report results with the match id the room was created with (room.secret / seat info)."),
   resultInvalid: (why: string) =>

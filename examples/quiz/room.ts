@@ -175,6 +175,12 @@ export function createQuiz(questions: Question[], opts: { questionMs?: number } 
     },
     init: () => ({ phase: "lobby" as const, round: -1, total: questions.length, question: null, deadline: null, answered: {}, reveal: null, players: {}, leaderboard: [] }),
     view: quizView,
+    // The host has the start/next buttons: only the creator's hostKey (from POST /api/games)
+    // makes someone host, never joining first or outliving the host.
+    requireHostKey: true,
+    // Rooms come from POST /api/games only: a random /rooms/quiz/<id> URL is a 404.
+    createOnJoin: false,
+    maxPlayers: 500,
     secret: (): Secret => ({ questions, questionMs, answers: {}, deadlineTimer: null }),
     timers: {
       // The question deadline. `round` guards against a stale timer from an earlier question.

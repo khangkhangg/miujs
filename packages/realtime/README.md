@@ -211,7 +211,9 @@ Persistence is coalesced and split:
 | `className` | `string` | `"MiuRooms"` | Exported Durable Object class name (for `miu deploy cloudflare`). |
 | `codes` | `string` | none (memory) | KV binding for join codes on Cloudflare. |
 | `codeTtlMs` | `number` | `21600000` (6 h) | How long a join code stays valid. |
-| `codeLookups` | `{ perMinute?, burst? }` | `{ perMinute: 30, burst: 10 }` | Per-IP limit on code lookups. |
+| `codeLookups` | `{ perMinute?, burst? }` | `{ perMinute: 30, burst: 10 }` | Per-IP limit on wrong join codes (only misses count, so a classroom behind one NAT can all look up the real code). |
+| `maxConnectionsPerIp` | `number` | `1000` | Open room sockets per client IP (Bun/Deno/Node); more get `429 MIU_E_ROOM_TOO_MANY_CONNECTIONS`. |
+| `mcpAccess` | `"admin" | "public"` | `"admin"` | Who may call the MCP tools `rooms_list` / `room_state` (they list every room id and show raw state, bypassing join codes and `view`). |
 | `emptyMs` | `number` | `30000` | Dispose local rooms after they stay empty this long. |
 | `clock` | `Clock` | `systemClock` | Time source (`FakeClock` in tests). |
 
@@ -230,6 +232,11 @@ Persistence is coalesced and split:
 | `rateLimit` | `{ perSecond?, burst?, kickAfterMs? } \| false` | `30/s`, burst `60`, kick after `3000` ms | Inbound frame limit per connection. |
 | `maxMessageBytes` | `number` | `16384` | Largest inbound frame; bigger frames close the socket (1009). |
 | `maxPlayers` | `number` | unlimited | Max non-spectator players. |
+| `maxMembers` | `number` | `5000` | Max seats of any role, spectators included. |
+| `joinTimeoutMs` | `number` | `10000` | A socket that has not joined by then is closed (4002). `0` turns it off. |
+| `requireHostKey` | `boolean` | `false` | Host only with the `hostKey` that `createRoom()` returns: nobody is host by joining first, and nobody is promoted when the host leaves. Use it when the host has powers. |
+| `createOnJoin` | `boolean` | `true` | `false`: only rooms made with `createRoom()` exist; any other id is `404 MIU_E_ROOM_NOT_FOUND` (no rooms conjured by random URLs). |
+| `patchBatchMs` | `number` | `0` | Coalesce the patches of messages and timers into one per window (the first at once). For real-time games: 16-50 ms turns M moves × N players frames into ~N per window. |
 | `reconnectMs` | `number` | `30000` | How long a disconnected player keeps their seat. |
 | `presenceBatchMs` | `number` | `50` | Coalesce the patches caused by joins and leaves into one per window. `0` sends them at once. |
 
@@ -237,6 +244,14 @@ The `room` handle also has `room.kick(playerId, code?)` and `room.env`.
 
 - `room.kick` removes the seat at once: no reconnect grace, resume token revoked, `onLeave` runs. The socket closes with `code`, default `4009`, which clients treat as terminal.
 - `room.env` is the Durable Object's `env` on Workers (D1 and other bindings) and the process env locally.
+
+Security notes:
+
+- `createRoom()` returns `{ id, code, hostKey }`. Hand the `hostKey` to the creator only; with `requireHostKey: true` it is the only way to be host.
+- `onLeave` gets `kicked: true` for `room.kick()`, so a room can keep its own ban list.
+- A client that closes cleanly (code 1000, `room.close()` in the SDK) leaves at once: no reconnect grace.
+- A socket the runtime had to drop frames for (Bun: past its backpressure limit, a client that stopped reading) is closed with 1013 and resumes with a fresh state, instead of silently missing patches.
+- Handler crashes reach the client as `MIU_E_ROOM_HANDLER_FAILED` without the internal message.
 
 `connect(url, options)` from `@miujs/realtime/client`: `name`, `role` (default `"player"`), `hostKey`, `resume`, `reconnect` (default on: `minDelayMs` 250, `maxDelayMs` 5000, `maxAttempts` Infinity; `false` turns it off), `encoding` (`"json"` or `"msgpack"`, default `"json"`), `WebSocket` (default: the global one).
 
@@ -250,7 +265,10 @@ The `room` handle also has `room.kick(playerId, code?)` and `room.env`.
 - `MIU_E_ROOM_ID_INVALID`: the room id is not 1-64 letters, digits, `_` or `-` (400).
 - `MIU_E_ROOM_MESSAGE_INVALID`: a client message failed its schema.
 - `MIU_E_ROOM_STATE_INVALID`: a handler left the state invalid; the change was rolled back.
-- `MIU_E_ROOM_FULL`: the room (or every shard) has `maxPlayers` seated.
+- `MIU_E_ROOM_FULL`: the room (or every shard) has `maxPlayers` seated, or `maxMembers` seats of any role.
+- `MIU_E_ROOM_NOT_FOUND`: `createOnJoin: false` and no such room (404).
+- `MIU_E_ROOM_TOO_MANY_CONNECTIONS`: this IP holds `maxConnectionsPerIp` room sockets (429).
+- `MIU_E_ROOM_JOIN_TIMEOUT`: the socket did not join within `joinTimeoutMs` (closed 4002).
 - `MIU_E_ROOM_RATE_LIMITED`: a client sent frames over the rate limit.
 - `MIU_E_ROOM_CODE_UNKNOWN` / `MIU_E_ROOM_CODE_RATE_LIMITED`: join code not found, or too many lookups.
 - `MIU_E_ROOM_TIMER_NOT_DURABLE`: `after()` or `tick()` was used in a Durable Object; use `schedule()`.

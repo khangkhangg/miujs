@@ -25,6 +25,11 @@ export class TokenBucket {
     return true;
   }
 
+  /** Whether a token is available, without taking it. */
+  peek(now: number): boolean {
+    return this.tokens + Math.max(0, now - this.last) * this.perMs >= 1;
+  }
+
   /** True when the bucket is full again (nothing to remember). */
   full(now: number): boolean {
     return this.tokens + Math.max(0, now - this.last) * this.perMs >= this.burst;
@@ -52,6 +57,11 @@ export class KeyedLimiter {
       this.buckets.set(key, b);
     }
     return b.take(now);
+  }
+
+  /** Whether `key` has a token left, without taking it (unknown keys have a full bucket). */
+  allowed(key: string, now: number): boolean {
+    return this.buckets.get(key)?.peek(now) ?? true;
   }
 
   private sweep(now: number): void {

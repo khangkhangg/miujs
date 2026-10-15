@@ -158,7 +158,12 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
     async fetch(req: Request): Promise<Response> {
       try {
         const url = new URL(req.url);
-        if (url.pathname.startsWith("/_miu/")) return await this.internal(req, url);
+        // Internal endpoints answer only the Worker's own requests (host "miu-room"), never a
+        // client request forwarded as is, whatever path the rooms route was mounted on.
+        if (url.pathname.startsWith("/_miu/")) {
+          if (url.hostname !== "miu-room") return errors.notFound("route", url.pathname).toResponse();
+          return await this.internal(req, url);
+        }
         const segs = url.pathname.split("/").filter(Boolean);
         const id = decodeURIComponent(segs[segs.length - 1] ?? "");
         const type = decodeURIComponent(segs[segs.length - 2] ?? "");
@@ -173,7 +178,8 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
         const cfg = shardConfig(def);
         const n = Number(req.headers.get(SHARD_HEADER) ?? "0");
         const instId = cfg ? shardId(id, Number.isInteger(n) && n >= 0 && n < cfg.maxShards ? n : 0) : id;
-        const inst = (await this.load(type, instId, true))!;
+        const inst = await this.load(type, instId, !!cfg || def.def.createOnJoin !== false);
+        if (!inst) throw errors.custom({ code: "MIU_E_ROOM_NOT_FOUND", status: 404, message: `No room ${type}/${id}`, fix: "Create it with createRoom() first, and join with the id it returned." });
         const [client, server] = makePair();
         this.ctx.acceptWebSocket(server);
         const join = joinParamsFrom(parseQueryObject(url.search));
@@ -212,7 +218,7 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
       await this.persist();
     }
 
-    async webSocketClose(ws: CfWebSocket, _code: number, _reason: string, _wasClean: boolean): Promise<void> {
+    async webSocketClose(ws: CfWebSocket, code: number, _reason: string, _wasClean: boolean): Promise<void> {
       const att = ws.deserializeAttachment() as Attachment | null;
       if (!att) return;
       const inst = await this.load(att.type, att.id, false);
@@ -220,7 +226,7 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
       this.sockets.delete(ws);
       this.busy++;
       try {
-        if (inst && sock) inst.disconnect(sock);
+        if (inst && sock) inst.disconnect(sock, code);
       } finally {
         this.busy--;
       }
@@ -262,8 +268,9 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
             c.data = body.data ?? undefined;
             await this.ctx.storage.put(COORD_KEY, c);
           } else {
-            await this.load(type, id, true, body.data ?? undefined);
+            const made = await this.load(type, id, true, body.data ?? undefined);
             await this.persist(true);
+            return Response.json({ type, id, hostKey: made?.hostKey });
           }
           return Response.json({ type, id });
         }

@@ -85,6 +85,8 @@ interface GameSecret {
   reported: boolean;
   /** Admitted by onJoinRequest, onSeat not run yet. */
   pending?: string[];
+  /** Users removed with room.kick(): their tickets are refused for the rest of the match. */
+  banned?: string[];
 }
 
 interface Wrapped {
@@ -264,6 +266,7 @@ export function gameRoom<S, X = undefined, C extends Record<string, Schema<any>>
       if (tk.matchId !== g.match.id) throw gameErrors.ticketInvalid("issued for another match");
       if (!g.match.players.some((p) => p.userId === tk.userId)) throw gameErrors.ticketInvalid("user is not in this match");
     }
+    if (g.banned?.includes(tk.userId)) throw gameErrors.ticketInvalid("this user was removed from the match");
     const prev = g.seats[playerId];
     if (prev) {
       if (prev.userId !== tk.userId) throw gameErrors.ticketInvalid("this connection is already seated as another user");
@@ -278,6 +281,11 @@ export function gameRoom<S, X = undefined, C extends Record<string, Schema<any>>
     g.seats[playerId] = seat;
     return { seat, fresh: true };
   };
+  /** The ticket names the player (from their profile): `?name=` cannot impersonate the opponent. */
+  const nameFromTicket = (player: Player, seat: Seat) => {
+    const name = seat.name.trim().slice(0, 32);
+    if (name) (player as { name: string }).name = name;
+  };
   const seatNow = async (room: Room, player: Player, seat: Seat, now: number) => {
     if (def.onSeat) await def.onSeat({ room: facade(room) as Room<S, X>, player, seat: { ...seat }, now });
     room.send(player.id, "seated", seat);
@@ -286,7 +294,10 @@ export function gameRoom<S, X = undefined, C extends Record<string, Schema<any>>
   // The ticket message: for clients that join without params. Once seated it is a silent no-op.
   on.ticket = async ({ room, sender, msg, now }: { room: Room; sender: Player; msg: { ticket: string }; now: number }) => {
     const { seat, fresh } = admit(room, sender.id, msg.ticket, now);
-    if (fresh) await seatNow(room, sender, seat, now);
+    if (fresh) {
+      nameFromTicket(sender, seat);
+      await seatNow(room, sender, seat, now);
+    }
   };
 
   const wrapRoom = <F extends (ctx: any) => unknown>(fn: F | undefined) => (fn ? ((ctx: any) => fn({ ...ctx, room: facade(ctx.room) })) : undefined);
@@ -298,6 +309,11 @@ export function gameRoom<S, X = undefined, C extends Record<string, Schema<any>>
 
   const wrapped: RoomDefinition<S, Wrapped, any> = {
     ...(def as unknown as RoomDefinition<S, Wrapped, any>),
+    // Seats come from tickets, so nobody is host by joining first (a game may still make a
+    // player host in onJoinRequest), and rooms exist only once the matchmaker or a lobby made
+    // them: a random URL (e.g. ?resume=junk) cannot conjure one.
+    requireHostKey: def.requireHostKey ?? true,
+    createOnJoin: def.createOnJoin ?? false,
     client: { ...(def.client ?? {}), ticket: t.object({ ticket: t.string({ maxLength: 4096 }) }) },
     init: (ctx) => def.init(ctxOf(ctx)),
     secret: (ctx) => {
@@ -309,6 +325,7 @@ export function gameRoom<S, X = undefined, C extends Record<string, Schema<any>>
       let admitted: { seat: Seat; fresh: boolean } | null = null;
       if (ticket !== undefined) {
         admitted = admit(ctx.room, ctx.player.id, ticket, ctx.now);
+        nameFromTicket(ctx.player, admitted.seat);
       } else if (!(opts.spectators && ctx.player.role === "spectator")) {
         throw gameErrors.ticketRequired();
       }
@@ -334,7 +351,13 @@ export function gameRoom<S, X = undefined, C extends Record<string, Schema<any>>
       }
       if (def.onJoin) await (def.onJoin as any)({ ...ctx, room: facade(ctx.room) });
     },
-    onLeave: wrapRoom(def.onLeave as any) as any,
+    onLeave: (ctx: { room: Room; player: Player; now: number; kicked: boolean }) => {
+      const g = gameOf(ctx.room);
+      const seat = g?.seats[ctx.player.id];
+      // Kicked: that user stays out, even with a fresh ticket from the matchmaker or lobby.
+      if (g && seat && ctx.kicked && !g.banned?.includes(seat.userId)) g.banned = [...(g.banned ?? []), seat.userId];
+      return def.onLeave ? (def.onLeave as any)({ ...ctx, room: facade(ctx.room) }) : undefined;
+    },
     on: on as any,
     timers: timers as any,
   };

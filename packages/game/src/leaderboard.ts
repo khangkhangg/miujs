@@ -161,7 +161,7 @@ export function leaderboard(opts: LeaderboardOptions) {
   const prefix = `${(opts.path ?? "/leaderboards").replace(/\/+$/, "")}/${id}`;
   const perMinute = opts.rateLimit?.perMinute ?? 10;
   const limiter = new KeyedLimiter({ perSecond: perMinute / 60, burst: opts.rateLimit?.burst ?? 5 });
-  const usedNonces = new Map<string, number>();
+  let proofsSinceSweep = 0;
   let lastEnv: Env = {};
 
   const better = desc ? ">" : "<";
@@ -270,7 +270,7 @@ export function leaderboard(opts: LeaderboardOptions) {
     },
   };
 
-  async function checkProof(proof: unknown, playerId: string, score: number): Promise<void> {
+  async function checkProof(proof: unknown, playerId: string, score: number, env: Env): Promise<void> {
     const cs = opts.clientSubmit;
     if (!cs) throw gameErrors.clientScoresDisabled(id);
     const now = clock.now();
@@ -281,10 +281,15 @@ export function leaderboard(opts: LeaderboardOptions) {
       throw gameErrors.proofInvalid();
     }
     if (p.b !== id || p.p !== playerId || p.s !== score || typeof p.n !== "string") throw gameErrors.proofInvalid();
-    for (const [k, exp] of usedNonces) if (exp <= now) usedNonces.delete(k);
-    const key = `${p.p}:${p.n}`;
-    if (usedNonces.has(key)) throw gameErrors.proofInvalid();
-    usedNonces.set(key, p.exp);
+    if (p.n.length > 128) throw gameErrors.proofInvalid();
+    // Single use across every isolate: the nonce is claimed in the database.
+    const db = await dbFor(env);
+    if (proofsSinceSweep++ % 100 === 0) await db.prepare("DELETE FROM leaderboard_nonces WHERE expires_at <= ?").bind(now).run();
+    const claimed = await db
+      .prepare("INSERT OR IGNORE INTO leaderboard_nonces (board, player_id, nonce, expires_at) VALUES (?, ?, ?, ?)")
+      .bind(id, p.p, p.n, typeof p.exp === "number" ? p.exp : now + 86_400_000)
+      .run();
+    if (claimed.meta.changes !== 1) throw gameErrors.proofInvalid();
   }
 
   const q = t.object({ n: t.optional(t.integer({ min: 1, max: 100 })), period: t.optional(t.string({ maxLength: 16 })) });
@@ -331,7 +336,7 @@ export function leaderboard(opts: LeaderboardOptions) {
       mcp: false,
       body: t.object({ score: t.number(), proof: t.optional(t.string({ maxLength: 4096 })) }),
       handler: async ({ body, user, env }) => {
-        await checkProof(body.proof, user.id, body.score);
+        await checkProof(body.proof, user.id, body.score, env);
         return board.submit(user.id, body.score, { source: "client", env });
       },
     }),

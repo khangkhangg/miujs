@@ -95,7 +95,8 @@ export interface RoomDefinition<S, X, C extends Record<string, Schema<any>>> {
    */
   onJoinRequest?(ctx: { params: Record<string, string>; player: Player; room: Room<S, X>; now: number }): void;
   onJoin?(ctx: { room: Room<S, X>; player: Player; now: number }): MaybePromise<void>;
-  onLeave?(ctx: { room: Room<S, X>; player: Player; now: number }): MaybePromise<void>;
+  /** A player left for good (reconnect grace over), or was removed with `room.kick()` (`kicked: true`). */
+  onLeave?(ctx: { room: Room<S, X>; player: Player; now: number; kicked: boolean }): MaybePromise<void>;
   on?: { [K in keyof C]?: (ctx: { room: Room<S, X>; sender: Player; msg: Infer<C[K]>; now: number }) => MaybePromise<void> };
   /**
    * What one player may see (interest management: hidden hands, fog of war). Each client gets
@@ -117,8 +118,32 @@ export interface RoomDefinition<S, X, C extends Record<string, Schema<any>>> {
   rateLimit?: { perSecond?: number; burst?: number; kickAfterMs?: number } | false;
   /** Largest accepted inbound frame in bytes. Default 16 384. Bigger frames close the socket (1009). */
   maxMessageBytes?: number;
-  /** Max non-spectator players. Default unlimited. */
+  /** Max non-spectator players. Default unlimited (but see `maxMembers`). */
   maxPlayers?: number;
+  /**
+   * Max seats of any role (players, host and spectators). Default 5000. Further joins are refused
+   * with `MIU_E_ROOM_FULL` (close 4005), so one client cannot pile thousands of spectators into a
+   * room and make every broadcast O(N).
+   */
+  maxMembers?: number;
+  /**
+   * A socket must join (`?name=` / `?resume=` or a `join` frame) within this many ms, or it is
+   * closed with `MIU_E_ROOM_JOIN_TIMEOUT` (4002). Default 10 000; `0` turns it off.
+   */
+  joinTimeoutMs?: number;
+  /**
+   * Host only by key: nobody becomes host by joining first, and no player is promoted when the
+   * host leaves. Join with `?role=host&hostKey=<key>` where the key comes from `createRoom()`
+   * (server side). Use it whenever the host has powers (start, next, kick). Default false.
+   */
+  requireHostKey?: boolean;
+  /**
+   * `false`: only rooms made server side with `createRoom()` exist; connecting to any other id is
+   * `404 MIU_E_ROOM_NOT_FOUND` and creates nothing (no rooms conjured by random URLs). Default
+   * true (a room is created by its first connection, e.g. chat rooms named in the URL). Not
+   * applied to sharded room types.
+   */
+  createOnJoin?: boolean;
   /** How long a disconnected player keeps their seat. Default 30 000 ms. */
   reconnectMs?: number;
   /**
@@ -130,6 +155,14 @@ export interface RoomDefinition<S, X, C extends Record<string, Schema<any>>> {
    * so ordering is kept. Default 50; 0 patches everyone on every join and leave.
    */
   presenceBatchMs?: number;
+  /**
+   * Coalesce the state changes of messages and timers the same way: the first change in a quiet
+   * period goes out at once, later ones as at most one patch per window of this many ms. For
+   * real-time games (inputs at 20-60 Hz from every player) this turns M moves × N players frames
+   * into ~N frames per window, at the cost of up to this much extra latency. Events and
+   * `room.send` flush pending changes first, so ordering is kept. Default 0 (every change at once).
+   */
+  patchBatchMs?: number;
 }
 
 export interface RoomType<S = any, X = any, C extends Record<string, Schema<any>> = Record<string, Schema<any>>> {
