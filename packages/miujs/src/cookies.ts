@@ -1,3 +1,8 @@
+import { errors } from "./errors.ts";
+
+// RFC 6265 cookie-octet: printable ASCII except space, DQUOTE, comma, semicolon and backslash.
+const COOKIE_OCTETS = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]*$/;
+
 export interface CookieOptions {
   maxAge?: number;
   expires?: Date;
@@ -6,6 +11,11 @@ export interface CookieOptions {
   secure?: boolean;
   httpOnly?: boolean;
   sameSite?: "Strict" | "Lax" | "None";
+  /**
+   * URL-encode the value (default true). Set false to send it as is, e.g. for cookies another
+   * framework reads without decoding (Django). Raw values must be RFC 6265 cookie-octets.
+   */
+  encode?: boolean;
 }
 
 export function parseCookies(header: string | null): Record<string, string> {
@@ -28,7 +38,14 @@ export function parseCookies(header: string | null): Record<string, string> {
 }
 
 export function serializeCookie(name: string, value: string, opts: CookieOptions = {}): string {
-  let s = `${name}=${encodeURIComponent(value)}`;
+  if (opts.encode === false && !COOKIE_OCTETS.test(value)) {
+    throw errors.config(
+      "MIU_E_COOKIE_VALUE_INVALID",
+      `Cookie "${name}" has characters not allowed in a raw cookie value`,
+      "Use only printable ASCII without spaces, quotes, commas, semicolons or backslashes, or leave encode on.",
+    );
+  }
+  let s = `${name}=${opts.encode === false ? value : encodeURIComponent(value)}`;
   if (opts.maxAge !== undefined) s += `; Max-Age=${Math.floor(opts.maxAge)}`;
   if (opts.expires) s += `; Expires=${opts.expires.toUTCString()}`;
   s += `; Path=${opts.path ?? "/"}`;
