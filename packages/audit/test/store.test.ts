@@ -246,6 +246,14 @@ describe("dbAuditStore config", () => {
     await store.append(entry(1), { AUDIT: database });
     expect(await database.prepare("SELECT COUNT(*) AS n FROM audit_log").first("n")).toBe(1);
   });
+  test("the append-only trigger is created by a recorded migration", async () => {
+    const database = sqlite();
+    await dbAuditStore(database, { table: "phi_audit" }).append(entry(1));
+    const ids = (await database.prepare("SELECT id FROM _miu_migrations").all<{ id: string }>()).results.map((r) => r.id);
+    expect(ids).toContain("audit_003_phi_audit_no_update");
+    const trig = await database.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'phi_audit'").all<{ name: string }>();
+    expect(trig.results.map((r) => r.name)).toEqual(["phi_audit_no_update"]);
+  });
   test("custom table names are validated", () => {
     expect(() => dbAuditStore(sqlite(), { table: "audit; DROP TABLE x" })).toThrow();
     expect(() => dbAuditStore(sqlite(), { table: "phi_audit" })).not.toThrow();

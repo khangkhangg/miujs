@@ -15,6 +15,16 @@ export interface Env {
   [key: string]: unknown;
 }
 
+/**
+ * Shared services plugins provide for code that runs outside a request (queue jobs, workflow
+ * runs, scripts). Augment it for typed access:
+ *
+ * ```ts
+ * declare module "miujs" { interface Services { mailer: Mailer } }
+ * ```
+ */
+export interface Services {}
+
 export interface AuthUser {
   id: string;
   email?: string;

@@ -1,8 +1,9 @@
 // The audit() plugin: ctx.audit.log / ctx.audit.query, GET /audit, and optional auth-event logging.
 
-import { definePlugin, errors, route, t, type CloudflareNeeds, type Context } from "miujs";
+import { definePlugin, errors, processEnv, route, t, type CloudflareNeeds, type Context, type Env } from "miujs";
 import { diff, redact, redactor, type RedactRule } from "./diff.ts";
-import type { AuditPage, AuditQuery, AuditRecord, AuditStore } from "./store.ts";
+import { checkKeys, ENV_KEY, envKeys, hashAuditEmail, MIN_KEY_LENGTH, type AuditKeys } from "./keys.ts";
+import { storeKeys, type AuditPage, type AuditQuery, type AuditRecord, type AuditStore } from "./store.ts";
 
 export interface AuditEntry {
   /** What happened, e.g. `"update"`, `"export"`, `"view"`. */
@@ -36,6 +37,19 @@ export interface AuditOptions {
   routes?: boolean;
   /** Default `/audit`. */
   path?: string;
+  /**
+   * HMAC key(s) for the hash chain (min 32 chars; first signs, all verify). Default:
+   * `env.AUDIT_HMAC_KEY` (comma-separated, newest first). Without a key the chain is plain SHA-256,
+   * which anyone with database write access can recompute.
+   */
+  key?: AuditKeys;
+  /**
+   * For `auth: true`: store `emailHash` (an HMAC of the normalized address, see `hashAuditEmail`)
+   * instead of the attempted email on failed sign-ins. Default false.
+   */
+  redactFailedLoginEmail?: boolean;
+  /** Salt for `emailHash` (min 32 chars). Default: the audit key. With neither, the email is dropped. */
+  emailSalt?: string;
 }
 
 declare module "miujs" {
@@ -66,6 +80,20 @@ export function audit(opts: AuditOptions) {
   if (!store || typeof store.append !== "function") {
     throw errors.config("MIU_E_AUDIT_STORE_MISSING", "audit() needs a store", "Pass audit({ store: dbAuditStore(database) }) (or memoryAuditStore() in tests).");
   }
+  if (opts.key !== undefined) checkKeys(opts.key);
+  if (opts.emailSalt !== undefined && (typeof opts.emailSalt !== "string" || opts.emailSalt.length < MIN_KEY_LENGTH)) {
+    throw errors.config("MIU_E_AUDIT_KEY_WEAK", "audit({ emailSalt }) is too short", `Use a random secret of at least ${MIN_KEY_LENGTH} characters, or omit it to reuse the audit key.`);
+  }
+  const appendOpts = opts.key === undefined ? {} : { key: opts.key };
+  const keyed = (env: Env) => opts.key !== undefined || storeKeys(store) !== undefined || envKeys(env) !== null;
+  /** Salt for failed-login email hashes: emailSalt, else the signing audit key. */
+  const emailSalt = (env: Env): string | null => {
+    if (opts.emailSalt) return opts.emailSalt;
+    const k = opts.key ?? storeKeys(store) ?? envKeys(env);
+    const first = k === undefined || k === null ? undefined : Array.isArray(k) ? k[0] : k;
+    return first === undefined ? null : typeof first === "string" ? first : first.secret;
+  };
+  let warnedNoKey = false;
   const isSecret = redactor(opts.redact ?? []);
   const permission = opts.permission ?? "audit:read";
   const path = opts.path ?? "/audit";
@@ -90,6 +118,7 @@ export function audit(opts: AuditOptions) {
         metadata: entry.metadata ? (redact(entry.metadata, isSecret) as Record<string, unknown>) : null,
       },
       ctx.env,
+      appendOpts,
     );
   }
 
@@ -141,8 +170,18 @@ export function audit(opts: AuditOptions) {
     routes: opts.routes === false ? [] : [queryRoute],
     setup(app) {
       if (!app.dev && store.kind === "memory") app.log.warn("audit() is using memoryAuditStore() in production; entries are lost on restart. Use dbAuditStore().");
+      // On Workers the env only exists per request, so that check waits for the first request.
+      if (!app.dev && app.runtime !== "workerd" && !keyed(processEnv())) {
+        warnedNoKey = true;
+        app.log.warn(`audit() has no HMAC key in production: anyone with database write access can rewrite the log and recompute its hashes. Set ${ENV_KEY} (32+ random characters) or audit({ key }).`);
+      }
+      if (app.dev || app.runtime !== "workerd") warnedNoKey = true;
     },
     onRequest(ctx) {
+      if (!warnedNoKey) {
+        warnedNoKey = true;
+        if (!keyed(ctx.env)) ctx.log.warn(`audit() has no HMAC key in production: set the ${ENV_KEY} secret (32+ random characters) or audit({ key }).`);
+      }
       (ctx as { audit: AuditClient }).audit = {
         log: (entry) => write(ctx, entry),
         query: (q = {}) => store.query(q, ctx.env),
@@ -161,14 +200,21 @@ export function audit(opts: AuditOptions) {
         }
         // The attempted email helps spot brute force; the password is never read.
         const email = (ctx.body as { email?: unknown } | undefined)?.email;
-        if (!ok && typeof email === "string") metadata.email = email.trim().toLowerCase().slice(0, 254);
+        if (!ok && typeof email === "string") {
+          if (!opts.redactFailedLoginEmail) metadata.email = email.trim().toLowerCase().slice(0, 254);
+          else {
+            // Healthcare/PII mode: a keyed hash still links repeated attempts on one account.
+            const salt = emailSalt(ctx.env);
+            if (salt) metadata.emailHash = await hashAuditEmail(email.slice(0, 1000), salt);
+          }
+        }
         await write(ctx, { action, resource: "auth", resourceId: ctx.user?.id ?? null, metadata });
       } catch (err) {
         ctx.log.error("audit: could not record auth event", { err, action });
       }
     },
     inspect() {
-      return { store: store.inspect?.() ?? { store: store.kind }, auth: !!opts.auth, permission, redact: (opts.redact ?? []).map(String), path: opts.routes === false ? null : path };
+      return { store: store.inspect?.() ?? { store: store.kind }, keyed: opts.key !== undefined || storeKeys(store) !== undefined ? true : `from env ${ENV_KEY}`, redactFailedLoginEmail: !!opts.redactFailedLoginEmail, auth: !!opts.auth, permission, redact: (opts.redact ?? []).map(String), path: opts.routes === false ? null : path };
     },
     cloudflare(): CloudflareNeeds {
       return store.cloudflare?.() ?? {};

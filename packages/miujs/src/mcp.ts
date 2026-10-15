@@ -4,7 +4,7 @@
 // so auth, validation and plugins behave exactly as they do for HTTP clients.
 
 import type { Context } from "./context.ts";
-import { errors } from "./errors.ts";
+import { errors, isMiuError } from "./errors.ts";
 import { objectProps, type DescribedRoute } from "./openapi.ts";
 import type { McpTool } from "./plugin.ts";
 import { pathParams } from "./router.ts";
@@ -251,7 +251,8 @@ export function createMcpHandler(host: McpHost, opts: McpOptions) {
             const text = typeof out === "string" ? out : JSON.stringify(out);
             return rpcResult(msg.id, { content: [{ type: "text", text }], isError: false, ...(isPlainObject(out) ? { structuredContent: out } : {}) });
           } catch (err) {
-            return rpcResult(msg.id, { content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }], isError: true });
+            const text = isMiuError(err) ? JSON.stringify(err.toJSON()) : err instanceof Error ? err.message : String(err);
+            return rpcResult(msg.id, { content: [{ type: "text", text }], isError: true });
           }
         }
         return rpcError(msg.id, -32602, `Unknown tool: ${name}. Call tools/list to see available tools.`);

@@ -1,5 +1,5 @@
 export { App, isDevDefault, miu, type AppTool, type CallFn, type CallInput, type MiuOptions, type RouteSource, type RouteTest, type TestResponse } from "./app.ts";
-export type { AuthUser, Context, Env, PlatformInfo, RouteInfo } from "./context.ts";
+export type { AuthUser, Context, Env, PlatformInfo, RouteInfo, Services } from "./context.ts";
 export type { CookieOptions, Cookies } from "./cookies.ts";
 export { DOCS_BASE, MiuError, errors, isMiuError, type MiuErrorInit } from "./errors.ts";
 export { createLogger, type LogLevel, type Logger } from "./logger.ts";

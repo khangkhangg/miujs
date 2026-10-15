@@ -1,4 +1,4 @@
-import { RequestContext, pathOf, type Context, type PlatformInfo, type RouteInfo } from "./context.ts";
+import { RequestContext, pathOf, type Context, type PlatformInfo, type RouteInfo, type Services } from "./context.ts";
 import { MiuError, errors, isMiuError } from "./errors.ts";
 import { createLogger, type LogLevel, type Logger } from "./logger.ts";
 import { createMcpHandler, buildRouteTool, routeToolRequest, type McpOptions } from "./mcp.ts";
@@ -218,6 +218,7 @@ export class App {
   private responseHooks: NonNullable<Plugin["onResponse"]>[] = [];
   private errorHooks: NonNullable<Plugin["onError"]>[] = [];
   private background = new Set<Promise<unknown>>();
+  private services = new Map<string, unknown>();
   private maxBodySize: number;
   private workers: { queue: WorkersHandler[]; scheduled: WorkersHandler[] } = { queue: [], scheduled: [] };
   private staticEnv: Record<string, unknown>;
@@ -698,6 +699,31 @@ export class App {
         };
         return { name: rt.tool.name, title: rt.tool.title, description: rt.tool.description, inputSchema: rt.tool.inputSchema, outputSchema: rt.tool.outputSchema, annotations: rt.tool.annotations, route: r.name, call };
       });
+  }
+
+  /** Register a shared service (call from a plugin's `setup`). Each name can be provided once. */
+  provide<K extends keyof Services & string>(name: K, value: Services[K]): this;
+  provide(name: string, value: unknown): this;
+  provide(name: string, value: unknown): this {
+    if (this.services.has(name)) {
+      throw errors.config("MIU_E_SERVICE_DUPLICATE", `Service "${name}" is provided twice`, "Only one plugin may provide each service. Remove the duplicate plugin or rename one service.");
+    }
+    this.services.set(name, value);
+    return this;
+  }
+
+  /** A service a plugin provided. Works in jobs, workflows and scripts, not only requests. */
+  service<K extends keyof Services & string>(name: K): Services[K];
+  service<T = unknown>(name: string): T;
+  service(name: string): unknown {
+    if (!this.services.has(name)) {
+      throw errors.config("MIU_E_SERVICE_MISSING", `No plugin provides the "${name}" service`, `Add the plugin that provides "${name}" to miu({ plugins }), and call app.service() after \`await app.ready()\`.`);
+    }
+    return this.services.get(name);
+  }
+
+  hasService(name: string): boolean {
+    return this.services.has(name);
   }
 
   /**

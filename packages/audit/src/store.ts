@@ -1,14 +1,21 @@
-// Audit stores (memory, SQL) with a SHA-256 hash chain, chain verification and retention.
+// Audit stores (memory, SQL) with a hash chain (HMAC-SHA256 when keyed, plain SHA-256 otherwise),
+// chain verification and retention.
 
 import { errors, type CloudflareNeeds, type Env } from "miujs";
 import { describeDatabase, migrateOnce, resolveDatabase, type Database, type DatabaseSource, type Migration } from "@miujs/db";
 import { canonicalJson, toCanonical, type Changes } from "./diff.ts";
+import { checkKeys, envKeys, hmacHex, resolveKeys, safeEqual, type AuditKeys, type ResolvedKey } from "./keys.ts";
+import { anchorSignature, parseAnchor, type Anchor } from "./anchor.ts";
 
 /** `prevHash` of the first row ever written. */
 export const GENESIS_HASH = "0".repeat(64);
 export const CHECKPOINT_ACTION = "audit.checkpoint";
 
-/** One audit row. `hash = sha256(prevHash + canonicalJson(row without prevHash/hash))`. */
+/**
+ * One audit row. Unkeyed: `hash = sha256(prevHash + canonicalJson(body))`. Keyed:
+ * `hash = hmacSha256(key, "miujs-audit-v2\n" + keyId + "\n" + prevHash + canonicalJson(body))`,
+ * where body is the row without prevHash/hash/keyId.
+ */
 export interface AuditRecord {
   seq: number;
   /** Epoch milliseconds. */
@@ -27,9 +34,16 @@ export interface AuditRecord {
   metadata: Record<string, unknown> | null;
   prevHash: string;
   hash: string;
+  /** Id of the HMAC key that signed this row. Absent on unkeyed (plain SHA-256) rows. */
+  keyId?: string;
 }
 
-export type AuditInput = Omit<AuditRecord, "seq" | "prevHash" | "hash" | "resourceId" | "actor" | "org" | "ip" | "userAgent" | "requestId" | "changes" | "metadata"> &
+export interface AppendOptions {
+  /** Signing key(s) for this append; overrides the store's `key` and `AUDIT_HMAC_KEY`. */
+  key?: AuditKeys;
+}
+
+export type AuditInput = Omit<AuditRecord, "seq" | "prevHash" | "hash" | "keyId" | "resourceId" | "actor" | "org" | "ip" | "userAgent" | "requestId" | "changes" | "metadata"> &
   Partial<Pick<AuditRecord, "actor" | "org" | "ip" | "userAgent" | "requestId" | "changes" | "metadata">> & { resourceId?: string | number | null };
 
 export interface AuditQuery {
@@ -55,8 +69,11 @@ export interface AuditPage {
 
 export interface AuditStore {
   readonly kind: string;
-  /** Appends one row to the chain. Rows are never updated. */
-  append(input: AuditInput, env?: Env): Promise<AuditRecord>;
+  /**
+   * Appends one row to the chain. Rows are never updated. Signs with `opts.key`, else the store's
+   * `key`, else `env.AUDIT_HMAC_KEY`; unkeyed (plain SHA-256) when none is set.
+   */
+  append(input: AuditInput, env?: Env, opts?: AppendOptions): Promise<AuditRecord>;
   query(q: AuditQuery, env?: Env): Promise<AuditPage>;
   /** Rows with `seq > afterSeq`, oldest first (for verification). */
   scan(afterSeq: number, limit: number, env?: Env): Promise<AuditRecord[]>;
@@ -101,7 +118,7 @@ async function sha256Hex(s: string): Promise<string> {
   return out;
 }
 
-type Body = Omit<AuditRecord, "prevHash" | "hash">;
+type Body = Omit<AuditRecord, "prevHash" | "hash" | "keyId">;
 
 /** The hashed part of a row, in a fixed shape. */
 function bodyOf(r: AuditRecord | Body): Body {
@@ -121,9 +138,27 @@ function bodyOf(r: AuditRecord | Body): Body {
   };
 }
 
-export function hashRow(prevHash: string, row: AuditRecord | Body): Promise<string> {
+/** Plain (unkeyed) row hash, or the HMAC of a keyed row when `key` is given. */
+export function hashRow(prevHash: string, row: AuditRecord | Body, key?: ResolvedKey): Promise<string> {
+  if (key) return hmacHex(key.key, `miujs-audit-v2\n${key.id}\n${prevHash}${canonicalJson(bodyOf(row))}`);
   return sha256Hex(prevHash + canonicalJson(bodyOf(row)));
 }
+
+/** Stores remember their configured key here (not enumerable, never serialized). */
+export const STORE_KEYS: unique symbol = Symbol.for("miujs.audit.keys");
+
+/** The keys a store was created with, if any. */
+export function storeKeys(store: AuditStore): AuditKeys | undefined {
+  return (store as unknown as { [STORE_KEYS]?: AuditKeys })[STORE_KEYS];
+}
+
+const keyMissing = () =>
+  errors.custom({
+    code: "MIU_E_AUDIT_KEY_MISSING",
+    status: 500,
+    message: "The audit chain is HMAC-signed but no key is configured for this append",
+    fix: "Set AUDIT_HMAC_KEY (or audit({ key }) / dbAuditStore(db, { key })) to the key used so far; appending unkeyed rows would downgrade the chain.",
+  });
 
 const invalidEntry = (why: string) =>
   errors.custom({
@@ -195,15 +230,20 @@ function normalizeQuery(q: AuditQuery): NormalizedQuery {
   };
 }
 
-function chained(backend: Backend): AuditStore {
+function chained(backend: Backend, storeKey?: AuditKeys): AuditStore {
+  if (storeKey !== undefined) checkKeys(storeKey);
   let tail: Promise<unknown> = Promise.resolve();
-  const appendOnce = async (input: AuditInput, env: Env): Promise<AuditRecord> => {
+  const appendOnce = async (input: AuditInput, env: Env, opts: AppendOptions): Promise<AuditRecord> => {
     const base = normalizeInput(input);
+    const keys = opts.key ?? storeKey ?? envKeys(env);
+    const signer = keys ? (await resolveKeys(keys))[0] : undefined;
     for (let attempt = 0; attempt < 25; attempt++) {
       const head = await backend.head(env);
+      if (head?.keyId && !signer) throw keyMissing();
       const body: Body = { seq: (head?.seq ?? 0) + 1, ...base };
       const prevHash = head?.hash ?? GENESIS_HASH;
-      const rec: AuditRecord = { ...body, prevHash, hash: await hashRow(prevHash, body) };
+      const rec: AuditRecord = { ...body, prevHash, hash: await hashRow(prevHash, body, signer) };
+      if (signer) rec.keyId = signer.id;
       if (await backend.insert(rec, env)) return structuredClone(rec);
     }
     throw errors.custom({
@@ -213,11 +253,11 @@ function chained(backend: Backend): AuditStore {
       fix: "Retry the request. If this persists, check for a stuck writer or reduce write concurrency.",
     });
   };
-  return {
+  const store: AuditStore = {
     kind: backend.kind,
-    append(input, env = {}) {
+    append(input, env = {}, opts = {}) {
       // Serialize appends in this isolate; across isolates the unique seq makes losers retry.
-      const p = tail.then(() => appendOnce(input, env));
+      const p = tail.then(() => appendOnce(input, env, opts));
       tail = p.catch(() => {});
       return p;
     },
@@ -234,6 +274,13 @@ function chained(backend: Backend): AuditStore {
     inspect: backend.inspect,
     cloudflare: backend.cloudflare,
   };
+  if (storeKey !== undefined) Object.defineProperty(store, STORE_KEYS, { value: storeKey, enumerable: false });
+  return store;
+}
+
+export interface AuditStoreOptions {
+  /** HMAC key(s) for the chain; the first signs, all verify. Default: `env.AUDIT_HMAC_KEY`. */
+  key?: AuditKeys;
 }
 
 function matches(r: AuditRecord, q: NormalizedQuery): boolean {
@@ -249,7 +296,7 @@ function matches(r: AuditRecord, q: NormalizedQuery): boolean {
 }
 
 /** In-process audit log. For dev and tests; lost on restart. */
-export function memoryAuditStore(): AuditStore {
+export function memoryAuditStore(opts: AuditStoreOptions = {}): AuditStore {
   const rows: AuditRecord[] = [];
   const clone = (r: AuditRecord) => structuredClone(r);
   return chained({
@@ -282,10 +329,10 @@ export function memoryAuditStore(): AuditStore {
       return n;
     },
     inspect: () => ({ store: "memory", rows: rows.length }),
-  });
+  }, opts.key);
 }
 
-export interface DbAuditStoreOptions {
+export interface DbAuditStoreOptions extends AuditStoreOptions {
   /** Default `audit_log`. */
   table?: string;
 }
@@ -317,6 +364,13 @@ function migrationsFor(table: string): Migration[] {
         CREATE INDEX IF NOT EXISTS ${table}_ts ON ${table} (ts);
       `,
     },
+    // HMAC key id (null on unkeyed rows). Added in its own migration so existing tables upgrade.
+    { id: `audit_002_${table}_key_id`, sql: `ALTER TABLE ${table} ADD COLUMN key_id TEXT` },
+    // Append-only: reject UPDATEs. IF NOT EXISTS keeps tables that got the trigger before this migration existed.
+    {
+      id: `audit_003_${table}_no_update`,
+      sql: `CREATE TRIGGER IF NOT EXISTS ${table}_no_update BEFORE UPDATE ON ${table} BEGIN SELECT RAISE(ABORT, '${table} is append-only'); END;`,
+    },
   ];
 }
 
@@ -335,6 +389,7 @@ const fromRow = (r: any): AuditRecord => ({
   metadata: r.metadata == null ? null : JSON.parse(r.metadata),
   prevHash: r.prev_hash,
   hash: r.hash,
+  ...(r.key_id == null ? {} : { keyId: String(r.key_id) }),
 });
 
 const isConflict = (err: unknown) => /unique|primary key|constraint/i.test(String((err as Error)?.message ?? err));
@@ -354,18 +409,14 @@ export function dbAuditStore(source: DatabaseSource, opts: DbAuditStoreOptions =
     const database = resolveDatabase(source, env);
     let p = ready.get(database);
     if (!p) {
-      p = (async () => {
-        await migrateOnce(database, migrations);
-        // Run alone: migration splitting would cut the trigger body at its `;`.
-        await database.prepare(`CREATE TRIGGER IF NOT EXISTS ${table}_no_update BEFORE UPDATE ON ${table} BEGIN SELECT RAISE(ABORT, '${table} is append-only'); END`).run();
-      })();
+      p = migrateOnce(database, migrations).then(() => {});
       p.catch(() => ready.delete(database));
       ready.set(database, p);
     }
     await p;
     return database;
   };
-  const cols = "seq, ts, action, resource, resource_id, actor, org_id, ip, user_agent, request_id, changes, metadata, prev_hash, hash";
+  const cols = "seq, ts, action, resource, resource_id, actor, org_id, ip, user_agent, request_id, changes, metadata, prev_hash, hash, key_id";
 
   return chained({
     kind: "db",
@@ -377,7 +428,7 @@ export function dbAuditStore(source: DatabaseSource, opts: DbAuditStoreOptions =
       const database = await get(env);
       try {
         await database
-          .prepare(`INSERT INTO ${table} (${cols}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .prepare(`INSERT INTO ${table} (${cols}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .bind(
             rec.seq,
             rec.ts,
@@ -393,6 +444,7 @@ export function dbAuditStore(source: DatabaseSource, opts: DbAuditStoreOptions =
             rec.metadata === null ? null : canonicalJson(rec.metadata),
             rec.prevHash,
             rec.hash,
+            rec.keyId ?? null,
           )
           .run();
         return true;
@@ -432,12 +484,12 @@ export function dbAuditStore(source: DatabaseSource, opts: DbAuditStoreOptions =
       const r = await (await get(env)).prepare(`DELETE FROM ${table} WHERE seq <= ?`).bind(seq).run();
       return r.meta.changes;
     },
-    inspect: () => ({ store: "db", table, database: describeDatabase(source) }),
+    inspect: () => ({ store: "db", table, database: describeDatabase(source), keyed: opts.key !== undefined }),
     cloudflare(): CloudflareNeeds {
       const d = describeDatabase(source);
       return d.adapter === "d1" && typeof d.binding === "string" ? { d1: [d.binding] } : {};
     },
-  });
+  }, opts.key);
 }
 
 export interface VerifyResult {
@@ -446,51 +498,100 @@ export interface VerifyResult {
   checked: number;
   /** Seq of the first row that fails. */
   brokenAt?: number;
+  /** Why it failed, for humans. */
+  reason?: string;
 }
 
 export interface VerifyOptions {
   env?: Env;
+  /**
+   * HMAC key(s) to verify keyed rows. Default: the store's `key`, then `env.AUDIT_HMAC_KEY`. With
+   * keys, unkeyed rows are rejected (an attacker could recompute plain hashes) unless they are part
+   * of the legacy prefix allowed by `unkeyedThrough`.
+   */
+  keys?: AuditKeys;
+  /** Seq of the last row written before keying was turned on. Rows up to it may be unkeyed. */
+  unkeyedThrough?: number;
   /** A head saved earlier (from `chainHead`), e.g. in another system. Detects deleted tail rows. */
   head?: { seq: number; hash: string };
+  /**
+   * Anchors from `anchorHead` (objects or JSON strings), read back from the external sink. Detects
+   * tail truncation and rewritten rows. Signed anchors are checked against `keys`; with keys,
+   * unsigned anchors are refused.
+   */
+  anchors?: (Anchor | string)[];
   pageSize?: number;
 }
 
 /**
  * Re-computes every hash and link. Detects edited rows, deleted or reordered rows, and a deleted
  * prefix without a matching checkpoint. A deleted tail is only detectable against a saved `head`.
+ * Keyed rows can only be re-computed with the key, so DB access alone cannot forge them.
  */
 export async function verifyChain(store: AuditStore, opts: VerifyOptions = {}): Promise<VerifyResult> {
   const env = opts.env ?? {};
   const pageSize = opts.pageSize ?? 500;
-  const anchors = new Map<number, string>();
+  const keySpec = opts.keys ?? storeKeys(store) ?? envKeys(env);
+  const keyring = new Map<string, ResolvedKey>();
+  if (keySpec) for (const k of await resolveKeys(keySpec)) keyring.set(k.id, k);
+  const checkpoints = new Map<number, string>();
   let first: AuditRecord | null = null;
   let prev: AuditRecord | null = null;
   let checked = 0;
   let after = 0;
-  const broken = (seq: number): VerifyResult => ({ ok: false, checked, brokenAt: seq });
+  const broken = (seq: number, reason: string): VerifyResult => ({ ok: false, checked, brokenAt: seq, reason });
+  // seq -> hash every source outside the database agrees on.
+  const expected = new Map<number, string>();
+  if (opts.head) expected.set(opts.head.seq, opts.head.hash);
+  for (const raw of opts.anchors ?? []) {
+    const a = parseAnchor(raw);
+    if (a.signature === null) {
+      if (keyring.size) return broken(a.seq, "unsigned anchor in a keyed chain: anyone with access to the sink could have written it");
+    } else {
+      const k = keyring.get(a.keyId!);
+      if (!k) return broken(a.seq, `the anchor is signed with ` + (keyring.size ? `unknown key id ${JSON.stringify(a.keyId)}` : "a key: pass keys to verify it"));
+      if (!safeEqual(await anchorSignature(k, a), a.signature)) return broken(a.seq, "the anchor signature is invalid (forged or edited anchor)");
+    }
+    const prior = expected.get(a.seq);
+    if (prior !== undefined && prior !== a.hash) return broken(a.seq, "two anchors disagree about this row");
+    expected.set(a.seq, a.hash);
+  }
   for (;;) {
     const rows = await store.scan(after, pageSize, env);
     if (!rows.length) break;
     for (const row of rows) {
       if (!prev) {
         first = row;
-        if (row.seq === 1 && row.prevHash !== GENESIS_HASH) return broken(row.seq);
+        if (row.seq === 1 && row.prevHash !== GENESIS_HASH) return broken(row.seq, "the first row does not start from the genesis hash");
       } else if (row.seq !== prev.seq + 1 || row.prevHash !== prev.hash) {
-        return broken(row.seq);
+        return broken(row.seq, "the row does not link to the previous row (deleted, inserted or reordered rows)");
       }
-      if ((await hashRow(row.prevHash, row)) !== row.hash) return broken(row.seq);
-      if (opts.head && row.seq === opts.head.seq && row.hash !== opts.head.hash) return broken(row.seq);
+      let key: ResolvedKey | undefined;
+      if (row.keyId !== undefined) {
+        if (!keyring.size) return broken(row.seq, "the row is HMAC-signed: pass the key(s) in verifyChain(store, { keys }) or set AUDIT_HMAC_KEY");
+        key = keyring.get(row.keyId);
+        if (!key) return broken(row.seq, `the row is signed with unknown key id ${JSON.stringify(row.keyId)}`);
+      } else if (keyring.size && !(opts.unkeyedThrough !== undefined && row.seq <= opts.unkeyedThrough)) {
+        return broken(row.seq, "unkeyed row in a keyed chain (possible downgrade); pass unkeyedThrough if it predates keying");
+      }
+      if (!safeEqual(await hashRow(row.prevHash, row, key), row.hash)) return broken(row.seq, "the row's contents do not match its hash");
+      const want = expected.get(row.seq);
+      if (want !== undefined && want !== row.hash) return broken(row.seq, "the row differs from its external anchor (rewritten chain)");
       if (row.action === CHECKPOINT_ACTION && row.resource === "audit" && row.metadata) {
         const { purgedThroughSeq, anchorHash } = row.metadata as { purgedThroughSeq?: unknown; anchorHash?: unknown };
-        if (typeof purgedThroughSeq === "number" && typeof anchorHash === "string") anchors.set(purgedThroughSeq, anchorHash);
+        if (typeof purgedThroughSeq === "number" && typeof anchorHash === "string") checkpoints.set(purgedThroughSeq, anchorHash);
       }
       prev = row;
       checked++;
     }
     after = rows[rows.length - 1].seq;
   }
-  if (first && first.seq !== 1 && anchors.get(first.seq - 1) !== first.prevHash) return { ok: false, checked, brokenAt: first.seq };
-  if (opts.head && (!prev || prev.seq < opts.head.seq)) return { ok: false, checked, brokenAt: prev ? prev.seq + 1 : opts.head.seq };
+  if (first && first.seq !== 1 && checkpoints.get(first.seq - 1) !== first.prevHash) return broken(first.seq, "rows before this one were deleted without a matching checkpoint");
+  for (const [seq, hash] of expected) {
+    if (!prev || seq > prev.seq) return broken(prev ? prev.seq + 1 : 1, "rows were deleted from the end (truncated: the chain is shorter than an anchor)");
+    // Anchors from before a purge can only be checked against the checkpoint that recorded it.
+    if (first && seq < first.seq && checkpoints.has(seq) && checkpoints.get(seq) !== hash) return broken(seq, "the purge checkpoint differs from the external anchor");
+  }
   return { ok: true, checked };
 }
 
@@ -510,7 +611,7 @@ const DAY = 86_400_000;
  * app.on("scheduled", () => purgeOlderThan(store, 365 * 6))
  * ```
  */
-export async function purgeOlderThan(store: AuditStore, days: number, opts: { env?: Env; now?: number } = {}): Promise<{ purged: number; checkpoint?: number }> {
+export async function purgeOlderThan(store: AuditStore, days: number, opts: { env?: Env; now?: number; keys?: AuditKeys; unkeyedThrough?: number } = {}): Promise<{ purged: number; checkpoint?: number }> {
   if (typeof days !== "number" || !Number.isFinite(days) || days < 0) {
     throw errors.config("MIU_E_AUDIT_RETENTION_INVALID", `Invalid retention: ${days} days`, "Pass a finite number of days ≥ 0, e.g. purgeOlderThan(store, 365 * 6).");
   }
@@ -523,7 +624,7 @@ export async function purgeOlderThan(store: AuditStore, days: number, opts: { en
   const fresh = await store.firstSeqSince(cutoff, env);
   const through = fresh === null ? head.seq : fresh - 1;
   if (!oldest || through < oldest.seq) return { purged: 0 };
-  const check = await verifyChain(store, { env });
+  const check = await verifyChain(store, { env, keys: opts.keys, unkeyedThrough: opts.unkeyedThrough });
   if (!check.ok) {
     throw errors.custom({
       code: "MIU_E_AUDIT_CHAIN_BROKEN",
@@ -543,6 +644,7 @@ export async function purgeOlderThan(store: AuditStore, days: number, opts: { en
       metadata: { purgedThroughSeq: through, anchorHash: anchor.hash, purgedCount: through - oldest.seq + 1, purgedBefore: cutoff },
     },
     env,
+    opts.keys === undefined ? {} : { key: opts.keys },
   );
   const purged = await store.deleteThrough(through, env);
   return { purged, checkpoint: cp.seq };
