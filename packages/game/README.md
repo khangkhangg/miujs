@@ -112,7 +112,9 @@ match rooms, consider `rooms({ emptyMs: 5_000 })`.
 
 The matchmaker or lobbies plugin receives the report together with `room.env`. On Workers that is the rooms Durable Object's env, so a `d1("DB")` database is reached directly. `gameRoom(type, def, { report: resultReporter(url) })` (a signed HTTP call) remains an option. Leaderboard submits from a room take the env the same way: `board.submit(userId, 1, { env: room.env })`.
 
-Clients: `findMatch()` and `connectMatch()` from `@miujs/game/client` do all of this. See also
+Clients: `findMatch()` and `connectMatch()` from `@miujs/game/client` do all of this. When
+`findMatch()` gives up (`timeoutMs`, default 120 s) it leaves the queue before throwing
+`MIU_E_GAME_MATCH_TIMEOUT`, so the server never matches a player who has gone. See also
 `clients/unity` and `clients/godot`.
 
 ## Lobbies: `lobbies({ rooms, room, minPlayers, maxPlayers, teams })`

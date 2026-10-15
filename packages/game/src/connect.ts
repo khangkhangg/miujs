@@ -50,7 +50,11 @@ export async function findMatch(baseUrl: string, queue: string, o: FindMatchOpti
   let status = body.status;
   const deadline = Date.now() + (o.timeoutMs ?? 120_000);
   while (status.state === "queued" || status.state === "matching") {
-    if (Date.now() > deadline) throw Object.assign(new Error("No match found in time"), { code: "MIU_E_GAME_MATCH_TIMEOUT" });
+    if (Date.now() > deadline) {
+      // Leave the queue (best effort) so the server does not match a player who has gone.
+      await f(`${base}/match/${encodeURIComponent(queue)}/leave`, { method: "DELETE", headers, credentials: "include" }).then((r) => r.body?.cancel(), () => {});
+      throw Object.assign(new Error("No match found in time"), { code: "MIU_E_GAME_MATCH_TIMEOUT" });
+    }
     const started = Date.now();
     const r = await f(`${base}/match/${encodeURIComponent(queue)}/status?wait=${o.waitMs ?? 20_000}`, { headers, credentials: "include" });
     body = await r.json();

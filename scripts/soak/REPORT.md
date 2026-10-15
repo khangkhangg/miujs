@@ -28,7 +28,7 @@ Code under test: branch `feat/mvp-core`.
 | Long-poll ignores client disconnect | `@miujs/game` | **Fixed** in `6ddb1ae`: the wait ends when the request is aborted (`ctx.req.signal`). **Verified.** | Requests in flight 2 s after the client vanished: 1 → **0**. |
 | Shutdown hang with open room timers | `miujs` / `@miujs/realtime` | **Fixed** in `3d837b1` (`app.stop()` and the plugin `stop()` hook). | Still passes: 12–46 ms after load on every re-soaked app and runtime. |
 | Expired join codes, sessions and limiter windows not swept | `@miujs/realtime`, `@miujs/session`, `@miujs/auth` | **Fixed** by other agents during this work. | – |
-| F7 (new, minor): `findMatch` does not leave the queue when it gives up | `@miujs/game` client | Open. See F7. | – |
+| F7 (new, minor): `findMatch` does not leave the queue when it gives up | `@miujs/game` client | **Fixed**: `findMatch` calls `DELETE /match/:queue/leave` (best effort) before throwing `MIU_E_GAME_MATCH_TIMEOUT`. See F7. | – |
 
 ## How it works
 
@@ -401,7 +401,7 @@ Over real HTTP (core soak, 5% `POST /echo`) the rate is unchanged on every runti
 - **`@miujs/realtime` `MemoryCodeStore`:** expired join codes were deleted only when someone looked them up again, so every `createRoom` kept a 6-hour code forever. The store now sweeps expired codes.
 - **`@miujs/session` `memorySessionStore` and `@miujs/auth` `memoryRateLimiter`:** expired entries are now swept. The api and crm examples use cookie sessions, so the soak did not exercise the session store.
 
-### F7. `@miujs/game` client: `findMatch` gives up without leaving the queue (new, minor; open)
+### F7. `@miujs/game` client: `findMatch` gives up without leaving the queue (new, minor; FIXED)
 
 Found in the arena re-soak. Not a leak, but it can make empty rooms and ghost matches.
 
