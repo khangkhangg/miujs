@@ -214,7 +214,12 @@ export function session(opts: SessionOptions = {}) {
     return list;
   }
 
-  function csrfCheck(ctx: Context): void {
+  /**
+   * With a session cookie, the request must prove it came from this site (Origin or Referer).
+   * Without one (`cookieless`, used for routes tagged "csrf-always" such as login), browsers are
+   * still checked, but clients that send neither header (curl, server-to-server) are allowed.
+   */
+  function csrfCheck(ctx: Context, cookieless = false): void {
     if (!csrf || !UNSAFE.has(ctx.method)) return;
     if (ctx.route?.tags.includes("csrf-exempt")) return;
     const origin = ctx.headers.get("origin");
@@ -227,6 +232,8 @@ export function session(opts: SessionOptions = {}) {
     } else if (referer) {
       const h = hostOf(referer);
       ok = h !== null && (h === host || trusted.has(h) || trusted.has(new URL(referer).origin));
+    } else if (cookieless) {
+      ok = ctx.headers.get("sec-fetch-site") !== "cross-site";
     }
     if (!ok) {
       throw errors.custom({
@@ -266,6 +273,7 @@ export function session(opts: SessionOptions = {}) {
       const secrets = secretsFor(ctx);
       const raw = ctx.cookies.get(cookieName);
       if (raw !== undefined) csrfCheck(ctx);
+      else if (ctx.route?.tags.includes("csrf-always")) csrfCheck(ctx, true);
       const loaded = raw ? await load(ctx, raw, secrets) : null;
       const s = loaded ?? new SessionImpl(undefined, null);
       ctx.state[KEY as unknown as string] = { s, secrets, hadCookie: raw !== undefined, valid: !!loaded };

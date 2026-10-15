@@ -45,6 +45,12 @@ export interface Context {
   /** Parsed URL (created on first access). */
   readonly url: URL;
   readonly headers: Headers;
+  /**
+   * Client IP address when the runtime knows it: Cloudflare's `cf-connecting-ip` on Workers, the
+   * socket address on Bun. `undefined` otherwise (in-process calls, Deno/Node for now). Never read
+   * from client-controlled headers such as X-Forwarded-For.
+   */
+  readonly ip: string | undefined;
   /** Path parameters. Typed and validated when the route has a `params` schema. */
   params: any;
   /** Query parameters. Typed and validated when the route has a `query` schema. */
@@ -73,7 +79,7 @@ export interface Context {
 export interface PlatformInfo {
   runtime: Runtime;
   /** Bun's `Server`, when running on Bun. */
-  bunServer?: { upgrade(req: Request, opts: { data: unknown }): boolean };
+  bunServer?: { upgrade(req: Request, opts: { data: unknown }): boolean; requestIP?(req: Request): { address: string } | null };
   /** Workers' ExecutionContext. */
   executionContext?: { waitUntil(p: Promise<unknown>): void; passThroughOnException?(): void };
 }
@@ -82,10 +88,12 @@ export interface PlatformInfo {
 export function pathOf(url: string): string {
   const start = url.indexOf("/", url.indexOf("//") + 2);
   if (start === -1) return "/";
-  let end = url.indexOf("?", start);
-  const hash = url.indexOf("#", start);
-  if (hash !== -1 && (end === -1 || hash < end)) end = hash;
-  return end === -1 ? url.slice(start) : url.slice(start, end);
+  // One pass to the first `?` or `#`, instead of two `indexOf`s that each scan the query string.
+  for (let i = start; i < url.length; i++) {
+    const c = url.charCodeAt(i);
+    if (c === 63 /* ? */ || c === 35 /* # */) return url.slice(start, i);
+  }
+  return url.slice(start);
 }
 
 export function parseQuery(url: string): Record<string, string | string[]> {
@@ -149,6 +157,11 @@ export class RequestContext {
   }
   get headers(): Headers {
     return this.req.headers;
+  }
+  get ip(): string | undefined {
+    const p = this._platform;
+    if (p.runtime === "workerd") return this.req.headers.get("cf-connecting-ip") ?? undefined;
+    return p.bunServer?.requestIP?.(this.req)?.address;
   }
   get query(): any {
     return (this._query ??= parseQuery(this.req.url));

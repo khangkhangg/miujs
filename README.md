@@ -157,6 +157,25 @@ miu deploy cloudflare           # wrangler.toml from your plugins, then wrangler
 `bun bench/run.ts` compares in-process `fetch()` throughput with Elysia and Hono on the same
 Bun. See [bench/README.md](bench/README.md) for the latest numbers and method.
 
+## Security defaults
+
+- **Sessions:** signed (HMAC-SHA256) `HttpOnly`, `SameSite=Lax` cookies; the id is rotated on login.
+  Unsafe requests that carry the cookie must come from the same origin (or a `trustedOrigins` site).
+- **Login CSRF:** `/auth/login`, `/auth/register` and `/auth/logout` are tagged `csrf-always`.
+  Cross-site browser requests are rejected (403 `MIU_E_CSRF`) even without a cookie. Clients that
+  send no `Origin` (curl, servers) still work.
+- **Brute force:** login is limited to 10 attempts per IP+account, 50 per account and 100 per IP per
+  15 minutes. Register is limited to 10 per IP per hour. Over the limit gives 429 with `Retry-After`.
+  - The client IP is `ctx.ip`: Cloudflare's address on Workers, the socket address on Bun. Behind
+    your own proxy, set `auth({ rateLimit: { trustProxyHeader: "x-real-ip" } })`.
+  - The default limiter keeps counts in memory, which is exact on one server. On Workers each
+    isolate counts separately, so use `cloudflareRateLimiter("BINDING")` and/or Turnstile.
+- **Account enumeration:** login gives the same error and timing for unknown emails and wrong
+  passwords. Register still returns 409 for a taken email. Fully hiding that needs email
+  verification, which MiuJS doesn't have yet. Until then the register limit keeps probing slow.
+- **API tokens:** shown once and stored as SHA-256 hashes. Passwords use argon2id on Bun, otherwise
+  PBKDF2 (600k iterations). Legacy bcrypt and Django hashes are upgraded on the next login.
+
 ## Known limitations (0.1)
 
 - **Cloudflare:** never deployed to a real account. Durable Objects, D1, KV and Queues are tested
@@ -168,7 +187,8 @@ Bun. See [bench/README.md](bench/README.md) for the latest numbers and method.
 - **Speed:** level with Elysia on validated bodies, 20–30% behind on trivial routes
   ([bench](bench/README.md)).
 - Not built yet: JSX responses, Drizzle integration, a SQLite queue adapter, deploy targets
-  other than Cloudflare, and auth rate limiting.
+  other than Cloudflare, email verification, and server-side revocation for cookie-only sessions
+  (use a server session store if logout must invalidate copied cookies).
 
 ## Developing MiuJS
 

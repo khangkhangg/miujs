@@ -4,9 +4,11 @@
 import { definePlugin, errors, route, t, type AuthUser, type CloudflareNeeds, type Context, type Env } from "miujs";
 import { getSession, hex, randomId, sha256, timingSafeEqual, utf8, base64urlEncode, randomBytes } from "@miujs/session";
 import { hashPassword, needsRehash, verifyPassword, type PasswordOptions } from "./password.ts";
+import { RATE_LIMIT_DEFAULTS, memoryRateLimiter, type RateLimitOptions } from "./ratelimit.ts";
 import { memoryUserStore, type StoredUser, type UserStore } from "./store.ts";
 
 export * from "./password.ts";
+export * from "./ratelimit.ts";
 export * from "./store.ts";
 
 export interface TurnstileOptions {
@@ -32,6 +34,12 @@ export interface AuthOptions {
   turnstile?: TurnstileOptions;
   /** Prefix for API tokens, so leaked tokens are easy to scan for. Default `miu_`. */
   tokenPrefix?: string;
+  /**
+   * Brute-force protection for login and register (on by default). Defaults: login 10 per
+   * IP+account, 50 per account, 100 per IP per 15 min; register 10 per IP per hour.
+   * `false` turns it off.
+   */
+  rateLimit?: RateLimitOptions | false;
 }
 
 const MAX_PASSWORD = 1024;
@@ -86,6 +94,33 @@ export function auth(opts: AuthOptions = {}) {
   const minLen = opts.minPasswordLength ?? 8;
   const prefix = opts.tokenPrefix ?? "miu_";
   let dummyHash: Promise<string> | undefined;
+
+  const rl = opts.rateLimit === false ? null : (opts.rateLimit ?? {});
+  const limiter = rl ? (rl.limiter ?? memoryRateLimiter()) : null;
+  const loginLimits = { ...RATE_LIMIT_DEFAULTS.login, ...rl?.login };
+  const registerLimits = { ...RATE_LIMIT_DEFAULTS.register, ...rl?.register };
+
+  function clientIp(ctx: Context): string | undefined {
+    if (rl?.trustProxyHeader) {
+      const v = ctx.headers.get(rl.trustProxyHeader);
+      if (v) return v.split(",")[0].trim();
+    }
+    return ctx.ip;
+  }
+
+  /** Counts one attempt against each rule; returns a 429 Response when any rule is exceeded. */
+  async function limited(ctx: Context, rules: [key: string | null, limit: number][], windowSeconds: number): Promise<Response | null> {
+    if (!limiter) return null;
+    let retryAfter = 0;
+    for (const [key, limit] of rules) {
+      if (key === null) continue;
+      const r = await limiter.hit(key, limit, windowSeconds, ctx.env);
+      if (!r.ok) retryAfter = Math.max(retryAfter, r.retryAfter);
+    }
+    if (!retryAfter) return null;
+    ctx.log.warn("auth rate limit hit", { route: ctx.route?.name, ip: clientIp(ctx) ?? null });
+    return errors.tooManyRequests(retryAfter).toResponse({ "retry-after": String(retryAfter) });
+  }
 
   async function checkTurnstile(ctx: Context, token: string | undefined) {
     if (!opts.turnstile) return;
@@ -142,12 +177,15 @@ export function auth(opts: AuthOptions = {}) {
   const registerRoute = route.post(`${base}/register`, {
     name: "auth_register",
     summary: "Create an account with email and password, and sign in",
-    tags: ["auth"],
+    tags: ["auth", "csrf-always"],
     mcp: false,
     status: 201,
     body: t.object({ ...Credentials, name: t.optional(t.string({ maxLength: 200 })) }),
     response: t.object({ user: UserSchema }),
     handler: async (ctx) => {
+      const ip = clientIp(ctx as unknown as Context);
+      const blocked = await limited(ctx as unknown as Context, [[ip ? `register:ip:${ip}` : null, registerLimits.perIp]], registerLimits.windowSeconds);
+      if (blocked) return blocked;
       await checkTurnstile(ctx as unknown as Context, ctx.body["cf-turnstile-response"]);
       checkPassword(ctx.body.password);
       const passwordHash = await hashPassword(ctx.body.password, pw);
@@ -168,11 +206,23 @@ export function auth(opts: AuthOptions = {}) {
   const loginRoute = route.post(`${base}/login`, {
     name: "auth_login",
     summary: "Sign in with email and password",
-    tags: ["auth"],
+    tags: ["auth", "csrf-always"],
     mcp: false,
     body: t.object(Credentials),
     response: t.object({ user: UserSchema }),
     handler: async (ctx) => {
+      const ip = clientIp(ctx as unknown as Context);
+      const email = ctx.body.email.toLowerCase();
+      const blocked = await limited(
+        ctx as unknown as Context,
+        [
+          [`login:ip-account:${ip ?? "unknown"}:${email}`, loginLimits.perIpAccount],
+          [`login:account:${email}`, loginLimits.perAccount],
+          [ip ? `login:ip:${ip}` : null, loginLimits.perIp],
+        ],
+        loginLimits.windowSeconds,
+      );
+      if (blocked) return blocked;
       await checkTurnstile(ctx as unknown as Context, ctx.body["cf-turnstile-response"]);
       const user = await users.findUserByEmail(ctx.body.email, ctx.env);
       if (!user) {
@@ -193,7 +243,7 @@ export function auth(opts: AuthOptions = {}) {
   const logoutRoute = route.post(`${base}/logout`, {
     name: "auth_logout",
     summary: "Sign out and clear the session",
-    tags: ["auth"],
+    tags: ["auth", "csrf-always"],
     mcp: false,
     handler: (ctx) => {
       requireSession(ctx as unknown as Context).destroy();
@@ -283,6 +333,7 @@ export function auth(opts: AuthOptions = {}) {
         password: { algorithm: pw.algorithm ?? "auto (argon2id on Bun, else pbkdf2)", iterations: pw.iterations },
         register: opts.register !== false,
         turnstile: opts.turnstile ? { enabled: true, secretKey: opts.turnstile.secretKey ? "(set)" : "env.TURNSTILE_SECRET_KEY" } : false,
+        rateLimit: limiter ? { limiter: limiter.kind, login: loginLimits, register: registerLimits, ipFrom: rl?.trustProxyHeader ?? "ctx.ip" } : false,
       };
     },
     cloudflare(): CloudflareNeeds {
