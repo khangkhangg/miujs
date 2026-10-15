@@ -106,6 +106,17 @@ describe("body size limit", () => {
     expect(res.status).toBe(413);
   });
 
+  test("counts UTF-8 bytes, not characters, without Content-Length", async () => {
+    const streamed = (s: string) =>
+      app.fetch(req("/j", { method: "POST", headers: { "content-type": "application/json" }, body: new Blob([JSON.stringify({ s })]).stream(), duplex: "half" } as RequestInit));
+    // 400 three-byte characters: ~410 UTF-16 units but ~1210 bytes, over the 1024-byte limit.
+    expect((await streamed("€".repeat(400))).status).toBe(413);
+    // 300 of them (~910 bytes) fit.
+    const ok = await streamed("€".repeat(300));
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ n: 300 });
+  });
+
   test("applies to form bodies too", async () => {
     const res = await post("/j", `s=${big}`, { "content-type": "application/x-www-form-urlencoded" });
     expect(res.status).toBe(413);

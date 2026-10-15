@@ -139,7 +139,25 @@ async function readTextLimited(req: Request, limit: number): Promise<string> {
     if (Number(declared) > limit) throw tooLarge(limit);
     return req.text();
   }
-  return utf8.decode(await readLimited(req, limit));
+  // Same bound as readLimited (the whole body is read either way), without the extra copy.
+  // A UTF-8 byte is at least one UTF-16 unit and at most three, so most bodies skip the count.
+  const text = await req.text();
+  if (text.length > limit || (text.length * 3 > limit && utf8Length(text) > limit)) throw tooLarge(limit);
+  return text;
+}
+
+function utf8Length(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+      n += 4;
+      i++;
+    } else n += 3;
+  }
+  return n;
 }
 
 async function readLimited(req: Request, limit: number): Promise<Uint8Array> {
