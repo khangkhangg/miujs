@@ -137,6 +137,7 @@ connection. JSON stays the default; the JS SDK opts in with `connect(url, { enco
 | 1009 | `MIU_E_ROOM_MESSAGE_TOO_LARGE`: a frame was over the size limit | no (fix the client) |
 | 4008 | `MIU_E_ROOM_RATE_LIMITED`: kept sending over the rate limit | no (fix the client) |
 | 4001 | Replaced by a newer connection for the same player | no |
+| 4009 | `MIU_E_ROOM_KICKED`: the server removed you (`room.kick`); seat and resume token are gone | no |
 | 4003 | `MIU_E_ROOM_HOST_KEY`: asked for `host` without the right `hostKey` | no |
 | 4004 | `MIU_E_ROOM_CLOSED`: room was closed | no |
 | 4005 | `MIU_E_ROOM_FULL` | no |
@@ -157,6 +158,7 @@ connection. JSON stays the default; the JS SDK opts in with `connect(url, { enco
 | `MIU_E_ROOM_HOST_KEY` | Asked to be host without the right key (connection closed, 4003). |
 | `MIU_E_ROOM_FULL` | `maxPlayers` reached (connection closed, 4005). |
 | `MIU_E_ROOM_CLOSED` | The room was closed (connection closed, 4004). |
+| `MIU_E_ROOM_KICKED` | The room removed you (connection closed, 4009 unless the room chose another code). |
 | `MIU_E_ROOM_UNKNOWN_MESSAGE` | `msg.type` is not one of the room's client messages (`fix` lists them). |
 | `MIU_E_ROOM_MESSAGE_INVALID` | `msg.data` failed validation; `details.issues` and `details.schema` (JSON Schema) say why. |
 | `MIU_E_ROOM_HANDLER_FAILED` | The server handler crashed; state was rolled back. |

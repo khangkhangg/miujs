@@ -31,8 +31,14 @@ export type StepFn<R extends Room = Room> = (ctx: StepContext<R>) => void | bool
 export interface FixedStepOptions<R extends Room = Room> {
   hz: number;
   update: StepFn<R>;
-  /** Most steps one wake-up may run to catch up. Default 5. */
+  /** Most steps one wake-up may run to catch up. Default 5 (raised to `stepsPerAlarm` if lower). */
   maxCatchUp?: number;
+  /**
+   * Run this many steps per alarm (default 1). With N, the room wakes every N steps and runs the N
+   * due steps back to back (each still gets its own fixed `dt` and scheduled `now`): N times
+   * fewer Durable Object alarms, at the cost of up to (N-1) steps of extra latency per update.
+   */
+  stepsPerAlarm?: number;
 }
 
 interface StepData {
@@ -59,12 +65,17 @@ function skipAhead(at: number, now: number, step: number): number {
 function defineStep<R extends Room = Room>(name: string, opts: FixedStepOptions<R>) {
   if (!/^[A-Za-z0-9_.-]{1,64}$/.test(name)) throw gameErrors.roomConfig(`fixedStep.define: bad timer name "${name}"`, 'Use letters, digits, _ . or -, e.g. fixedStep.define("physics", ...).');
   const step = checkHz(opts.hz);
-  const maxCatchUp = opts.maxCatchUp ?? 5;
+  const batch = opts.stepsPerAlarm ?? 1;
+  if (!Number.isInteger(batch) || batch < 1) {
+    throw gameErrors.roomConfig(`fixedStep.define("${name}"): stepsPerAlarm must be a positive integer (got ${batch})`, "e.g. stepsPerAlarm: 4 runs 4 steps per alarm.");
+  }
+  const maxCatchUp = Math.max(opts.maxCatchUp ?? 5, batch);
   const running = new WeakMap<object, string>();
 
+  /** `at` is the next step's time; the alarm fires when the whole batch is due. */
   const arm = (room: Room, tick: number, at: number) => {
     const data: StepData = { tick, at, step };
-    running.set(keyOf(room), room.schedule(name, Math.max(0, at - room.now()), data));
+    running.set(keyOf(room), room.schedule(name, Math.max(0, at + (batch - 1) * step - room.now()), data));
   };
 
   return {

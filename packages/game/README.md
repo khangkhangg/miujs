@@ -77,16 +77,23 @@ ticket, valid for 60 s by default.
 
 `gameRoom` is `defineRoom` with a ticket check.
 
-1. **Before the WebSocket upgrade**, the matchmaker and lobbies plugins check `?ticket=` on
-   `GET /rooms/<game type>/<id>`. The ticket must be signed, unexpired and for this exact room.
-   A pure `?resume=<token>` (no `name`) also passes. On reconnect, `resume + ticket` passes even
-   when the ticket has expired, as long as it is genuine. Anything else gets `401`. Nobody can take
-   a seat, or fill `maxPlayers`, without a ticket.
-2. **In the room**, the client sends `{"t":"msg","type":"ticket","data":{"ticket"}}` after
-   `welcome`. The room checks the ticket again: signature, room, match and roster. It then binds
-   the player to the ticket's user (one live seat per user), runs `onSeat`, and sends the event
-   `seated`. Every other message is refused with `MIU_E_GAME_TICKET_REQUIRED` until then (except
-   types listed in `opts.open`).
+1. **Admission (authoritative)** runs in realtime's `onJoinRequest`, before the player is seated.
+   - A new join must carry the ticket as `?ticket=` or as `params.ticket` in a join frame.
+     `connectMatch` and the engine clients send it.
+   - The ticket must be signed and unexpired, and must name this room (a shard `id:shardN` counts
+     as its base id), this match and a rostered user.
+   - Each user gets one live seat.
+   - Otherwise the join is refused with close 4003 and takes no seat.
+   - A pure resume (`?resume=<token>`) keeps the seat and needs no ticket.
+   - On success, `onSeat` runs and the player gets a `seated` event.
+   - Spectators may join without a ticket when you opt in with `{ spectators: true }`.
+2. **HTTP gate (defense in depth, kept).** The matchmaker and lobbies plugins also check
+   `?ticket=` on `GET /rooms/<game type>/<id>`, before the WebSocket upgrade. They pass a pure
+   `?resume=`, and `resume + ticket` even when the ticket has expired. Anything else gets
+   `401`, before it can wake a Durable Object or open a socket.
+3. The `ticket` client message still exists for clients that join without params. Once a player
+   is seated it is a silent no-op. Game messages from unseated players (spectators) are refused
+   with `MIU_E_GAME_TICKET_REQUIRED`, except the types listed in `opts.open`.
 
 Seats and the roster live in the room's secret state, so they survive Durable Object
 hibernation. Handlers see their own `room.secret` as usual. `seatOf(room, playerId)`,
@@ -95,6 +102,8 @@ hibernation. Handlers see their own `room.secret` as usual. `seatOf(room, player
 `reportResult(room, { winners } | { ranking })` takes player ids or user ids, but only of seated
 or rostered players. It reports once per room and returns the store's summary
 (`ratings[userId].before/after`, `unlocked`).
+
+The matchmaker or lobbies plugin receives the report together with `room.env`. On Workers that is the rooms Durable Object's env, so a `d1("DB")` database is reached directly. `gameRoom(type, def, { report: resultReporter(url) })` (a signed HTTP call) remains an option. Leaderboard submits from a room take the env the same way: `board.submit(userId, 1, { env: room.env })`.
 
 Clients: `findMatch()` and `connectMatch()` from `@miujs/game/client` do all of this. See also
 `clients/unity` and `clients/godot`.
@@ -169,8 +178,10 @@ stored once (`INSERT OR IGNORE`) and emitted once:
   and the step's scheduled `now`. Return `false` to stop.
   **Durable Objects:** tick loops must use this `room.schedule` re-arming form. `room.tick` /
   `room.after` closures, and `fixedStep(room, hz, update)`, are lost when the object hibernates,
-  and throw `MIU_E_GAME_LOOP_NOT_DURABLE` there. Expect a step rate in the tens of Hz, not hundreds,
-  since each step is an alarm.
+  and throw `MIU_E_GAME_LOOP_NOT_DURABLE` there.
+  **Cheaper ticks:** `stepsPerAlarm: N` wakes the room once every N steps and runs the N due steps
+  back to back, each with its own fixed `dt` and scheduled `now`. That is N times fewer alarms, at
+  the cost of up to N-1 steps of extra latency.
 - **Inputs (server):** `acceptInput(state, playerId, seq, input)` buffers inputs, drops stale and
   duplicate seqs, and caps the buffer. `processInputs(state, apply)` applies them in seq order,
   and `ackedSeqs(state)` returns `{ playerId: lastSeq }`. Put the acks in room state. The input
@@ -215,9 +226,10 @@ The queue object persists after every change and runs widening, timeouts and exp
 Notify sockets use the hibernation API, tagged by user. Long-poll `wait` is not supported there:
 status answers at once, and `findMatch` falls back to polling.
 
-**Limitation:** room handlers on Workers have no `env`, so `reportResult(room)` cannot reach D1
-directly. Give the room `gameRoom(type, def, { report: resultReporter("https://your.app/match/_result") })`.
-For leaderboard submits from rooms, call a signed route of your own.
+Rooms get the Durable Object's `env` as `room.env`, so `reportResult(room)` and
+`board.submit(..., { env: room.env })` reach D1 from inside the room. Match rooms are created
+without a join code (`createRoom(type, { code: false })`). To kick a player, use realtime's
+`room.kick(playerId)` (close 4009, no resume).
 
 ## Errors
 

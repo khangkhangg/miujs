@@ -176,3 +176,74 @@ test("client predictor: applies inputs at once, then replays the unacked ones on
   expect(p.reconcile({ x: 5 }, 3)).toEqual({ x: 5 });
   expect(p.pending).toBe(0);
 });
+
+// ---- batched steps (cheaper durable ticks) --------------------------------------------------------
+
+function batchRoom(stepsPerAlarm: number, stopAt?: number) {
+  const seen: { tick: number; now: number }[] = [];
+  const loop = fixedStep.define("batch", {
+    hz: 10,
+    stepsPerAlarm,
+    update: ({ room, tick, now }) => {
+      seen.push({ tick, now });
+      room.state.ticks = tick;
+      if (stopAt !== undefined && tick >= stopAt) return false;
+    },
+  });
+  const type = defineRoom("batchy", { state: t.object({ ticks: t.number() }), init: () => ({ ticks: 0 }), timers: { ...loop.timers } });
+  return { loop, type, seen };
+}
+
+test("stepsPerAlarm batches N steps per alarm: one alarm every N steps, same ticks and step times", async () => {
+  const { loop, type, seen } = batchRoom(5);
+  const clock = new FakeClock(0);
+  const inst = new RoomInstance(type, { id: "r", clock, durable: true });
+  await inst.update((room) => loop.start(room));
+  expect(inst.nextDue()).toBe(500); // first alarm when 5 steps are due
+  clock.advance(499);
+  await inst.runDue();
+  expect(seen).toEqual([]);
+  clock.advance(1);
+  await inst.runDue();
+  expect(seen.map((s) => [s.tick, s.now])).toEqual([[1, 100], [2, 200], [3, 300], [4, 400], [5, 500]]);
+  expect(inst.nextDue()).toBe(1_000);
+  expect(inst.snapshot().timers).toHaveLength(1);
+});
+
+test("batched loops on local rooms: 1 s at 10 Hz in batches of 4 → 2 alarms, 8 steps", async () => {
+  const { loop, type, seen } = batchRoom(4);
+  const clock = new FakeClock(0);
+  const inst = new RoomInstance(type, { id: "r", clock });
+  await inst.update((room) => loop.start(room));
+  clock.advance(1_000);
+  expect(seen.map((s) => s.tick)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  expect(inst.describe().state.ticks).toBe(8);
+  clock.advance(200);
+  expect(seen).toHaveLength(12);
+});
+
+test("a late batched alarm catches up at most max(maxCatchUp, stepsPerAlarm) steps and keeps cadence", async () => {
+  const { loop, type, seen } = batchRoom(3);
+  const clock = new FakeClock(0);
+  const inst = new RoomInstance(type, { id: "r", clock, durable: true });
+  await inst.update((room) => loop.start(room));
+  clock.advance(10_000);
+  await inst.runDue();
+  expect(seen).toHaveLength(5); // default maxCatchUp 5 > 3
+  expect(inst.nextDue()).toBe(10_300); // next batch: steps at 10 100, 10 200, 10 300
+});
+
+test("returning false mid-batch stops the loop at once", async () => {
+  const { loop, type, seen } = batchRoom(5, 2);
+  const clock = new FakeClock(0);
+  const inst = new RoomInstance(type, { id: "r", clock });
+  await inst.update((room) => loop.start(room));
+  clock.advance(2_000);
+  expect(seen.map((s) => s.tick)).toEqual([1, 2]);
+  expect(inst.snapshot().timers).toEqual([]);
+});
+
+test("stepsPerAlarm must be a positive integer", () => {
+  expect(() => fixedStep.define("x", { hz: 10, stepsPerAlarm: 0, update: () => {} })).toThrow(/stepsPerAlarm/);
+  expect(() => fixedStep.define("x", { hz: 10, stepsPerAlarm: 1.5, update: () => {} })).toThrow(/stepsPerAlarm/);
+});

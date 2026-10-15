@@ -72,6 +72,8 @@ export interface RoomInstanceOptions {
   durable?: boolean;
   /** Prepended to resume tokens (shards use `s<n>.` so reconnects find their shard). */
   tokenPrefix?: string;
+  /** `room.env`: Durable Object env on Workers, process env locally. Default {}. */
+  env?: Record<string, unknown>;
 }
 
 export interface RoomInfo {
@@ -273,6 +275,8 @@ export class RoomInstance<S = any, X = any> {
       tick: (hz, fn) => this.tick(hz, fn),
       now: () => this.clock.now(),
       storage,
+      env: opts.env ?? {},
+      kick: (playerId, code, reason) => this.kickPlayer(playerId, code, reason),
       close: (reason) => this.close(reason),
     };
     this.rearm();
@@ -477,6 +481,28 @@ export class RoomInstance<S = any, X = any> {
     for (const c of this.conns.values()) safeClose(c.socket, 1000, reason);
     this.conns.clear();
     this.hooks.onClose?.();
+  }
+
+  /** `room.kick()`: drop the seat for good and close its socket. */
+  private kickPlayer(playerId: string, code = 4009, reason = "kicked"): boolean {
+    const seat = this.seats.get(playerId);
+    if (!seat || this.closed) return false;
+    const sock = seat.socket;
+    if (sock) {
+      this.kicked.add(sock);
+      this.error(sock, { code: "MIU_E_ROOM_KICKED", message: "You were removed from the room", fix: "Join another room; this seat and its resume token are gone." });
+      this.conns.delete(sock.id);
+      this.fresh.delete(sock.id);
+      safeClose(sock, code, reason);
+      seat.socket = null;
+    }
+    seat.player.connected = false;
+    if (seat.graceUntil !== null) {
+      seat.graceUntil = null;
+      this.rearm();
+    }
+    this.removeSeat(seat);
+    return true;
   }
 
   // ---- joining --------------------------------------------------------------------------

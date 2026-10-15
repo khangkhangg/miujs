@@ -56,6 +56,17 @@ export interface Room<S = any, X = any> {
   /** Current time from the room clock (ms since epoch; fake in tests). */
   now(): number;
   readonly storage: RoomStorage;
+  /**
+   * Environment for server code: the Durable Object's `env` (bindings such as D1) on Workers,
+   * the process env locally. Read-only by convention.
+   */
+  readonly env: Record<string, unknown>;
+  /**
+   * Remove a player now: no reconnect grace, resume token revoked, `onLeave` runs. Their socket
+   * (if connected) gets an error frame and closes with `code` (default 4009, terminal for clients).
+   * Returns false if there is no such player.
+   */
+  kick(playerId: string, code?: number, reason?: string): boolean;
   /** Disconnect everyone and dispose the room. */
   close(reason?: string): void;
 }

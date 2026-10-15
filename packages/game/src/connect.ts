@@ -64,17 +64,13 @@ export async function findMatch(baseUrl: string, queue: string, o: FindMatchOpti
 }
 
 /**
- * Connect to a match room and present the ticket after every fresh welcome. `seated` resolves
- * when the room accepts it and rejects if the ticket is refused. Reconnects resume the same seat.
+ * Connect to a match room with the ticket. `seated` resolves when the room seats you and rejects
+ * if the ticket is refused. Reconnects resume the same seat.
  */
 export function connectMatch<S = any>(url: string, ticket: string, opts: ConnectOptions = {}): { room: RoomClient<S>; seated: Promise<SeatInfo> } {
-  // The ticket rides in the URL too: the server checks it before the WebSocket upgrade.
-  const u = new URL(url);
-  u.searchParams.set("ticket", ticket);
-  const room = connect<S>(u.toString(), { ...opts, name: opts.name ?? "player" });
-  room.on("welcome", (w: { resumed?: boolean }) => {
-    if (!w.resumed) room.send("ticket", { ticket });
-  });
+  // The ticket goes in the join params (?ticket=): the room admits and seats the player with it
+  // in onJoinRequest; the plugins also check it before the WebSocket upgrade.
+  const room = connect<S>(url, { ...opts, name: opts.name ?? "player", params: { ...(opts.params ?? {}), ticket } });
   const seated = new Promise<SeatInfo>((resolve, reject) => {
     room.on("seated", (s: SeatInfo) => resolve(s));
     room.on("error", (e: { code: string; message: string }) => {

@@ -20,9 +20,8 @@ The app signs players in with a demo auth plugin: `Authorization: Bearer guest:<
 
 1. `POST /match/duel/join`, then `GET /match/duel/status?wait=20000` until `state: "matched"`.
    The matched status has `room.url` and a `ticket`.
-2. Connect a WebSocket to `room.url?name=…&ticket=…`. After `welcome`, send
-   `{"t":"msg","type":"ticket","data":{"ticket":"…"}}` and wait for the `seated` event.
-   `connectMatch()` from `@miujs/game/client` does both steps.
+2. Connect a WebSocket to `room.url?name=…&ticket=…`. The room admits you with the ticket before
+   seating you, then sends the `seated` event. `connectMatch()` from `@miujs/game/client` does this.
 3. Team 0 plays X and moves first: `{"t":"msg","type":"move","data":{"cell":0}}`.
 4. On a win or draw, the room calls `reportResult()` (Elo ±16 for an even duel) and adds one
    point to `arena-wins`. It broadcasts `game.over` with the rating changes, and sends
@@ -42,8 +41,8 @@ With `mcp: true`, these tools are available at `POST /mcp`:
 The Durable Objects `MiuRooms` (`MIU_ROOMS`) and `MiuMatchmaker` (`MIU_MATCH`) are exported from
 `app.ts`, and the data lives in D1 (`DB`). Set `MIU_GAME_SECRET`.
 
-On Workers, room code has no `env`, so `reportResult` cannot reach D1 from the room. Pass
-`report: resultReporter("https://<host>/match/_result")` to `gameRoom`. See the package README.
+The room reaches D1 through `room.env` (the Durable Object's env), both for `reportResult` and for
+the leaderboard submit.
 
 ## Test
 

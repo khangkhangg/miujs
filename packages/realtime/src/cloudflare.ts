@@ -369,6 +369,7 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
         storage,
         restore: snap,
         durable: true,
+        env: this.env ?? {},
         tokenPrefix: sh ? shardTokenPrefix(sh.shard) : undefined,
         hooks: {
           onChange: () => void this.persist().catch(() => {}),

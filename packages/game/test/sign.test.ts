@@ -59,3 +59,22 @@ test("gameSecret: explicit secrets must be long; without one a per-process dev s
   }
   expect(code).toBe("MIU_E_GAME_SECRET_MISSING");
 });
+
+test("verifyTicketSync (for synchronous onJoinRequest) agrees with the async check", async () => {
+  const { verifyTicketSync } = await import("../src/sign.ts");
+  const ticket = await issueTicket(SECRET, { userId: "u1", name: "Ann", roomType: "arena", roomId: "r1", matchId: "m1", team: 1 }, 0, 1_000);
+  expect(verifyTicketSync(SECRET, ticket, { roomType: "arena", roomId: "r1", now: 10 })).toEqual(await verifyTicket(SECRET, ticket, { roomType: "arena", roomId: "r1", now: 10 }));
+  const code = (f: () => unknown) => {
+    try {
+      f();
+      return "ok";
+    } catch (e: any) {
+      return e.code;
+    }
+  };
+  expect(code(() => verifyTicketSync(SECRET, ticket.slice(0, -2) + "xx", { roomType: "arena", roomId: "r1", now: 10 }))).toBe("MIU_E_GAME_TICKET_INVALID");
+  expect(code(() => verifyTicketSync("other-secret-0123456789abcd", ticket, { roomType: "arena", roomId: "r1", now: 10 }))).toBe("MIU_E_GAME_TICKET_INVALID");
+  expect(code(() => verifyTicketSync(SECRET, ticket, { roomType: "arena", roomId: "r2", now: 10 }))).toBe("MIU_E_GAME_TICKET_INVALID");
+  expect(code(() => verifyTicketSync(SECRET, ticket, { roomType: "arena", roomId: "r1", now: 1_000 }))).toBe("MIU_E_GAME_TICKET_EXPIRED");
+  expect(code(() => verifyTicketSync(SECRET, 42, { roomType: "arena", roomId: "r1", now: 1 }))).toBe("MIU_E_GAME_TICKET_INVALID");
+});

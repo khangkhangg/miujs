@@ -34,9 +34,18 @@ import { storeFor, type GameStore, type Result, type ResultSummary } from "./sto
 
 /** The parts of the `rooms()` plugin the matchmaker uses. */
 export interface RoomsLike {
-  createRoom(type: string, o?: { data?: unknown; env?: Record<string, unknown> }): Promise<{ id: string; code: string }>;
+  createRoom(type: string, o: { data?: unknown; env?: Record<string, unknown>; code: false }): Promise<{ id: string }>;
   registry: { has(type: string): boolean };
+  /** Route prefix of the rooms plugin, e.g. `/rooms`. */
+  path?: string;
   inspect?(): unknown;
+}
+
+/** The rooms plugin's route prefix (its `path`, or parsed from inspect() on older versions). */
+export function roomsPathOf(rooms: RoomsLike): string {
+  if (typeof rooms.path === "string") return rooms.path;
+  const p = (rooms.inspect?.() as { path?: string } | undefined)?.path;
+  return typeof p === "string" ? p.replace(/\/:type\/:id$/, "") : "/rooms";
 }
 
 export interface MatchmakerOptions {
@@ -213,10 +222,7 @@ export function matchmaker(opts: MatchmakerOptions) {
       throw gameErrors.queueConfig(`Queue "${name}" uses room type "${cfg.room}", which the rooms plugin does not host`, `Add it: rooms({ rooms: [${cfg.room}] }), and pass that plugin as matchmaker({ rooms }).`);
     }
   }
-  const roomsPath = (() => {
-    const p = (opts.rooms.inspect?.() as { path?: string } | undefined)?.path;
-    return typeof p === "string" ? p.replace(/\/:type\/:id$/, "") : "/rooms";
-  })();
+  const roomsPath = roomsPathOf(opts.rooms);
   let lastEnv: Env = {};
   let secret: string | null = null;
   const key = () => (secret ??= gameSecret(opts.secret));
@@ -230,7 +236,7 @@ export function matchmaker(opts: MatchmakerOptions) {
       const cfg = opts.queues[spec.queue];
       const info: MatchInfo = { id: spec.id, queue: spec.queue, rated: true, players: spec.players.map(({ userId, name, team }) => ({ userId, name, team })), teams: spec.teams };
       const data: GameRoomData = { match: info };
-      const { id } = await opts.rooms.createRoom(cfg.room, env ? { data, env: env as Record<string, unknown> } : { data });
+      const { id } = await opts.rooms.createRoom(cfg.room, env ? { data, env: env as Record<string, unknown>, code: false } : { data, code: false });
       await store(env).createMatch(spec, cfg.rating, id);
       const room = { type: cfg.room, id, url: `${roomsPath}/${cfg.room}/${id}` };
       const out: Record<string, Assignment> = {};
@@ -263,7 +269,8 @@ export function matchmaker(opts: MatchmakerOptions) {
   async function reportResult(matchId: string, result: Result, env?: Env): Promise<ResultSummary> {
     return store(env).reportResult(matchId, result);
   }
-  for (const cfg of Object.values(opts.queues)) registerResultSink(cfg.room, (m, r) => reportResult(m, r));
+  // Rooms report with their own env (room.env: D1 on Workers), so this works inside a Durable Object.
+  for (const cfg of Object.values(opts.queues)) registerResultSink(cfg.room, (m, r, env) => reportResult(m, r, env));
 
   const queueParam = t.object({ queue: t.string({ maxLength: 64 }) });
   const routes = [

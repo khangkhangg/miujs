@@ -69,7 +69,7 @@ export interface RoomClient<S = any> {
 const RESERVED = new Set(["name", "role", "hostKey", "resume", "enc"]);
 
 /** Close codes after which reconnecting would not help. */
-const TERMINAL = new Set([1000, 1003, 1009, 4001, 4003, 4004, 4005, 4008]);
+const TERMINAL = new Set([1000, 1003, 1009, 4001, 4003, 4004, 4005, 4008, 4009]);
 
 export function connect<S = any>(url: string, opts: ConnectOptions = {}): RoomClient<S> {
   const WS = opts.WebSocket ?? (globalThis as { WebSocket?: new (url: string) => WebSocket }).WebSocket;

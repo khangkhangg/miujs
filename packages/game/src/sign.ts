@@ -4,6 +4,7 @@
 
 import { detectRuntime, processEnv, type Runtime } from "miujs";
 import { gameErrors } from "./errors.ts";
+import { equalBytes, hmacSha256 } from "./sha256.ts";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -55,6 +56,28 @@ export async function verifyToken<T = Record<string, unknown>>(secret: string, k
   if (dot <= 0) throw gameErrors.ticketInvalid("malformed");
   const body = token.slice(0, dot);
   if (!(await hmacVerify(secret, body, token.slice(dot + 1)))) throw gameErrors.ticketInvalid("bad signature");
+  return readPayload<T>(body, kind, now);
+}
+
+/** Synchronous `verifyToken` (pure-JS HMAC), for synchronous hooks such as `onJoinRequest`. */
+export function verifyTokenSync<T = Record<string, unknown>>(secret: string, kind: string, token: unknown, now: number): T {
+  if (typeof token !== "string" || token.length > 4096) throw gameErrors.ticketInvalid("not a token");
+  const dot = token.indexOf(".");
+  if (dot <= 0) throw gameErrors.ticketInvalid("malformed");
+  const body = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  let given: Uint8Array;
+  try {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(sig)) throw 0;
+    given = fromB64url(sig);
+  } catch {
+    throw gameErrors.ticketInvalid("bad signature");
+  }
+  if (!equalBytes(hmacSha256(enc.encode(secret), enc.encode(body)), given)) throw gameErrors.ticketInvalid("bad signature");
+  return readPayload<T>(body, kind, now);
+}
+
+function readPayload<T>(body: string, kind: string, now: number): T {
   let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(dec.decode(fromB64url(body)));
@@ -116,8 +139,25 @@ export async function issueTicket(secret: string, claims: TicketClaims, now: num
 }
 
 /** Verify a ticket for this room. `allowExpired` accepts a genuine but expired ticket (reconnects). */
-export async function verifyTicket(secret: string, token: unknown, where: { roomType: string; roomId: string; now: number; allowExpired?: boolean }): Promise<Ticket> {
-  const p = await verifyToken<{ u: string; n: string; rt: string; r: string; m: string; tm: number; exp: number }>(secret, "ticket", token, where.allowExpired ? -Infinity : where.now);
+export async function verifyTicket(secret: string, token: unknown, where: TicketWhere): Promise<Ticket> {
+  return toTicket(await verifyToken<RawTicket>(secret, "ticket", token, where.allowExpired ? -Infinity : where.now), where);
+}
+
+/** Synchronous `verifyTicket` (used by gameRoom's onJoinRequest). */
+export function verifyTicketSync(secret: string, token: unknown, where: TicketWhere): Ticket {
+  return toTicket(verifyTokenSync<RawTicket>(secret, "ticket", token, where.allowExpired ? -Infinity : where.now), where);
+}
+
+interface TicketWhere {
+  roomType: string;
+  roomId: string;
+  now: number;
+  allowExpired?: boolean;
+}
+
+type RawTicket = { u: string; n: string; rt: string; r: string; m: string; tm: number; exp: number };
+
+function toTicket(p: RawTicket, where: TicketWhere): Ticket {
   if (p.rt !== where.roomType || p.r !== where.roomId) throw gameErrors.ticketInvalid("issued for another room");
   return { userId: p.u, name: p.n, roomType: p.rt, roomId: p.r, matchId: p.m, team: p.tm, exp: p.exp };
 }

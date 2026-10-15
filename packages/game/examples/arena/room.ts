@@ -58,7 +58,7 @@ export const arena = gameRoom("arena", {
       s.winner = won ? me : null;
       // Authoritative result: server side only, once per match.
       const { summary } = await reportResult<ResultSummary>(room, { winners: won ? [me] : [] });
-      if (won) await wins.submit(me, 1);
+      if (won) await wins.submit(me, 1, { env: room.env }); // room.env: D1 on Workers
       room.broadcast("game.over", { winner: s.winner, ratings: summary?.ratings ?? {} });
       for (const u of summary?.unlocked ?? []) {
         const player = room.players.find((p) => seatOf(room, p.id)?.userId === u.playerId);

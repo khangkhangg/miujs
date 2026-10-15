@@ -25,7 +25,7 @@ signal closed(code: int, reason: String, will_reconnect: bool)
 signal reconnecting(attempt: int, delay_sec: float)
 
 ## Close codes after which reconnecting would not help (PROTOCOL.md "Close codes").
-const TERMINAL_CLOSE_CODES: Array[int] = [1000, 1003, 1009, 4001, 4003, 4004, 4005, 4008]
+const TERMINAL_CLOSE_CODES: Array[int] = [1000, 1003, 1009, 4001, 4003, 4004, 4005, 4008, 4009]
 
 var url: String = ""
 var player_name: String = ""

@@ -53,7 +53,7 @@ func render(state) -> void:
 | `event` | Emits `event_received(name, data)`. A `seated` event also emits `seated(seat)`. |
 | `error` | Emits `error_received(code, message, fix)`. |
 | `pong` | Counts `pongs`. A ping goes out every `ping_interval_sec` (default 20). |
-| close 1000/1003/1009/4001/4003/4004/4005/4008 | Emits `closed(code, reason, false)` and stops. |
+| close 1000/1003/1009/4001/4003/4004/4005/4008/4009 | Emits `closed(code, reason, false)` and stops. |
 | any other close / network loss | Emits `closed(…, true)` and `reconnecting(attempt, delay)`, then reconnects with `?resume=<token>` and exponential backoff. |
 
 To resume after a restart, save `resume_token` and pass it as `connect_to_room(url, name, { "resume": token })`.

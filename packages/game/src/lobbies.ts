@@ -24,7 +24,7 @@ import { gameErrors } from "./errors.ts";
 import { ticketGate } from "./gate.ts";
 import { LobbyCore, lobbyId, type LobbyInit, type LobbySnapshot, type LobbyView } from "./lobby.ts";
 import type { MatchSpec, RoomRef } from "./queue.ts";
-import type { RoomsLike } from "./matchmaker.ts";
+import { roomsPathOf, type RoomsLike } from "./matchmaker.ts";
 import { registerResultSink, type GameRoomData } from "./room.ts";
 import { gameSecret, issueTicket } from "./sign.ts";
 import { storeFor } from "./store.ts";
@@ -121,15 +121,12 @@ export function lobbies(opts: LobbiesOptions) {
   if (!(minPlayers >= 1 && maxPlayers >= minPlayers && teams >= 1)) {
     throw gameErrors.roomConfig("lobbies(): need 1 <= minPlayers <= maxPlayers and teams >= 1", "e.g. lobbies({ minPlayers: 2, maxPlayers: 8, teams: 2 }).");
   }
-  const roomsPath = (() => {
-    const p = (opts.rooms.inspect?.() as { path?: string } | undefined)?.path;
-    return typeof p === "string" ? p.replace(/\/:type\/:id$/, "") : "/rooms";
-  })();
+  const roomsPath = roomsPathOf(opts.rooms);
   let lastEnv: Env = {};
   let secret: string | null = null;
   const key = () => (secret ??= gameSecret(opts.secret));
   const store = (env?: Env) => storeFor(source, env ?? lastEnv, { clock, achievements: opts.achievements });
-  registerResultSink(opts.room, (m, r) => store().reportResult(m, r));
+  registerResultSink(opts.room, (m, r, env) => store(env).reportResult(m, r));
 
   const memoryCodes = new MemoryCodeStore(clock);
   const codeStore = (ctx: Context): CodeStore => {
@@ -245,7 +242,7 @@ export function lobbies(opts: LobbiesOptions) {
         try {
           const data: GameRoomData = { match: { id: spec!.id, queue: "lobby", rated: false, players: spec!.players.map(({ userId, name, team }) => ({ userId, name, team })), teams: spec!.teams } };
           const env = ctx.runtime === "workerd" ? (ctx.env as Record<string, unknown>) : undefined;
-          const created = await opts.rooms.createRoom(lobby.roomType, env ? { data, env } : { data });
+          const created = await opts.rooms.createRoom(lobby.roomType, env ? { data, env, code: false } : { data, code: false });
           await store(ctx.env).createMatch(spec!, "none", created.id);
           room = { type: lobby.roomType, id: created.id, url: `${roomsPath}/${lobby.roomType}/${created.id}` };
         } catch (err) {

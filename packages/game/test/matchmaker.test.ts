@@ -245,3 +245,33 @@ test("ticket gate: game-room WebSockets need a valid ?ticket= (or a pure resume)
   expect((await app.request(`${path}?name=a&ticket=${s.ticket}`, ws)).status).toBe(401);
   expect((await app.request(`${path}?name=a&resume=tok&ticket=${s.ticket}`, ws)).status).not.toBe(401);
 });
+
+test("room.env carries the database: a room reports through a d1(\"BINDING\") ref with no request in flight", async () => {
+  const { d1 } = await import("@miujs/db");
+  const { RoomInstance } = await import("@miujs/realtime");
+  const { reportResult } = await import("../src/room.ts");
+  const db = sqlite(":memory:");
+  const clock = new FakeClock(0);
+  const envArena = gameRoom("envarena", { state: t.object({}), init: () => ({}) }, { secret: SECRET });
+  const realtime = rooms({ rooms: [envArena], clock });
+  matchmaker({ rooms: realtime, secret: SECRET, database: d1("GAMEDB"), clock, queues: { q: { room: "envarena", teamSize: 1, rating: "elo", widenAfterMs: 1_000, maxWaitMs: 10_000 } } });
+  const store = new GameStore(db, { clock });
+  const players = [{ userId: "a", name: "A", team: 0 }, { userId: "b", name: "B", team: 1 }];
+  await store.createMatch({ id: "mx", queue: "q", room: "envarena", createdAt: 0, players: players.map((p) => ({ ...p, rating: 1500 })), teams: [["a"], ["b"]] }, "elo");
+  // Like a Durable Object room: its env holds the D1 binding.
+  const inst = new RoomInstance(envArena, { id: "r1", clock, env: { GAMEDB: db }, data: { match: { id: "mx", queue: "q", rated: true, players, teams: [["a"], ["b"]] } } });
+  const r = await reportResult(inst.room, { winners: ["a"] });
+  expect((r.summary as any).ratings.a.after).toBeCloseTo(1516, 6);
+});
+
+test("match rooms are created without a join code", async () => {
+  const { join, realtime } = setup();
+  const calls: any[] = [];
+  const orig = realtime.createRoom;
+  (realtime as any).createRoom = (type: string, o: any) => (calls.push(o), orig(type, o));
+  await join("a");
+  await join("b");
+  await settle();
+  expect(calls).toHaveLength(1);
+  expect(calls[0].code).toBe(false);
+});

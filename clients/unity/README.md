@@ -77,7 +77,7 @@ public class Match : MonoBehaviour
 | `event` | Raises `OnEvent`. A `seated` event also raises `OnSeated`. |
 | `error` | Raises `OnError(code, message, fix)`. |
 | `pong` | Counts `Pongs`. A ping goes out every `PingIntervalMs` (default 20 s). |
-| close 1000/1003/1009/4001/4003/4004/4005/4008 | Stops. These codes are terminal. |
+| close 1000/1003/1009/4001/4003/4004/4005/4008/4009 | Stops. These codes are terminal. |
 | any other close / network loss | Reconnects with exponential backoff (`MinDelayMs` up to `MaxDelayMs`) and `?resume=<token>`. The seat, and with it the ticket binding, is kept. |
 
 To resume after the app restarts, save `ResumeToken` and set it before `ConnectAsync()`. The

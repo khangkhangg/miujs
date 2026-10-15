@@ -14,6 +14,8 @@ export interface LocalRoomsOptions {
   /** How long an empty room lives before it is disposed. Default 30 000 ms. */
   emptyMs?: number;
   onError?: RoomHooks["onError"];
+  /** `room.env` for rooms made here (called per room). Default: {}. */
+  env?: () => Record<string, unknown>;
 }
 
 export class LocalRooms {
@@ -23,6 +25,7 @@ export class LocalRooms {
   private clock: Clock;
   private emptyMs: number;
   private onError?: RoomHooks["onError"];
+  private env?: () => Record<string, unknown>;
   /** Sharded rooms, by `type:id`: creation data and the last published aggregate. */
   private sharded = new Map<string, { data?: unknown; aggregate?: unknown; publishing: boolean }>();
 
@@ -31,6 +34,7 @@ export class LocalRooms {
     this.clock = opts.clock ?? systemClock;
     this.emptyMs = opts.emptyMs ?? 30_000;
     this.onError = opts.onError;
+    this.env = opts.env;
   }
 
   has(type: string): boolean {
@@ -53,6 +57,7 @@ export class LocalRooms {
       clock: this.clock,
       data,
       tokenPrefix: extra.tokenPrefix,
+      env: this.env?.() ?? {},
       hooks: {
         onChange: extra.onChange,
         onEmpty: () => this.scheduleDispose(inst),

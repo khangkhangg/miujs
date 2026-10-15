@@ -1,4 +1,4 @@
-import { definePlugin, errors, route, type CloudflareNeeds, type Context, type McpTool } from "miujs";
+import { definePlugin, errors, processEnv, route, type CloudflareNeeds, type Context, type McpTool } from "miujs";
 import { CLIENT_JS, CLIENT_JS_HASH } from "./client-bundle.ts";
 import { systemClock, type Clock } from "./clock.ts";
 import { CODE_RE, KvCodeStore, MemoryCodeStore, allocateCode, createCode, type CodeStore, type CodeTarget, type KvLike } from "./codes.ts";
@@ -38,6 +38,8 @@ export interface CreateRoomOptions {
    * a route handler you can leave it out.
    */
   env?: Record<string, unknown>;
+  /** `false`: no 6-digit join code (rooms reached by id only, e.g. matchmaker rooms). Default true. */
+  code?: boolean;
 }
 
 export interface DurableObjectNamespaceLike {
@@ -91,15 +93,17 @@ function roomsPlugin(opts: RoomsOptions) {
   const binding = opts.binding ?? "MIU_ROOMS";
   const className = opts.className ?? "MiuRooms";
   const clock = opts.clock ?? systemClock;
-  const registry = new LocalRooms(opts.rooms, { clock, emptyMs: opts.emptyMs });
+  /** Workers env of the latest request (the same object for every request in an isolate). */
+  let workerEnv: Record<string, unknown> | undefined;
+  let localEnv: Record<string, unknown> | undefined;
+  // room.env for in-process rooms: the request env on Workers (no DO binding), else the process env.
+  const registry = new LocalRooms(opts.rooms, { clock, emptyMs: opts.emptyMs, env: () => workerEnv ?? (localEnv ??= processEnv()) });
   const known = opts.rooms.map((r) => r.type);
   const defs = new Map(opts.rooms.map((r) => [r.type, r] as const));
   const codeTtlMs = opts.codeTtlMs ?? 6 * 3_600_000;
   const memoryCodes = new MemoryCodeStore(clock);
   const perMinute = opts.codeLookups?.perMinute ?? 30;
   const lookups = new KeyedLimiter({ perSecond: perMinute / 60, burst: opts.codeLookups?.burst ?? 10 });
-  /** Workers env of the latest request (the same object for every request in an isolate). */
-  let workerEnv: Record<string, unknown> | undefined;
   let warned = false;
 
   const codeStore = (env: Record<string, unknown> | undefined): CodeStore => {
@@ -107,12 +111,14 @@ function roomsPlugin(opts: RoomsOptions) {
     return kv && typeof kv.put === "function" ? new KvCodeStore(kv) : memoryCodes;
   };
 
-  /** Create a room with init data and a 6-digit join code. */
-  async function createRoom(type: string, o: CreateRoomOptions = {}): Promise<{ id: string; code: string }> {
+  /** Create a room with init data and a 6-digit join code (`code: false` skips the code). */
+  function createRoom(type: string, o: CreateRoomOptions & { code: false }): Promise<{ id: string }>;
+  function createRoom(type: string, o?: CreateRoomOptions): Promise<{ id: string; code: string }>;
+  async function createRoom(type: string, o: CreateRoomOptions = {}): Promise<{ id: string; code?: string }> {
     if (!registry.has(type)) throw unknownType(type, known);
     const env = o.env ?? workerEnv;
     const id = randomRoomId();
-    const code = await allocateCode(codeStore(env), { type, id }, codeTtlMs);
+    const code = o.code === false ? undefined : await allocateCode(codeStore(env), { type, id }, codeTtlMs);
     const ns = nsFrom(env, binding);
     if (ns) {
       const url = `https://miu-room/_miu/create?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`;
@@ -123,7 +129,7 @@ function roomsPlugin(opts: RoomsOptions) {
     } else {
       registry.create(type, id, o.data);
     }
-    return { id, code };
+    return code === undefined ? { id } : { id, code };
   }
 
   const resolveCode = route.get(`${prefix}/code/:code`, {
@@ -252,6 +258,8 @@ function roomsPlugin(opts: RoomsOptions) {
     /** The in-process registry (Bun/Deno/Node). */
     registry,
     createRoom,
+    /** Route prefix, e.g. `/rooms` (rooms live at `${path}/:type/:id`). */
+    path: prefix,
     onRequest(ctx: Context) {
       if (ctx.runtime === "workerd") workerEnv = ctx.env;
     },

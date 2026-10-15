@@ -110,7 +110,7 @@ Other languages (Unity, Godot, Swift) can join using the [wire protocol](./PROTO
 
 ## Join codes
 
-`rooms()` returns a plugin with `createRoom(type, { data })`, which creates a room and a 6-digit code. Clients resolve the code with `GET /rooms/code/:code` and then connect to the room id.
+`rooms()` returns a plugin with `createRoom(type, { data })`, which creates a room and a 6-digit code. Pass `{ code: false }` for rooms reached by id only, such as matchmaker rooms. The plugin's route prefix is available as `realtime.path`. Clients resolve the code with `GET /rooms/code/:code` and then connect to the room id.
 
 <!-- test -->
 ```ts
@@ -219,6 +219,11 @@ The object uses the WebSocket hibernation API. State, players, resume tokens and
 | `maxMessageBytes` | `number` | `16384` | Largest inbound frame; bigger frames close the socket (1009). |
 | `maxPlayers` | `number` | unlimited | Max non-spectator players. |
 | `reconnectMs` | `number` | `30000` | How long a disconnected player keeps their seat. |
+
+The `room` handle also has `room.kick(playerId, code?)` and `room.env`.
+
+- `room.kick` removes the seat at once: no reconnect grace, resume token revoked, `onLeave` runs. The socket closes with `code`, default `4009`, which clients treat as terminal.
+- `room.env` is the Durable Object's `env` on Workers (D1 and other bindings) and the process env locally.
 
 `connect(url, options)` from `@miujs/realtime/client`: `name`, `role` (default `"player"`), `hostKey`, `resume`, `reconnect` (default on: `minDelayMs` 250, `maxDelayMs` 5000, `maxAttempts` Infinity; `false` turns it off), `encoding` (`"json"` or `"msgpack"`, default `"json"`), `WebSocket` (default: the global one).
 

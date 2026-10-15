@@ -1,20 +1,23 @@
 // Ticket-gated game rooms. `gameRoom()` wraps `defineRoom()`:
 //
-// - adds a `ticket` client message; a player must present the signed ticket the matchmaker or
-//   lobby issued before any other game message is accepted (MIU_E_GAME_TICKET_REQUIRED),
-// - binds the player to the ticket's user (one live seat per user), runs `onSeat`, sends a
-//   `seated` event,
-// - keeps seats and the match roster in server-only secret state (survives hibernation),
-// - `reportResult(room, ...)` sends the outcome to the ratings store, from the room only.
+// - admission happens in realtime's `onJoinRequest`, before seating. A join must carry the signed
+//   ticket the matchmaker or lobby issued (`?ticket=`, or `params.ticket` in a join frame).
+//   Otherwise it is refused (close 4003) and takes no seat. Spectators may opt in with
+//   `{ spectators: true }`.
+// - the ticket must be for this room (a shard `id:shardN` counts as its base id), this match and a
+//   rostered user. Each user gets one live seat. Then `onSeat` runs and a `seated` event goes out.
+// - the `ticket` client message still works for clients that join without params (a no-op
+//   once seated).
+// - seats and the match roster live in server-only secret state, so they survive hibernation.
+// - `reportResult(room, ...)` sends the outcome to the ratings store with `room.env`, from the
+//   room only.
 //
-// Wire flow for any client: connect to the room URL, wait for `welcome`, then send
-//   {"t":"msg","type":"ticket","data":{"ticket":"<ticket>"}}
-// and wait for {"t":"event","event":"seated",...}.
+// Resumes (?resume=<token>) keep the seat and need no ticket.
 
 import { t, type Schema } from "miujs";
-import { defineRoom, type InitContext, type Player, type Room, type RoomDefinition, type RoomType } from "@miujs/realtime";
+import { defineRoom, parseShardId, type InitContext, type Player, type Room, type RoomDefinition, type RoomType } from "@miujs/realtime";
 import { gameErrors } from "./errors.ts";
-import { gameSecret, verifyTicket } from "./sign.ts";
+import { gameSecret, verifyTicketSync } from "./sign.ts";
 import type { Result, ResultSummary } from "./store.ts";
 
 type MaybePromise<T> = T | Promise<T>;
@@ -55,16 +58,23 @@ export interface GameRoomDefinition<S, X, C extends Record<string, Schema<any>>>
 export interface GameRoomOptions {
   /** Ticket signing secret. Default: MIU_GAME_SECRET, or a per-process dev secret off Workers. */
   secret?: string;
-  /** Where results go. Default: the matchmaker / lobbies plugin that creates this room type. */
-  report?: (matchId: string, result: Result) => Promise<unknown>;
-  /** Client messages allowed before a ticket (e.g. chat for spectators). */
+  /**
+   * Where results go. Default: the matchmaker / lobbies plugin that creates this room type, which
+   * reaches the database through `room.env` (D1 on Workers). `resultReporter(url)` is an option.
+   */
+  report?: (matchId: string, result: Result, env: Record<string, unknown>) => Promise<unknown>;
+  /** Client messages allowed without a seat (e.g. chat for spectators). */
   open?: string[];
+  /** Let `role=spectator` joins in without a ticket (they get no seat). Default false. */
+  spectators?: boolean;
 }
 
 interface GameSecret {
   match: MatchInfo | null;
   seats: Record<string, Seat>;
   reported: boolean;
+  /** Admitted by onJoinRequest, onSeat not run yet. */
+  pending?: string[];
 }
 
 interface Wrapped {
@@ -74,7 +84,7 @@ interface Wrapped {
 
 // ---- result sinks (matchmaker / lobbies register themselves per room type) ------------------
 
-type Sink = (matchId: string, result: Result) => Promise<unknown>;
+type Sink = (matchId: string, result: Result, env: Record<string, unknown>) => Promise<unknown>;
 const sinks = new Map<string, Sink[]>();
 const options = new Map<string, GameRoomOptions>();
 
@@ -89,11 +99,11 @@ function sinkFor(roomType: string): Sink | undefined {
   if (explicit) return explicit;
   const list = sinks.get(roomType);
   if (!list?.length) return undefined;
-  return async (matchId, result) => {
+  return async (matchId, result, env) => {
     let last: unknown;
     for (const fn of list) {
       try {
-        return await fn(matchId, result);
+        return await fn(matchId, result, env);
       } catch (err) {
         if ((err as { code?: string })?.code !== "MIU_E_GAME_MATCH_UNKNOWN") throw err;
         last = err;
@@ -173,7 +183,7 @@ export async function reportResult<T = ResultSummary>(room: Room, result: { winn
   g.reported = true;
   let summary: unknown;
   try {
-    summary = await sink(g.match.id, mapped);
+    summary = await sink(g.match.id, mapped, raw(room).env ?? {});
   } catch (err) {
     g.reported = false;
     throw err;
@@ -204,24 +214,42 @@ export function gameRoom<S, X = undefined, C extends Record<string, Schema<any>>
       return handler({ ...ctx, room: facade(ctx.room) });
     };
   }
-  on.ticket = async ({ room, sender, msg, now }: { room: Room; sender: Player; msg: { ticket: string }; now: number }) => {
+  /**
+   * Check a ticket and bind its user to `playerId`: signature, this room (a shard `id:shardN`
+   * counts as its base id), match, roster, and one live seat per user. Synchronous, so it runs in
+   * realtime's onJoinRequest, before the player is seated at all.
+   */
+  const admit = (room: Room, playerId: string, ticket: unknown, now: number): { seat: Seat; fresh: boolean } => {
     const g = gameOf(room)!;
-    const tk = await verifyTicket(key(), msg.ticket, { roomType: type, roomId: room.id, now });
+    const roomId = parseShardId(room.id)?.id ?? room.id;
+    const tk = verifyTicketSync(key(), ticket, { roomType: type, roomId, now });
     if (g.match) {
       if (tk.matchId !== g.match.id) throw gameErrors.ticketInvalid("issued for another match");
       if (!g.match.players.some((p) => p.userId === tk.userId)) throw gameErrors.ticketInvalid("user is not in this match");
     }
-    const prev = g.seats[sender.id];
-    if (prev && prev.userId !== tk.userId) throw gameErrors.ticketInvalid("this connection is already seated as another user");
+    const prev = g.seats[playerId];
+    if (prev) {
+      if (prev.userId !== tk.userId) throw gameErrors.ticketInvalid("this connection is already seated as another user");
+      return { seat: prev, fresh: false };
+    }
     for (const [pid, s] of Object.entries(g.seats)) {
-      if (s.userId !== tk.userId || pid === sender.id) continue;
+      if (s.userId !== tk.userId) continue;
       if (room.player(pid)) throw gameErrors.ticketUsed();
       delete g.seats[pid]; // that player left for good; the user takes a new seat
     }
     const seat: Seat = { userId: tk.userId, name: tk.name, team: tk.team, matchId: tk.matchId };
-    g.seats[sender.id] = seat;
-    if (!prev && def.onSeat) await def.onSeat({ room: facade(room) as Room<S, X>, player: sender, seat: { ...seat }, now });
-    room.send(sender.id, "seated", seat);
+    g.seats[playerId] = seat;
+    return { seat, fresh: true };
+  };
+  const seatNow = async (room: Room, player: Player, seat: Seat, now: number) => {
+    if (def.onSeat) await def.onSeat({ room: facade(room) as Room<S, X>, player, seat: { ...seat }, now });
+    room.send(player.id, "seated", seat);
+  };
+
+  // The ticket message: for clients that join without params. Once seated it is a silent no-op.
+  on.ticket = async ({ room, sender, msg, now }: { room: Room; sender: Player; msg: { ticket: string }; now: number }) => {
+    const { seat, fresh } = admit(room, sender.id, msg.ticket, now);
+    if (fresh) await seatNow(room, sender, seat, now);
   };
 
   const wrapRoom = <F extends (ctx: any) => unknown>(fn: F | undefined) => (fn ? ((ctx: any) => fn({ ...ctx, room: facade(ctx.room) })) : undefined);
@@ -235,7 +263,26 @@ export function gameRoom<S, X = undefined, C extends Record<string, Schema<any>>
       const g = ctxOf(ctx);
       return { __game: { match: g.match ?? null, seats: {}, reported: false }, user: def.secret ? def.secret(g) : undefined };
     },
-    onJoin: wrapRoom(def.onJoin as any) as any,
+    onJoinRequest: (ctx) => {
+      const ticket = ctx.params.ticket;
+      if (ticket !== undefined) {
+        admit(ctx.room, ctx.player.id, ticket, ctx.now);
+        const g = gameOf(ctx.room)!;
+        g.pending = [...(g.pending ?? []), ctx.player.id];
+      } else if (!(opts.spectators && ctx.player.role === "spectator")) {
+        throw gameErrors.ticketRequired();
+      }
+      def.onJoinRequest?.({ ...ctx, room: facade(ctx.room) as any });
+    },
+    onJoin: async (ctx) => {
+      const g = gameOf(ctx.room)!;
+      if (g.pending?.includes(ctx.player.id)) {
+        g.pending = g.pending.filter((id) => id !== ctx.player.id);
+        const seat = g.seats[ctx.player.id];
+        if (seat) await seatNow(ctx.room, ctx.player, seat, ctx.now);
+      }
+      if (def.onJoin) await (def.onJoin as any)({ ...ctx, room: facade(ctx.room) });
+    },
     onLeave: wrapRoom(def.onLeave as any) as any,
     on: on as any,
     timers: timers as any,

@@ -613,7 +613,8 @@
       4003,
       4004,
       4005,
-      4008
+      4008,
+      4009
     ],
     "resumeQuery": "resume",
     "cases": [
@@ -664,6 +665,10 @@
       {
         "code": 1012,
         "reconnect": true
+      },
+      {
+        "code": 4009,
+        "reconnect": false
       }
     ]
   },

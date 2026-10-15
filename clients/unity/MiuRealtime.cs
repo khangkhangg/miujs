@@ -32,7 +32,7 @@ namespace MiuJS
     public sealed class MiuRealtime : IDisposable
     {
         /// <summary>Close codes after which reconnecting would not help (PROTOCOL.md "Close codes").</summary>
-        public static readonly int[] TerminalCloseCodes = { 1000, 1003, 1009, 4001, 4003, 4004, 4005, 4008 };
+        public static readonly int[] TerminalCloseCodes = { 1000, 1003, 1009, 4001, 4003, 4004, 4005, 4008, 4009 };
 
         // ---- options ---------------------------------------------------------------------------
         public string Url { get; private set; }

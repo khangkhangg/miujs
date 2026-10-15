@@ -9,4 +9,4 @@ export { joinParamsFrom, rooms, type CreateRoomOptions, type RoomsOptions } from
 export { createRoomDurableObject, type CfWebSocket, type DurableObjectStateLike, type RoomDurableObjectOptions } from "./cloudflare.ts";
 export { KeyedLimiter, TokenBucket } from "./limiter.ts";
 export { CODE_RE, KvCodeStore, MemoryCodeStore, allocateCode, createCode, type CodeStore, type CodeTarget, type KvLike } from "./codes.ts";
-export { shardedRoom, type ShardConfig, type ShardInfo, type ShardOptions, type ShardedRoomType } from "./shard.ts";
+export { parseShardId, shardedRoom, type ShardConfig, type ShardInfo, type ShardOptions, type ShardedRoomType } from "./shard.ts";
