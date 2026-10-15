@@ -21,6 +21,12 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./admin": {
+      "types": "./dist/admin/index.d.ts",
+      "bun": "./src/admin/index.ts",
+      "import": "./dist/admin/index.js",
+      "default": "./dist/admin/index.js"
+    },
     "./client": {
       "types": "./dist/client/index.d.ts",
       "bun": "./src/client/index.ts",
@@ -56,6 +62,12 @@
       "bun": "./src/sqlite.ts",
       "import": "./dist/sqlite.js",
       "default": "./dist/sqlite.js"
+    },
+    "./tour": {
+      "types": "./dist/tour/index.d.ts",
+      "bun": "./src/tour/index.ts",
+      "import": "./dist/tour/index.js",
+      "default": "./dist/tour/index.js"
     }
   },
   "files": [
