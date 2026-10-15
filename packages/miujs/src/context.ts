@@ -86,6 +86,17 @@ export interface Context {
   upgrade(handlers: WebSocketHandlers): Response;
 }
 
+/**
+ * A reverse proxy you run in front of the app. `header` is the one it sets: "x-forwarded-for"
+ * (comma list; the proxy appends the client it saw, so MiuJS reads from the right, never the
+ * client-controlled left) or a single-value header such as "x-real-ip" / "cf-connecting-ip".
+ * `hops` = how many trusted proxies append to the list (default 1).
+ */
+export interface TrustProxy {
+  header: string;
+  hops?: number;
+}
+
 export interface PlatformInfo {
   runtime: Runtime;
   /** Bun's `Server`, when running on Bun. */
@@ -96,6 +107,8 @@ export interface PlatformInfo {
   remoteAddr?: { hostname: string };
   /** Background work off Workers, so `app.drain()` can wait for it. */
   pending?: Set<Promise<unknown>>;
+  /** Set from `miu({ trustProxy })`: which forwarding header a proxy you control writes. */
+  trustProxy?: TrustProxy;
 }
 
 /** Fast path extraction without building a URL object. */
@@ -185,6 +198,14 @@ export class RequestContext {
   get ip(): string | undefined {
     const p = this._platform;
     if (p.runtime === "workerd") return this.req.headers.get("cf-connecting-ip") ?? undefined;
+    if (p.trustProxy) {
+      const raw = this.req.headers.get(p.trustProxy.header);
+      if (raw === null) return undefined;
+      const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+      const hops = p.trustProxy.hops ?? 1;
+      // Too few entries means the request didn't pass through all trusted proxies: no IP.
+      return parts.length >= hops ? parts[parts.length - hops] : undefined;
+    }
     return p.bunServer?.requestIP?.(this.req)?.address ?? p.remoteAddr?.hostname;
   }
   get query(): any {

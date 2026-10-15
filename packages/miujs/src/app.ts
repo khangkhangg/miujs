@@ -1,4 +1,4 @@
-import { RequestContext, pathOf, type Context, type PlatformInfo, type RouteInfo, type Services } from "./context.ts";
+import { RequestContext, pathOf, type Context, type PlatformInfo, type RouteInfo, type Services, type TrustProxy } from "./context.ts";
 import { MiuError, errors, isMiuError } from "./errors.ts";
 import { createLogger, type LogLevel, type Logger } from "./logger.ts";
 import { createMcpHandler, buildRouteTool, routeToolRequest, type McpOptions } from "./mcp.ts";
@@ -28,6 +28,8 @@ export interface MiuOptions {
   logRequests?: boolean;
   /** Largest request body in bytes (JSON, form, text, binary). Default 10 MiB. Routes can override. */
   maxBodySize?: number;
+  /** The reverse proxy in front of the app, so `ctx.ip` is the real client. See TrustProxy. */
+  trustProxy?: TrustProxy;
 }
 
 export interface CallInput {
@@ -238,7 +240,7 @@ export class App {
     this.maxBodySize = options.maxBodySize ?? 10 * 1024 * 1024;
     this.plugins = options.plugins ?? [];
     this.staticEnv = this.runtime === "workerd" ? {} : processEnv();
-    this.basePlatform = { runtime: this.runtime, pending: this.background };
+    this.basePlatform = { runtime: this.runtime, pending: this.background, trustProxy: options.trustProxy };
     for (const src of options.routes ?? []) this.collect(src, undefined);
     for (const p of this.plugins) for (const r of p.routes ?? []) this.collect(r, undefined);
   }
@@ -490,11 +492,11 @@ export class App {
     let platform = this.basePlatform;
     if (envOrServer && typeof envOrServer.upgrade === "function") {
       let sp = this.serverPlatform;
-      if (sp === null || sp.bunServer !== envOrServer) this.serverPlatform = sp = { runtime: this.runtime, bunServer: envOrServer, pending: this.background };
+      if (sp === null || sp.bunServer !== envOrServer) this.serverPlatform = sp = { runtime: this.runtime, bunServer: envOrServer, pending: this.background, trustProxy: this.options.trustProxy };
       platform = sp;
     } else if (envOrServer && envOrServer.remoteAddr && typeof envOrServer.remoteAddr.hostname === "string") {
       // Deno.serve info, or the Node adapter: the client address for ctx.ip.
-      platform = { runtime: this.runtime, pending: this.background, remoteAddr: envOrServer.remoteAddr };
+      platform = { runtime: this.runtime, pending: this.background, remoteAddr: envOrServer.remoteAddr, trustProxy: this.options.trustProxy };
     }
     return this.dispatch(req, this.staticEnv, platform);
   };
