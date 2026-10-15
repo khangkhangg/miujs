@@ -1,0 +1,8 @@
+{
+  "name": "miujs-tour-browser-tests",
+  "private": true,
+  "description": "Isolated dependency for test/tour/browser.test.ts (Chromium driver). Install: cd test/tour/browser && bun install",
+  "dependencies": {
+    "playwright-core": "1.56.1"
+  }
+}
