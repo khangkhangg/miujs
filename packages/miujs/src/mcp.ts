@@ -88,6 +88,7 @@ export function buildRouteTool(r: DescribedRoute): RouteTool {
       destructiveHint: r.method === "DELETE",
       idempotentHint: r.method === "GET" || r.method === "HEAD" || r.method === "PUT" || r.method === "DELETE",
       openWorldHint: false,
+      ...cfg.annotations,
     },
   };
   if (cfg.summary) tool.title = cfg.summary;

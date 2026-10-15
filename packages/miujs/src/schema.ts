@@ -191,17 +191,28 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-export interface ObjectSchema<P extends Shape> extends Schema<ObjectOf<P>> {
+/** An object type plus its `rest` keys. */
+type WithRest<P extends Shape, R> = R extends Schema<infer V> ? ObjectOf<P> & { [key: string]: V } : ObjectOf<P>;
+
+export interface ObjectSchema<P extends Shape, T = ObjectOf<P>> extends Schema<T> {
   readonly shape: P;
 }
 
-function object<P extends Shape>(shape: P, opts: Common = {}): ObjectSchema<P> {
+export interface ObjectOptions extends Common {
+  /** Keep keys not in the shape, validating each value with this schema (JSON Schema `additionalProperties`). */
+  rest?: Schema<any>;
+}
+
+function object<P extends Shape, R extends Schema<any> | undefined = undefined>(shape: P, opts: ObjectOptions & { rest?: R } = {}): ObjectSchema<P, WithRest<P, R>> {
   const keys = Object.keys(shape);
+  const rest = opts.rest;
+  const known = new Set(keys);
   const required = keys.filter((k) => !shape[k].isOptional);
   const properties: JsonSchema = {};
   for (const k of keys) properties[k] = shape[k].json;
   const json: JsonSchema = { type: "object", properties };
   if (required.length) json.required = required;
+  if (rest) json.additionalProperties = rest.json;
   // Child paths ("params.id") for the first path this schema is parsed at. A top-level schema
   // always sees the same path, so it builds no strings per request; other paths join as before.
   let firstPath: string | undefined;
@@ -233,9 +244,15 @@ function object<P extends Shape>(shape: P, opts: Common = {}): ObjectSchema<P> {
       }
       out[k] = s.parse(value, paths ? paths[i] : join(path, k), issues, coerce);
     }
+    if (rest) {
+      for (const k of Object.keys(v)) {
+        if (known.has(k) || k === "__proto__" || k === "constructor" || k === "prototype") continue;
+        Object.defineProperty(out, k, { value: rest.parse(v[k], join(path, k), issues, coerce), enumerable: true, writable: true, configurable: true });
+      }
+    }
     return out as ObjectOf<P>;
   }, opts);
-  return { ...base, shape };
+  return { ...base, shape } as unknown as ObjectSchema<P, WithRest<P, R>>;
 }
 
 function record<S extends Schema<any>>(value: S, opts: Common = {}): Schema<Record<string, Infer<S>>> {

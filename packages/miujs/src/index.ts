@@ -10,5 +10,5 @@ export { isRoute, route, type AuthRequirement, type HandlerContext, type Method,
 export { Router, normalizePath, pathParams } from "./router.ts";
 export { detectRuntime, processEnv, targetRuntime, type Runtime } from "./runtime.ts";
 export { parseCookies, serializeCookie } from "./cookies.ts";
-export { isSchema, t, validate, type Infer, type Issue, type JsonSchema, type ObjectSchema, type Schema } from "./schema.ts";
+export { isSchema, t, validate, type Infer, type Issue, type JsonSchema, type ObjectOptions, type ObjectSchema, type Schema } from "./schema.ts";
 export type { MiuSocket, SocketMessage, WebSocketHandlers } from "./websocket.ts";

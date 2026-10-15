@@ -45,6 +45,10 @@ export interface RouteConfig<P, Q, B, R, A> {
   maxBodySize?: number;
   /** Served, but hidden from inspect, OpenAPI and MCP (dev tools, plugin plumbing). */
   internal?: boolean;
+  /** Override the MCP tool hints derived from the method (e.g. mark a POST bulk delete destructive). */
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean };
+  /** Content type of a successful response when it isn't JSON (e.g. "text/csv"), for OpenAPI. */
+  responseType?: string;
   handler: (ctx: HandlerContext<P, Q, B, A>) => MaybePromise<InferOr<R, unknown> | Response | void | null>;
 }
 

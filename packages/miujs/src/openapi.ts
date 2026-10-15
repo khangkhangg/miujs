@@ -71,9 +71,11 @@ export function generateOpenApi(routes: DescribedRoute[], info: OpenApiInfo): Re
     }
     const status = String(cfg.status ?? 200);
     op.responses = {
-      [status]: cfg.response
-        ? { description: "Success", content: { "application/json": { schema: cfg.response.json } } }
-        : { description: "Success" },
+      [status]: cfg.responseType
+        ? { description: "Success", content: { [cfg.responseType]: { schema: cfg.response ? cfg.response.json : { type: "string" } } } }
+        : cfg.response
+          ? { description: "Success", content: { "application/json": { schema: cfg.response.json } } }
+          : { description: "Success" },
       default: { $ref: "#/components/responses/Error" },
     };
     if (cfg.permission) op["x-permission"] = cfg.permission;
