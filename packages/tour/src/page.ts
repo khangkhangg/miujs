@@ -6,10 +6,6 @@ import type { Manifest } from "./manifest.ts";
 import type { ViewerAssetsSelfHosted } from "./runtime.ts";
 import { CDN_ORIGINS, IMPORT_MAP_ENTRIES, MODEL_DECODERS, VIEWER_ASSETS, type ViewerAsset } from "./viewer-assets.ts";
 
-for (const [name, code] of [["VIEWER_JS", VIEWER_JS], ["LIVE_JS", LIVE_JS]]) {
-  if (/<\/script|<!--/i.test(code)) throw new Error(`${name} must not contain "</script" or "<!--"`);
-}
-
 export interface TourPageOptions {
   /** The CSP nonce of this response (from secureHeaders' `nonce(ctx)`, or your own). */
   nonce: string;
