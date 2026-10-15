@@ -99,7 +99,7 @@ describe("framework bugs (documented with failing tests)", () => {
    * Fix: expose the peer address (`c.ip` from Bun's server.requestIP / Node's socket.remoteAddress) and only
    * honour forwarding headers with an explicit `trustProxy` option.
    */
-  test.failing("the default rate-limit key cannot be reset by spoofing X-Forwarded-For", async () => {
+  test("the default rate-limit key cannot be reset by spoofing X-Forwarded-For", async () => {
     const app = new Miu({ logger: false })
       .use(rateLimit({ store: memoryStore(), limit: 2, window: 60 }))
       .post("/login", () => ({ ok: false }));

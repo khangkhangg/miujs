@@ -48,7 +48,8 @@ export async function startServer(o: StartOptions = {}): Promise<Server> {
       ADMIN_EMAIL,
       ADMIN_PASSWORD,
       SEED_PANORAMA_WIDTH: "1024",
-      TRUST_PROXY: "1",
+      TRUST_PROXY: "1", // the harness plays the trusted reverse proxy (sets X-Forwarded-For per user)
+      BLOB_RETAIN_MS: "0", // delete superseded panoramas immediately so storage assertions are exact
       COOKIE_SECURE: "0",
       INSPECTOR_TOKEN,
       ...o.env,

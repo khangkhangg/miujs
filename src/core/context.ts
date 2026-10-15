@@ -60,6 +60,18 @@ export class Context<E extends Env = Env, I extends Input = Input> {
   private _vars?: Map<string, unknown>;
   private _cookies?: Record<string, string>;
 
+  /** The serving runtime (Bun server / Node adapter); set by the app. Used for `ip`. */
+  peer?: { requestIP?(req: Request): { address: string } | null | undefined };
+
+  /**
+   * The client's socket address as seen by the server (Bun, Node adapter). Undefined for in-process
+   * requests and on Cloudflare Workers (use the trusted `cf-connecting-ip` header there). Never derived
+   * from client-controlled headers.
+   */
+  get ip(): string | undefined {
+    return this.peer?.requestIP?.(this.req)?.address || undefined;
+  }
+
   constructor(req: Request, env?: Bindings<E>, executionCtx?: ExecutionContext) {
     this.req = req;
     this.env = (env ?? {}) as Bindings<E>;

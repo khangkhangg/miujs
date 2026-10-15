@@ -436,6 +436,13 @@ export class NodeWsServer implements BunServerLike {
   readonly connections = new Set<NodeWebSocket>();
   readonly options: Required<NodeWsOptions>;
   private pending = new WeakMap<Request, Pending>();
+  /** Socket address per request, so `c.ip` works on Node (same shape as Bun's server.requestIP). */
+  readonly peers = new WeakMap<Request, string>();
+
+  requestIP(req: Request): { address: string } | null {
+    const address = this.peers.get(req);
+    return address ? { address } : null;
+  }
   private readonly cb: NodeWsCallbacks;
 
   constructor(cb: NodeWsCallbacks, opts: NodeWsOptions = {}) {

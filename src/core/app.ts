@@ -323,6 +323,7 @@ export class Miu<E extends Env = Env, R extends RouteSchema = {}> {
       env = undefined;
     }
     const c = new Context<E>(req, env as any, executionCtx);
+    if (server) c.peer = server as Context["peer"];
     c.app = this;
     const path = pathOf(req.url);
     const method = req.method;

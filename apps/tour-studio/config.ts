@@ -32,6 +32,8 @@ export interface Config {
   seedPanoramaWidth: number;
   logRequests: boolean;
   trustProxy: boolean;
+  /** How long superseded panorama files are kept for in-flight downloads (ms). */
+  blobRetainMs: number;
   /** `Secure` session cookie (default: on in production; COOKIE_SECURE=0 for plain-http deployments). */
   secureCookies: boolean;
   sqliteSynchronous?: "FULL" | "NORMAL";
@@ -63,6 +65,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     seedPanoramaWidth: Number(env.SEED_PANORAMA_WIDTH ?? 2048),
     logRequests: env.LOG_REQUESTS !== "0",
     trustProxy: env.TRUST_PROXY === "1",
+    blobRetainMs: env.BLOB_RETAIN_MS === undefined ? 60_000 : Number(env.BLOB_RETAIN_MS),
     secureCookies: env.COOKIE_SECURE ? env.COOKIE_SECURE !== "0" : !dev,
     sqliteSynchronous: env.SQLITE_SYNCHRONOUS === "NORMAL" || env.SQLITE_SYNCHRONOUS === "FULL" ? env.SQLITE_SYNCHRONOUS : undefined,
     authRateLimit: Number(env.AUTH_RATE_LIMIT ?? 10),

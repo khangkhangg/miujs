@@ -60,7 +60,10 @@ const SignupBody = t.object({
 const PublicUserSchema = t.object({ id: t.string(), email: t.string(), name: t.string(), roles: t.array(t.string()) });
 
 /** Open (and create) the database and blob store under `dataDir`. */
-export async function openData(dataDir: string, opts: { synchronous?: "FULL" | "NORMAL" } = {}): Promise<Data> {
+export async function openData(
+  dataDir: string,
+  opts: { synchronous?: "FULL" | "NORMAL"; blobRetainMs?: number } = {},
+): Promise<Data> {
   mkdirSync(dataDir, { recursive: true });
   const db = await openDatabase(`${dataDir}/app.sqlite`);
   // openDatabase() enables WAL but keeps SQLite's default synchronous=FULL (an fsync per commit); NORMAL is the
@@ -74,7 +77,7 @@ export async function openData(dataDir: string, opts: { synchronous?: "FULL" | "
     scenes: sqliteRepository<Scene>({ db, table: "scenes", indexes: ["tourId"], searchFields: ["title"] }),
     hotspots: sqliteRepository<Hotspot>({ db, table: "hotspots", indexes: ["tourId", "sceneId"] }),
     audit: sqliteRepository<AuditEntry & { id: string }>({ db, table: "audit_log", indexes: ["resource", "recordId"] }),
-    files: diskBlobStore({ root: `${dataDir}/panoramas` }),
+    files: diskBlobStore({ root: `${dataDir}/panoramas`, retainMs: opts.blobRetainMs }),
   };
 }
 
@@ -91,7 +94,7 @@ export async function findUserByEmail(users: Repository<User>, email: string): P
 }
 
 export async function createApp(config: Config, data?: Data): Promise<TourStudio> {
-  const d = data ?? (await openData(config.dataDir, { synchronous: config.sqliteSynchronous }));
+  const d = data ?? (await openData(config.dataDir, { synchronous: config.sqliteSynchronous, blobRetainMs: config.blobRetainMs }));
   const { users, tours, scenes, hotspots, audit, files, store } = d;
 
   const app = new Miu({
@@ -176,7 +179,7 @@ export async function createApp(config: Config, data?: Data): Promise<TourStudio
   const limiter = (prefix: string, limit: number) =>
     rateLimit({
       store, limit, window: 60, prefix,
-      key: (c) => `${config.trustProxy ? clientIp(c) : "-"}|${String(credentials(c)?.email ?? "")}`,
+      key: (c) => `${clientIp(c, config.trustProxy)}|${String(credentials(c)?.email ?? "")}`,
     });
 
   const requireUser = (redirect: boolean): Middleware => (c, next) => {
