@@ -248,6 +248,59 @@ describe("system settings", () => {
     expect(JSON.stringify(row)).not.toContain("secret-token");
   });
 
+  test("secrets are decided by the schema: numbers named like secrets are shown; secret strings and opted-in fields are redacted everywhere", async () => {
+    let current = { minPasswordLength: 8, maxTokens: 4096, tokenTtl: 3600, sessionSecret: "s3cret-value", dsn: "postgres://u:pw@db" };
+    const sets: (typeof current)[] = [];
+    const runs: unknown[] = [];
+    const seen: any[] = [];
+    const dsn = { ...t.string(), json: { type: "string", format: "password" } } as ReturnType<typeof t.string>;
+    const authish = definePlugin({
+      name: "authish",
+      manage: (): ManageSection[] => [
+        {
+          id: "policy",
+          title: "Policy",
+          settings: {
+            schema: t.object({ minPasswordLength: t.integer({ min: 1 }), maxTokens: t.integer(), tokenTtl: t.integer(), sessionSecret: t.string(), dsn }),
+            get: () => ({ ...current }),
+            set: (v) => {
+              current = { ...v };
+              sets.push({ ...v });
+            },
+          },
+          actions: [{ name: "probe", title: "Probe", input: t.object({ maxTokens: t.integer(), apiKey: t.string(), dsn }), run: (i) => void runs.push(i) }],
+        },
+      ],
+    });
+    const spy = definePlugin({
+      name: "spy-audit",
+      onRequest(ctx) {
+        (ctx as any).audit = { log: async (e: unknown) => void seen.push(e) };
+      },
+    });
+    const h = await systemSetup({ audit: false, plugins: [authish, spy] });
+    const g = await h.req("GET", `${S}/authish/policy/settings`);
+    expect(g.body.value).toEqual({ minPasswordLength: 8, maxTokens: 4096, tokenTtl: 3600, sessionSecret: "[REDACTED]", dsn: "[REDACTED]" });
+
+    // "[REDACTED]" keeps only a secret field; for a number it is just an invalid value.
+    const bad = await h.req("PUT", `${S}/authish/policy/settings`, { body: { ...g.body.value, minPasswordLength: "[REDACTED]" } });
+    expect(bad.status).toBe(400);
+    const p = await h.req("PUT", `${S}/authish/policy/settings`, { body: { ...g.body.value, minPasswordLength: 12, dsn: "postgres://new" } });
+    expect(p.status).toBe(200);
+    expect(p.body.value).toEqual({ minPasswordLength: 12, maxTokens: 4096, tokenTtl: 3600, sessionSecret: "[REDACTED]", dsn: "[REDACTED]" });
+    expect(sets).toEqual([{ minPasswordLength: 12, maxTokens: 4096, tokenTtl: 3600, sessionSecret: "s3cret-value", dsn: "postgres://new" }]);
+    const audited = seen.find((e) => e.action === "system.settings");
+    expect(audited.before).toEqual({ minPasswordLength: 8, maxTokens: 4096, tokenTtl: 3600, sessionSecret: "[REDACTED]", dsn: "[REDACTED]" });
+    expect(audited.after).toEqual({ minPasswordLength: 12, maxTokens: 4096, tokenTtl: 3600, sessionSecret: "[REDACTED]", dsn: "[REDACTED]" });
+    expect(audited.metadata.redactedChanges).toEqual(["dsn"]);
+    expect(JSON.stringify(seen)).not.toContain("s3cret-value");
+    expect(JSON.stringify(seen)).not.toContain("postgres://");
+
+    expect((await h.req("POST", `${S}/authish/policy/actions/probe`, { body: { maxTokens: 5, apiKey: "sk-live", dsn: "pg://x" } })).status).toBe(200);
+    expect(runs).toEqual([{ maxTokens: 5, apiKey: "sk-live", dsn: "pg://x" }]);
+    expect(seen.at(-1).metadata.input).toEqual({ maxTokens: 5, apiKey: "[REDACTED]", dsn: "[REDACTED]" });
+  });
+
   test("stored values are re-applied on the first request of a new instance, and re-read after the TTL", async () => {
     const database = sqlite();
     const clock = fakeClock();

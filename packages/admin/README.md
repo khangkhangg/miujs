@@ -76,7 +76,7 @@ All under `<basePath>/_admin/system` (default `/api/_admin/system`), signed-in u
 | `GET /:plugin/:section/lists/:list?cursor&limit&search&filters` | One page `{ rows, next }`; `limit` defaults to 25 and is capped at 100; `filters` is JSON like `{"state":"failed"}` checked against the list's options |
 | `POST /:plugin/:section/actions/:action` | Body is the action's input; returns `{ ok: true, result }` |
 | `POST /:plugin/:section/lists/:list/:id/actions/:action` | Same, with `{ id }` merged into the validated input |
-| `GET / PUT /:plugin/:section/settings` | Read (secrets shown as `"[REDACTED]"`) or replace the settings; sending `"[REDACTED]"` back keeps a secret unchanged |
+| `GET / PUT /:plugin/:section/settings` | Read (secrets shown as `"[REDACTED]"`) or replace the settings; sending `"[REDACTED]"` back keeps a secret unchanged. Secrets are decided by the schema: a string field with `format: "password"`, `writeOnly: true` or `"x-secret": true` in its JSON schema, or a string field named like one (password, secret, token, apiKey, …Key). Numbers, booleans, enums and dates never are, so `minPasswordLength` or `maxTokens` stay visible |
 
 Path segments and row ids are URL-encoded (ids such as `chat:42` work). Unknown plugins, sections, lists and actions return 404 with `MIU_E_ADMIN_SYSTEM_*` codes and a fix; invalid input returns 400 `MIU_E_VALIDATION`.
 
@@ -110,7 +110,7 @@ Without `@miujs/access`, the System area requires a signed-in user whose roles i
 
 ### Audit
 
-Every action run and settings change is written through `@miujs/audit` (`ctx.audit`, or the `audit` service): `system.action` rows with `resource: "system.<plugin>"`, `resourceId: "<section>/<action>"` (or `<section>/<list>/<id>/<action>`) and metadata `{ plugin, section, list?, id?, action, danger, input, status: "ok" | "error", error? }` with secret-looking keys in `input` redacted; `system.settings` rows with the field-level diff of before/after (secrets redacted by the audit plugin). Without `@miujs/audit` nothing is logged.
+Every action run and settings change is written through `@miujs/audit` (`ctx.audit`, or the `audit` service): `system.action` rows with `resource: "system.<plugin>"`, `resourceId: "<section>/<action>"` (or `<section>/<list>/<id>/<action>`) and metadata `{ plugin, section, list?, id?, action, danger, input, status: "ok" | "error", error? }` with secret fields of `input` redacted (same schema rule as settings); `system.settings` rows with the field-level diff of before/after, secret fields redacted before they reach the audit plugin and `metadata.redactedChanges` naming the secrets that changed. (The audit plugin also redacts by key name, so a number named like a secret is masked in the stored diff.) Without `@miujs/audit` nothing is logged.
 
 ### Runtime settings across instances
 
@@ -125,7 +125,7 @@ With `miu({ mcp: true })`, every System action is an MCP tool named `system_<plu
 `adminUI()` adds a **System** entry under "Operations" in the navigation for users who may read the System area:
 
 - `/admin/system`: one card per plugin with each section's stats;
-- `/admin/system/:plugin/:section`: a tab per section with stats, tables, lists (search, filters, paging, row actions), a settings form generated from the schema (booleans as checkboxes, enums as selects, numbers, text, JSON for unions; empty nullable fields send `null`, empty secret fields keep the current value), and action forms. Danger actions ask for confirmation.
+- `/admin/system/:plugin/:section`: a tab per section with stats (formatted by their `type`: bytes, duration, date, …), tables, lists (search, filters, paging, row actions; a row action's form never asks for `id`, which comes from the row), a settings form generated from the schema (booleans as checkboxes, enums as selects, numbers, text, JSON for unions; empty nullable fields send `null`, empty secret fields keep the current value), and action forms. Danger actions ask for confirmation.
 
 Plugin data is escaped everywhere; actions only appear when allowed, and the API checks again.
 

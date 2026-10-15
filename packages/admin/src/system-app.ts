@@ -66,14 +66,14 @@ export function appSection(app: App, o: { startedAt: number; now(): number; erro
       });
       return {
         stats: [
-          { label: "Uptime", value: o.now() - o.startedAt, hint: "milliseconds since this instance started" },
+          { label: "Uptime", value: o.now() - o.startedAt, type: "duration", hint: "since this instance started" },
           { label: "Runtime", value: app.runtime },
           { label: "App", value: `${app.name} ${app.version}` },
           { label: "Mode", value: app.dev ? "development" : "production" },
-          { label: "Memory (heap)", value: heap, hint: heap === null ? "not measurable on this runtime" : "bytes" },
-          { label: "Routes", value: routes.length },
+          { label: "Memory (heap)", value: heap, type: "bytes", hint: heap === null ? "not measurable on this runtime" : "heap in use" },
+          { label: "Routes", value: routes.length, type: "number" },
           { label: "MCP tools", value: info?.mcp ? info.mcp.tools.length : 0, hint: info?.mcp ? info.mcp.path : "MCP is off" },
-          { label: "Plugins", value: plugins.length },
+          { label: "Plugins", value: plugins.length, type: "number" },
           { label: "Errors", value: o.errors.total, tone: o.errors.total ? "warning" : "good", hint: "errors thrown while handling requests since start" },
         ],
         tables: [

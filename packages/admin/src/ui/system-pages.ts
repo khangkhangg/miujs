@@ -41,7 +41,7 @@ interface ListMeta {
 interface SectionData {
   plugin: string;
   section: { id: string; title: string; description: string | null };
-  status: { stats?: { label: string; value: Value; hint?: string; tone?: string }[]; tables?: { title: string; columns: Column[]; rows: Record<string, Value>[] }[] } | null;
+  status: { stats?: { label: string; value: Value; hint?: string; tone?: string; type?: string }[]; tables?: { title: string; columns: Column[]; rows: Record<string, Value>[] }[] } | null;
   statusError: string | null;
   lists: ListMeta[];
   settings: { schema: Record<string, unknown>; canWrite: boolean } | null;
@@ -118,7 +118,7 @@ const TONES = new Set(["good", "warning", "critical"]);
 function statsList(stats: NonNullable<SectionData["status"]>["stats"]): HtmlString | string {
   if (!stats?.length) return "";
   return html`<dl class="stats">${stats.map(
-    (s) => html`<div class="stat${s.tone && TONES.has(s.tone) ? ` tone-${s.tone}` : ""}"><dt>${s.label}</dt><dd${s.hint ? html` title="${s.hint}"` : ""}>${formatValue(s.value, undefined)}</dd></div>`,
+    (s) => html`<div class="stat${s.tone && TONES.has(s.tone) ? ` tone-${s.tone}` : ""}"><dt>${s.label}</dt><dd${s.hint ? html` title="${s.hint}"` : ""}>${formatValue(s.value, s.type)}</dd></div>`,
   )}</dl>`;
 }
 
@@ -164,16 +164,25 @@ const formStrings = (form: FormValues): Record<string, string> => {
   return out;
 };
 
-function readInput(schema: Record<string, unknown> | null, form: FormValues): { value: unknown; errors: string[] } {
-  if (!schema) return { value: {}, errors: [] };
+/** A row action's input fields without `id`: the API merges the row id from the URL. */
+const ROW_ID = "id";
+const inputFields = (schema: Record<string, unknown> | null, row: boolean): SchemaField[] => {
+  if (!schema) return [];
   const fields = schemaForm.fields(schema);
+  return row ? fields.filter((f) => f.name !== ROW_ID) : fields;
+};
+
+function readInput(schema: Record<string, unknown> | null, form: FormValues, row: boolean): { value: unknown; errors: string[] } {
+  if (!schema) return { value: {}, errors: [] };
+  const fields = inputFields(schema, row);
   const out = schemaForm.coerce(fields, formStrings(form));
   const errors = out.errors.map((e) => `${e.name || "Input"} ${e.message}`);
   return { value: fields.length === 1 && fields[0].name === "" ? out.value[""] : out.value, errors };
 }
 
+/** An action's form; `inline` (a list row's action) never asks for the row id. */
 function actionForm(path: string, a: ActionMeta, idPrefix: string, inline = false): HtmlString {
-  const fields = a.input ? schemaForm.fields(a.input) : [];
+  const fields = inputFields(a.input, inline);
   const button = a.danger ? html`<button type="submit" class="danger" data-confirm="${a.title}?">${a.title}</button>` : html`<button type="submit">${a.title}</button>`;
   return html`<form method="post" action="${path}" class="${inline ? "toolbar" : "panel action"}">${inline ? "" : html`<h3>${a.title}</h3>${a.description ? html`<p class="help">${a.description}</p>` : ""}`}${controls(idPrefix, fields, {})}${button}</form>`;
 }
@@ -352,7 +361,7 @@ export async function runAction(core: Core, ctx: Context, plugin: string, sectio
   if (!a) return sectionPage(core, ctx, plugin, section, { kind: "error", messages: [`There is no action "${action}" here.`], status: 404 });
   const form = (ctx.body as FormValues) ?? {};
   if (a.danger && form.confirmed !== "1") return confirmPage(core, ctx, await pageData(core, ctx), `${a.title}?`, form, `${core.path}/system${apiPath}`);
-  const input = readInput(a.input, form);
+  const input = readInput(a.input, form, row !== null);
   if (input.errors.length) return sectionPage(core, ctx, plugin, section, { kind: "error", messages: input.errors, status: 400 });
   const path = row ? `${apiPath}/lists/${seg(row.list)}/${seg(row.id)}/actions/${seg(a.name)}` : `${apiPath}/actions/${seg(a.name)}`;
   const out = await send(core, ctx, "POST", path, input.value);

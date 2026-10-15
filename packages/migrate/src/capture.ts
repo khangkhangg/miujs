@@ -312,7 +312,7 @@ export function captureMiddleware(opts: CaptureOptions) {
               { label: "Failed writes", value: counters.failed, hint: since, ...(counters.failed ? { tone: "warning" as const } : {}) },
               { label: "Sample", value: typeof sample === "function" ? "custom" : sample },
               { label: "Recording", value: only },
-              { label: "Max body bytes", value: max },
+              { label: "Max body bytes", value: max, type: "bytes" },
             ],
           }),
           settings: custom

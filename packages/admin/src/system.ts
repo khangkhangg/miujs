@@ -15,10 +15,10 @@ import type { Database } from "@miujs/db";
 import { redact, redactor, type AuditEntry, type AuditService } from "@miujs/audit";
 import { adminErrors } from "./errors.ts";
 import { settingsKey, SettingsSync, type SettingsTarget } from "./system-settings.ts";
+import { REDACTED, redactBySchema, secretKeys } from "./system-redact.ts";
 
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 25;
-const REDACTED = "[REDACTED]";
 const isSecret = redactor();
 
 export interface SystemEntry {
@@ -194,7 +194,7 @@ export function createSystem(o: SystemOptions) {
     }
     if (row && input && typeof input === "object" && !Array.isArray(input)) input = { ...(input as object), id: row.id };
     else if (row && (input === undefined || input === null)) input = { id: row.id };
-    const metadata: Record<string, unknown> = { plugin: e.name, section: s.id, ...(row ? { list: row.list, id: row.id } : {}), action: a.name, danger: !!a.danger, input: redact(input, isSecret) };
+    const metadata: Record<string, unknown> = { plugin: e.name, section: s.id, ...(row ? { list: row.list, id: row.id } : {}), action: a.name, danger: !!a.danger, input: redactBySchema(input, a.input ? a.input.json : null) };
     const entry = { action: "system.action", resource: `system.${e.name}`, resourceId: row ? `${s.id}/${row.list}/${row.id}/${a.name}` : `${s.id}/${a.name}` };
     let result: unknown;
     try {
@@ -207,7 +207,7 @@ export function createSystem(o: SystemOptions) {
     return { ok: true, result: result === undefined ? null : result };
   }
 
-  const redactedSettings = (v: unknown) => redact(v, isSecret);
+  const redactedSettings = (s: ManageSection, v: unknown) => redactBySchema(v, s.settings!.schema.json);
 
   // ---------------------------------------------------------------------------------- routes
 
@@ -386,7 +386,7 @@ export function createSystem(o: SystemOptions) {
         need(c, e.name, "read");
         const s = sectionOf(e, ctx.params.section);
         if (!s.settings) throw adminErrors.systemSettingsUnknown(e.name, s.id);
-        return { schema: s.settings.schema.json, value: redactedSettings(await s.settings.get(c)), canWrite: systemAllowed(c, e.name, "settings") };
+        return { schema: s.settings.schema.json, value: redactedSettings(s, await s.settings.get(c)), canWrite: systemAllowed(c, e.name, "settings") };
       },
     }),
     route.put(`${base}/:plugin/:section/settings`, {
@@ -403,11 +403,13 @@ export function createSystem(o: SystemOptions) {
         if (!s.settings) throw adminErrors.systemSettingsUnknown(e.name, s.id);
         need(c, e.name, "settings");
         const before = await s.settings.get(c);
+        const schemaJson = s.settings.schema.json;
+        const secrets = new Set(secretKeys(before, schemaJson));
         let raw = ctx.body;
-        // "[REDACTED]" (as GET returns secrets) means "keep the current value".
+        // "[REDACTED]" (as GET returns secrets) means "keep the current value" of a secret field.
         if (raw && typeof raw === "object" && !Array.isArray(raw) && before && typeof before === "object") {
           const next: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
-          for (const [k, v] of Object.entries(next)) if (v === REDACTED && own(before as object, k)) next[k] = (before as Record<string, unknown>)[k];
+          for (const [k, v] of Object.entries(next)) if (v === REDACTED && secrets.has(k) && own(before as object, k)) next[k] = (before as Record<string, unknown>)[k];
           raw = next;
         }
         const checked = validate(s.settings.schema, raw);
@@ -415,8 +417,19 @@ export function createSystem(o: SystemOptions) {
         const db = await o.database(c);
         await s.settings.set(checked.value, c);
         await settings.save(db, e.name, s.id, checked.value, c.user?.id ?? null);
-        await audit(c, { action: "system.settings", resource: `system.${e.name}`, resourceId: s.id, before, after: checked.value, metadata: { plugin: e.name, section: s.id } });
-        return { ok: true, value: redactedSettings(await s.settings.get(c)) };
+        // Secrets never reach the audit log; which of them changed is kept as their names.
+        const prev = (before && typeof before === "object" ? before : {}) as Record<string, unknown>;
+        const after = (checked.value && typeof checked.value === "object" ? checked.value : {}) as Record<string, unknown>;
+        const redactedChanges = [...new Set([...secretKeys(before, schemaJson), ...secretKeys(checked.value, schemaJson)])].filter((k) => JSON.stringify(prev[k]) !== JSON.stringify(after[k]));
+        await audit(c, {
+          action: "system.settings",
+          resource: `system.${e.name}`,
+          resourceId: s.id,
+          before: redactBySchema(before, schemaJson),
+          after: redactBySchema(checked.value, schemaJson),
+          metadata: { plugin: e.name, section: s.id, ...(redactedChanges.length ? { redactedChanges } : {}) },
+        });
+        return { ok: true, value: redactedSettings(s, await s.settings.get(c)) };
       },
     }),
   ];

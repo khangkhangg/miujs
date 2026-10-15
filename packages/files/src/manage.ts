@@ -40,8 +40,8 @@ export function filesManage(d: FilesManageDeps): ManageSection[] {
         const stats: ManageStat[] = [
           { label: "Store", value: d.store().kind },
           { label: "Files", value: more ? `${USAGE_SCAN}+` : page.files.length, ...scanned },
-          { label: "Size", value: more ? `${bytes}+` : bytes, ...scanned },
-          { label: "Max upload size", value: rt.maxUploadSize, hint: "Default limit for signed PUT uploads" },
+          { label: "Size", value: more ? `${bytes}+` : bytes, type: "bytes", ...scanned },
+          { label: "Max upload size", value: rt.maxUploadSize, type: "bytes", hint: "Default limit for signed PUT uploads" },
           { label: "Multipart uploads", value: d.multipart },
           {
             label: "Signing secret",

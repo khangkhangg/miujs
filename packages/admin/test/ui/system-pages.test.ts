@@ -205,6 +205,99 @@ describe("System actions and settings from the UI", () => {
     expect(applied).toEqual([{ maxPlayers: null, closeAfterResultMs: false }, { maxPlayers: 8, closeAfterResultMs: 5000 }, { id: "ranked:u1" }]);
   });
 
+  test("row actions never ask for the row id: no id field, an id-only input is just a button, and runs get the id from the URL", async () => {
+    const runs: unknown[] = [];
+    const users = definePlugin({
+      name: "people",
+      manage: (): ManageSection[] => [
+        {
+          id: "users",
+          title: "Users",
+          lists: [
+            {
+              name: "users",
+              title: "Users",
+              idKey: "id",
+              columns: [{ key: "id", label: "Id" }],
+              list: () => ({ rows: [{ id: "u1" }] }),
+              rowActions: [
+                { name: "ban", title: "Ban", input: t.object({ id: t.string({ minLength: 1 }), reason: t.optional(t.string()) }), run: (i) => void runs.push(i) },
+                { name: "verify", title: "Verify", input: t.object({ id: t.string() }), run: (i) => void runs.push(i) },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const h = await systemSetup({ ui: true, plugins: [users] });
+    const base = `${P}/people/users`;
+    const pg = await h.req("GET", base);
+    expect(pg.status).toBe(200);
+    expect(pg.text).not.toContain('name="in.id"');
+    expect(pg.text).toContain('name="in.reason"');
+    expect(pg.text).toMatch(new RegExp(`<form method="post" action="${base}/lists/users/u1/actions/verify" class="toolbar"><button type="submit">Verify</button></form>`));
+    expect((await h.req("POST", `${base}/lists/users/u1/actions/verify`, { form: {} })).status).toBe(200);
+    const ban = await h.req("POST", `${base}/lists/users/u1/actions/ban`, { form: { "in.reason": "spam" } });
+    expect(ban.status).toBe(200);
+    expect(ban.text).toContain('class="alert ok"');
+    // a stray id field from an old form is ignored: the URL decides the row
+    expect((await h.req("POST", `${base}/lists/users/u1/actions/ban`, { form: { "in.id": "u2" } })).status).toBe(200);
+    expect(runs).toEqual([{ id: "u1" }, { id: "u1", reason: "spam" }, { id: "u1" }]);
+  });
+
+  test("settings named like secrets but typed as numbers are plain number inputs with their value", async () => {
+    const policy = definePlugin({
+      name: "policy",
+      manage: (): ManageSection[] => [
+        {
+          id: "auth",
+          title: "Auth",
+          settings: {
+            schema: t.object({ minPasswordLength: t.integer({ min: 1 }), sessionSecret: t.string() }),
+            get: () => ({ minPasswordLength: 8, sessionSecret: "abc-secret" }),
+            set: () => {},
+          },
+        },
+      ],
+    });
+    const h = await systemSetup({ ui: true, plugins: [policy] });
+    const pg = await h.req("GET", `${P}/policy/auth`);
+    expect(pg.text).toMatch(/<input type="number" id="set-minPasswordLength" name="in\.minPasswordLength" value="8"/);
+    expect(pg.text).toMatch(/<input type="password" id="set-sessionSecret" name="in\.sessionSecret" value=""/);
+    expect(pg.text).not.toContain("abc-secret");
+  });
+
+  test("stats are formatted by their type", async () => {
+    const st = definePlugin({
+      name: "stats",
+      manage: (): ManageSection[] => [
+        {
+          id: "s",
+          title: "S",
+          status: () => ({
+            stats: [
+              { label: "Heap", value: 3901947, type: "bytes" },
+              { label: "Up", value: 11518, type: "duration" },
+              { label: "Last", value: Date.UTC(2026, 0, 2, 3, 4), type: "date" },
+              { label: "On", value: true, type: "boolean" },
+              { label: "Plain", value: 11518 },
+            ],
+          }),
+        },
+      ],
+    });
+    const h = await systemSetup({ ui: true, plugins: [st] });
+    const r = await h.req("GET", `${P}/stats/s`);
+    expect(r.text).toMatch(/Heap<\/dt><dd>3\.7 MB<\/dd>/);
+    expect(r.text).toMatch(/Up<\/dt><dd>11\.5 s<\/dd>/);
+    expect(r.text).toMatch(/Last<\/dt><dd>2026-01-02 03:04 UTC<\/dd>/);
+    expect(r.text).toMatch(/On<\/dt><dd>Yes<\/dd>/);
+    expect(r.text).toMatch(/Plain<\/dt><dd>11518<\/dd>/);
+    const app = await h.req("GET", `${P}/app/overview`);
+    expect(app.text).toMatch(/Uptime<\/dt><dd[^>]*>\d+(\.\d)? (ms|s|min|h|d)<\/dd>/);
+    expect(app.text).toMatch(/Memory \(heap\)<\/dt><dd[^>]*>[\d.]+ (B|KB|MB|GB)<\/dd>/);
+  });
+
   test("a viewer cannot run actions or save settings through the UI either", async () => {
     const h = await systemSetup({ ui: true, access: true });
     expect((await h.req("POST", `${P}/jobs/queue/actions/ping`, { user: "view", form: {} })).status).toBe(403);

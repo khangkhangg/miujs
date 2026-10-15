@@ -18,6 +18,11 @@ export interface ManageStat {
   hint?: string;
   /** "good" | "warning" | "critical" colors the stat; omit for neutral. */
   tone?: "good" | "warning" | "critical";
+  /**
+   * Rendering hint, as for a column: "bytes" (a byte count), "duration" (milliseconds), "date"
+   * (epoch milliseconds or an ISO string), "boolean", "code", "number" or "text". Default "text".
+   */
+  type?: "text" | "number" | "bytes" | "date" | "duration" | "boolean" | "code";
 }
 
 export interface ManageColumn {

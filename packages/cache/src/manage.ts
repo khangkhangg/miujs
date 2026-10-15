@@ -54,7 +54,7 @@ export function cacheManage(resolve: (ctx: Context) => CacheStore): ManageSectio
             ? { label: "Entries", value: store.size() }
             : { label: "Entries", value: null, hint: `Entries are not countable on the ${store.name} store.` },
           store.bytes
-            ? { label: "Size", value: store.bytes(), hint: "Total length of the stored JSON values." }
+            ? { label: "Size", value: store.bytes(), type: "bytes", hint: "Total length of the stored JSON values." }
             : { label: "Size", value: null, hint: `Size is not known on the ${store.name} store.` },
           { label: "Hits", value: hits, hint: "Reads served from the cache by this instance since it started." },
           { label: "Misses", value: misses, hint: "Reads that found nothing, in this instance." },

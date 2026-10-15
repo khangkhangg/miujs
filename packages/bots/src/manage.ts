@@ -136,7 +136,7 @@ export function botsManage(s: BotsManageState): ManageSection[] {
           stats.push(
             { label: "Cache store", value: store.name },
             store.size ? { label: "Cache entries", value: store.size() } : { label: "Cache entries", value: null, hint: `Entries are not countable on the ${store.name} store.` },
-            store.bytes ? { label: "Cache size", value: store.bytes(), hint: "Approximate bytes held by this instance." } : { label: "Cache size", value: null, hint: `Size is not known on the ${store.name} store.` },
+            store.bytes ? { label: "Cache size", value: store.bytes(), type: "bytes", hint: "Approximate bytes held by this instance." } : { label: "Cache size", value: null, hint: `Size is not known on the ${store.name} store.` },
             { label: "Cache hits", value: c.hit, hint: `Including ${c.coalesced} served from a request already in flight.` },
             { label: "Cache misses", value: c.miss },
             { label: "Hit rate", value: reads ? `${Math.round((c.hit / reads) * 100)}%` : "n/a" },

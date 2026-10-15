@@ -108,7 +108,7 @@ export function auditManage(d: AuditManageDeps): ManageSection[] {
         const stats: ManageStat[] = [
           { label: "Last 24 h", value: recent, hint: "Entries written in the last 24 hours, counted by sequence number (all organizations)." },
           { label: "Entries", value: head?.seq ?? 0, hint: "Sequence number of the newest entry: every entry ever written, including purged ones." },
-          { label: "Latest entry", value: head ? iso(head.ts) : null },
+          { label: "Latest entry", value: head ? iso(head.ts) : null, type: "date" },
           keyed
             ? { label: "Signed", value: true, hint: "Entries are HMAC-signed: database access alone cannot rewrite the chain." }
             : { label: "Signed", value: false, tone: "warning", hint: "No HMAC key: anyone with database write access can rewrite the log and recompute its hashes. Set AUDIT_HMAC_KEY." },

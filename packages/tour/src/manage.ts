@@ -92,7 +92,7 @@ export function tourManage(rt: TourRuntime, jobs: TourJobs): ManageSection[] {
             { label: "Hotspots", value: Number(hotspots ?? 0) },
             { label: "Assets", value: total },
             { label: "Failed assets", value: failed, tone: failed > 0 ? "warning" : undefined, hint: "Reprocess them from the tours list." },
-            { label: "Source bytes", value: bytes, hint: "Size of uploaded source files (processed tiles are not counted)." },
+            { label: "Source bytes", value: bytes, type: "bytes", hint: "Size of uploaded source files (processed tiles are not counted)." },
           ],
           tables: [
             {
