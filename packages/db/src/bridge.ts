@@ -1,8 +1,9 @@
 // Schema bridge: one `t.object` feeds the API (validation, OpenAPI, MCP) and the database.
 // Part of the `@miujs/db/drizzle` entry (imports drizzle-orm).
 
-import { getTableColumns, sql, type InferInsertModel, type InferSelectModel } from "drizzle-orm";
+import { getTableColumns, is, sql, type InferInsertModel, type InferSelectModel } from "drizzle-orm";
 import {
+  getTableConfig,
   index,
   integer,
   primaryKey,
@@ -12,12 +13,12 @@ import {
   uniqueIndex,
   type AnySQLiteColumn,
   type SQLiteColumn,
-  type SQLiteTable,
+  SQLiteTable,
   type SQLiteTableWithColumns,
 } from "drizzle-orm/sqlite-core";
 import { errors, t, type Infer, type ObjectSchema, type Schema } from "miujs";
 import type { Migration } from "./index.ts";
-import { tableSql, type ColumnDescription, type IndexDescription, type TableDescription } from "./introspect.ts";
+import { tableSql, type ColumnDescription, type ForeignKeyDescription, type IndexDescription, type TableDescription } from "./introspect.ts";
 
 type Shape = Record<string, Schema<any>>;
 type Data<S> = Exclude<Infer<S>, null | undefined>;
@@ -27,7 +28,15 @@ type IsNullable<S> = S extends { __default: true }
     ? true
     : null extends Infer<S> ? true : false;
 type IsUnion<T, U = T> = T extends unknown ? ([U] extends [T] ? false : true) : never;
-type DataTypeOf<D> = [D] extends [string] ? "string" : [D] extends [number] ? "number" : [D] extends [boolean] ? "boolean" : "json";
+type DataTypeOf<D> = [D] extends [string]
+  ? "string"
+  : [D] extends [number]
+    ? "number"
+    : [D] extends [boolean]
+      ? "boolean"
+      : [D] extends [Date]
+        ? "date"
+        : "json";
 
 /** The Drizzle column type `tableFromSchema` produces for one `t` field. */
 export type BridgeColumn<TTable extends string, K extends string, S, PK extends string> = SQLiteColumn<{
@@ -62,11 +71,28 @@ export type BridgeTable<TTable extends string, P extends Shape, PK extends strin
 
 export type IndexSpec<K extends string> = K | K[] | { columns: K[]; unique?: boolean; name?: string; where?: string };
 
+export type ReferenceAction = "cascade" | "set null" | "restrict" | "no action" | "set default";
+
+export interface ReferenceSpec {
+  /**
+   * The referenced table: a Drizzle table, a `tableFromSchema` result, or this table's own name
+   * (self reference). Other tables must be passed as objects so Drizzle can link the columns.
+   */
+  table: SQLiteTable | { table: SQLiteTable } | string;
+  /** Referenced field (property key or SQL name). Default `"id"`. */
+  column?: string;
+  onDelete?: ReferenceAction;
+}
+
 export interface TableFromSchemaOptions<K extends string, PK extends K> {
-  /** Primary key column(s). Default: `"id"` when the schema has one, else none (a rowid table). */
+  /** Primary key field(s). Default: `"id"` when the schema has one, else none (a rowid table). */
   primaryKey?: PK | PK[];
-  /** Plain or unique indexes. Default names: `<table>_<cols>_idx` / `<table>_<cols>_unique`. */
+  /** Plain or unique indexes over fields. Default names: `<table>_<cols>_idx` / `<table>_<cols>_unique`. */
   indexes?: IndexSpec<K>[];
+  /** Foreign keys: `{ companyId: { table: companies.table, onDelete: "set null" } }`. */
+  references?: { [F in K]?: ReferenceSpec };
+  /** `"snake_case"`: SQL column names become snake_case (`createdAt` → `created_at`); keys stay as written. */
+  casing?: "snake_case";
 }
 
 export interface TableFromSchemaResult<T> {
@@ -90,27 +116,42 @@ export function bridgeDescription(table: object): TableDescription | undefined {
 
 interface FieldInfo {
   type: "TEXT" | "INTEGER" | "REAL";
-  mode?: "boolean" | "json";
+  mode?: "boolean" | "json" | "timestamp";
   enum?: (string | number)[];
   nullable: boolean;
   hasDefault: boolean;
   default?: unknown;
 }
 
-function fieldInfo(s: Schema<any>): FieldInfo {
-  let json = s.json as Record<string, any>;
+/** Peels `t.optional` / `t.nullable` / `t.default` wrappers via `.inner`. */
+function unwrap(s: Schema<any>): { base: Schema<any>; optional: boolean; nullable: boolean; hasDefault: boolean; default?: unknown } {
+  let optional = false;
   let nullable = false;
-  if (Array.isArray(json.anyOf) && json.anyOf.length === 2 && json.anyOf.some((j: any) => j?.type === "null")) {
-    nullable = true;
-    json = json.anyOf.find((j: any) => j?.type !== "null");
+  let hasDefault = false;
+  let dflt: unknown;
+  let cur = s;
+  while (cur.inner) {
+    const inner = cur.inner;
+    const json = cur.json as Record<string, unknown>;
+    if (Array.isArray(json.anyOf) && json.anyOf[0] === inner.json) nullable = true;
+    else if ("default" in json && !("default" in (inner.json as object))) {
+      if (!hasDefault) dflt = json.default;
+      hasDefault = true;
+    } else optional = true;
+    cur = inner;
   }
-  const hasDefault = "default" in json;
-  if (s.isOptional && !hasDefault) nullable = true;
+  return { base: cur, optional, nullable, hasDefault, ...(hasDefault ? { default: dflt } : {}) };
+}
+
+function fieldInfo(s: Schema<any>): FieldInfo {
+  const u = unwrap(s);
+  const json = u.base.json as Record<string, any>;
+  let nullable = u.nullable || (u.optional && !u.hasDefault);
   const info = (f: Pick<FieldInfo, "type" | "mode" | "enum">): FieldInfo => ({
     ...f,
     nullable,
-    hasDefault,
-    ...(hasDefault ? { default: json.default } : {}),
+    hasDefault: u.hasDefault,
+    ...(u.hasDefault ? { default: u.default } : {}),
   });
   const enumOf = (values: unknown[]): FieldInfo => {
     if (values.every((v) => typeof v === "string")) return info({ type: "TEXT", enum: values as string[] });
@@ -120,7 +161,7 @@ function fieldInfo(s: Schema<any>): FieldInfo {
     }
     return info({ type: "TEXT", mode: "json" });
   };
-  switch (s.kind) {
+  switch (u.base.kind) {
     case "string":
       return info({ type: "TEXT" });
     case "integer":
@@ -129,6 +170,8 @@ function fieldInfo(s: Schema<any>): FieldInfo {
       return info({ type: "REAL" });
     case "boolean":
       return info({ type: "INTEGER", mode: "boolean", enum: [0, 1] });
+    case "date":
+      return info({ type: "INTEGER", mode: "timestamp" });
     case "enum":
       return enumOf(json.enum);
     case "literal":
@@ -147,6 +190,7 @@ function sqlDefault(f: FieldInfo): string | null {
   const v = f.default;
   if (v === null) return "NULL";
   if (f.mode === "json") return `'${JSON.stringify(v).replace(/'/g, "''")}'`;
+  if (f.mode === "timestamp") return String(v instanceof Date ? v.getTime() : new Date(v as string).getTime());
   if (typeof v === "boolean") return v ? "1" : "0";
   if (typeof v === "number") return String(v);
   return `'${String(v).replace(/'/g, "''")}'`;
@@ -156,12 +200,22 @@ function schemaError(message: string, fix: string): never {
   throw errors.config("MIU_E_DB_SCHEMA", message, fix);
 }
 
+/** `createdAt` → `created_at`, `personID` → `person_id`, `URLPath` → `url_path`. */
+function snakeCase(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .toLowerCase();
+}
+
 /**
  * Builds a Drizzle `sqliteTable` and its `CREATE TABLE` SQL from a MiuJS `t.object`, so one
  * definition validates the API and shapes the table. Mapping: string → TEXT, integer → INTEGER,
- * number → REAL, boolean → INTEGER 0/1, enum/literal → TEXT (or INTEGER) with a CHECK,
+ * number → REAL, boolean → INTEGER 0/1, `t.date()` → INTEGER milliseconds (Drizzle
+ * `timestamp_ms`, so rows hold `Date`s), enum/literal → TEXT (or INTEGER) with a CHECK,
  * arrays/objects/any → TEXT holding JSON, `t.optional`/`t.nullable` → nullable, `t.default` →
- * DEFAULT, date/date-time strings → TEXT (ISO 8601). Column names are the object keys.
+ * DEFAULT, date-time *strings* → TEXT (ISO 8601). Column names are the object keys, or their
+ * snake_case form with `casing: "snake_case"`.
  */
 export function tableFromSchema<
   const TTable extends string,
@@ -170,6 +224,7 @@ export function tableFromSchema<
 >(name: TTable, schema: ObjectSchema<P>, opts: TableFromSchemaOptions<keyof P & string, PK> = {}): TableFromSchemaResult<BridgeTable<TTable, P, PK>> {
   const shape = schema.shape;
   const keys = Object.keys(shape);
+  const col = (k: string) => (opts.casing === "snake_case" ? snakeCase(k) : k);
   const check = (cols: string[], what: string) => {
     for (const c of cols) {
       if (!keys.includes(c)) schemaError(`tableFromSchema("${name}"): ${what} "${c}" is not a field of the schema`, `Use one of: ${keys.join(", ")}.`);
@@ -181,28 +236,62 @@ export function tableFromSchema<
   const infos: Record<string, FieldInfo> = {};
   for (const k of keys) infos[k] = fieldInfo(shape[k]);
 
+  // Foreign keys: resolve each target to a SQL table/column now, and to a Drizzle column lazily.
+  let table: any;
+  const refs: { field: string; table: string; column: string; onDelete?: ReferenceAction; drizzle: () => AnySQLiteColumn }[] = [];
+  for (const [field, spec] of Object.entries((opts.references ?? {}) as Record<string, ReferenceSpec | undefined>)) {
+    if (!spec) continue;
+    check([field], "reference");
+    const column = spec.column ?? "id";
+    if (typeof spec.table === "string") {
+      if (spec.table !== name) {
+        schemaError(
+          `tableFromSchema("${name}"): reference ${field} → "${spec.table}" names another table by string`,
+          `Pass the table object instead, e.g. references: { ${field}: { table: ${spec.table}.table } }; only this table's own name ("${name}") works as a string (self reference).`,
+        );
+      }
+      check([column], "referenced field");
+      refs.push({ field, table: name, column: col(column), onDelete: spec.onDelete, drizzle: () => table[column] });
+      continue;
+    }
+    const target = is(spec.table, SQLiteTable) ? spec.table : (spec.table as { table?: unknown })?.table;
+    if (!is(target, SQLiteTable)) {
+      schemaError(`tableFromSchema("${name}"): reference ${field} has no table`, "Pass a Drizzle table or a tableFromSchema() result as table.");
+    }
+    const columns = getTableColumns(target) as Record<string, AnySQLiteColumn>;
+    const refCol = columns[column] ?? Object.values(columns).find((c) => c.name === column);
+    if (!refCol) {
+      schemaError(
+        `tableFromSchema("${name}"): reference ${field} → ${getTableConfig(target).name}.${column} does not exist`,
+        `Use one of: ${Object.keys(columns).join(", ")}.`,
+      );
+    }
+    refs.push({ field, table: getTableConfig(target).name, column: refCol.name, onDelete: spec.onDelete, drizzle: () => refCol });
+  }
+
   const columns: ColumnDescription[] = keys.map((k) => {
     const f = infos[k];
     const isPk = pk.includes(k);
-    const col: ColumnDescription = {
-      name: k,
+    const c: ColumnDescription = {
+      name: col(k),
       type: f.type,
       // INTEGER PRIMARY KEY is the rowid and never NULL; other primary keys need NOT NULL in SQLite.
-      notNull: isPk ? !(pk.length === 1 && f.type === "INTEGER") : !f.nullable,
+      notNull: isPk ? !(pk.length === 1 && f.type === "INTEGER" && !f.mode) : !f.nullable,
       default: sqlDefault(f),
       primaryKey: isPk,
     };
-    if (f.enum) col.enum = f.enum;
-    return col;
+    if (f.enum) c.enum = f.enum;
+    return c;
   });
 
   const indexes: IndexDescription[] = (opts.indexes ?? []).map((spec) => {
     const s: { columns: string[]; unique?: boolean; name?: string; where?: string } =
       typeof spec === "string" ? { columns: [spec] } : Array.isArray(spec) ? { columns: spec } : spec;
     check(s.columns, "index column");
+    const sqlCols = s.columns.map(col);
     const idx: IndexDescription = {
-      name: s.name || `${name}_${s.columns.join("_")}_${s.unique ? "unique" : "idx"}`,
-      columns: s.columns,
+      name: s.name || `${name}_${sqlCols.join("_")}_${s.unique ? "unique" : "idx"}`,
+      columns: sqlCols,
       unique: !!s.unique,
       origin: "c",
     };
@@ -210,32 +299,47 @@ export function tableFromSchema<
     return idx;
   });
 
-  const description: TableDescription = { name, columns, primaryKey: pk, indexes, foreignKeys: [] };
+  const foreignKeys: ForeignKeyDescription[] = refs.map((r) => ({
+    columns: [col(r.field)],
+    table: r.table,
+    references: [r.column],
+    onUpdate: "NO ACTION",
+    onDelete: r.onDelete ? r.onDelete.toUpperCase() : "NO ACTION",
+  }));
+
+  const description: TableDescription = { name, columns, primaryKey: pk.map(col), indexes, foreignKeys };
 
   const builders: Record<string, any> = {};
   for (const k of keys) {
     const f = infos[k];
+    const n = col(k);
     let b: any =
       f.type === "REAL"
-        ? real(k)
+        ? real(n)
         : f.type === "INTEGER"
           ? f.mode === "boolean"
-            ? integer(k, { mode: "boolean" })
-            : integer(k)
+            ? integer(n, { mode: "boolean" })
+            : f.mode === "timestamp"
+              ? integer(n, { mode: "timestamp_ms" })
+              : integer(n)
           : f.mode === "json"
-            ? text(k, { mode: "json" })
+            ? text(n, { mode: "json" })
             : f.enum
-              ? text(k, { enum: f.enum as [string, ...string[]] })
-              : text(k);
+              ? text(n, { enum: f.enum as [string, ...string[]] })
+              : text(n);
     if (pk.length === 1 && pk[0] === k) b = b.primaryKey();
     else if (!f.nullable) b = b.notNull();
-    if (f.hasDefault) b = b.default(f.default);
+    if (f.hasDefault) b = b.default(f.mode === "timestamp" && f.default !== null ? new Date(f.default as string | number | Date) : f.default);
+    const ref = refs.find((r) => r.field === k);
+    if (ref) b = b.references(ref.drizzle, ref.onDelete ? { onDelete: ref.onDelete } : undefined);
     builders[k] = b;
   }
-  const table = sqliteTable(name, builders, (cols: any) => [
+  table = sqliteTable(name, builders, (cols: any) => [
     ...(pk.length > 1 ? [primaryKey({ columns: pk.map((c) => cols[c]) as [any, ...any[]] })] : []),
-    ...indexes.map((i) => {
-      const built = (i.unique ? uniqueIndex(i.name) : index(i.name)).on(...(i.columns.map((c) => cols[c]) as [any, ...any[]]));
+    ...indexes.map((i, n) => {
+      const fields = (opts.indexes![n] as IndexSpec<string>);
+      const keysOf = typeof fields === "string" ? [fields] : Array.isArray(fields) ? fields : fields.columns;
+      const built = (i.unique ? uniqueIndex(i.name) : index(i.name)).on(...(keysOf.map((c) => cols[c]) as [any, ...any[]]));
       return i.where ? built.where(sql.raw(i.where)) : built;
     }),
   ]);
@@ -244,7 +348,7 @@ export function tableFromSchema<
 
   const statements = tableSql(description);
   return {
-    table: table as unknown as BridgeTable<TTable, P, PK>,
+    table: table as BridgeTable<TTable, P, PK>,
     description,
     sql: statements,
     migration: (id) => ({ id, sql: statements.map((s) => `${s};`).join("\n") }),
@@ -272,7 +376,7 @@ function columnSchema(col: AnySQLiteColumn): Schema<any> {
     case "boolean":
       return t.boolean();
     case "date":
-      return t.string({ format: "date-time" });
+      return t.date();
     case "bigint":
       return t.string();
     default: // json, buffer, custom
@@ -283,8 +387,8 @@ function columnSchema(col: AnySQLiteColumn): Schema<any> {
 /**
  * A `t.object` for validating API input (or describing output) from a Drizzle table. Keys are the
  * table's property names. For tables made by `tableFromSchema`, insert mode reuses the original
- * field schemas, so formats, lengths and defaults survive the round trip. Timestamp-mode columns
- * become ISO date-time strings; convert to `Date` before inserting.
+ * field schemas, so formats, lengths and defaults survive the round trip. Timestamp columns map
+ * to `t.date()` (ISO string or Date in, Date out), which is what Drizzle expects to insert.
  */
 export function schemaFromTable<T extends SQLiteTable, M extends "insert" | "select" = "insert">(
   table: T,

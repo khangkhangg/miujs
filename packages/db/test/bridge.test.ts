@@ -228,3 +228,125 @@ describe("schemaFromTable()", () => {
     expect(validate(s, { ...good, createdAt: "yesterday" }).ok).toBe(false);
   });
 });
+
+describe("follow-up: inner schemas, t.date(), references, casing", () => {
+  test("a default of null on a nullable field keeps both (read via .inner, not JSON sniffing)", () => {
+    const x = tableFromSchema("x", t.object({ note: t.default(t.nullable(t.string()), null) }));
+    expect(x.sql[0]).toContain(`"note" TEXT DEFAULT NULL`);
+  });
+
+  test("t.date() becomes an INTEGER millisecond timestamp column holding Dates", async () => {
+    const ev = tableFromSchema("events", t.object({ id: t.integer(), at: t.date(), seen: t.optional(t.date()) }));
+    expect(ev.sql[0]).toContain(`"at" INTEGER NOT NULL`);
+    expect(ev.sql[0]).toContain(`"seen" INTEGER,`.slice(0, -1));
+    const col = getTableConfig(ev.table).columns.find((c) => c.name === "at")!;
+    expect([col.dataType, col.columnType]).toEqual(["date", "SQLiteTimestamp"]);
+    const database = sqlite();
+    await migrate(database, [ev.migration("1")]);
+    const orm = drizzleFor(database);
+    const when = new Date("2026-03-04T05:06:07.890Z");
+    await orm.insert(ev.table).values({ at: when });
+    const row = await orm.select().from(ev.table).get();
+    const typed: Date = row!.at;
+    expect(typed.toISOString()).toBe(when.toISOString());
+    expect(await database.prepare("SELECT at FROM events").first("at")).toBe(when.getTime());
+  });
+
+  test("schemaFromTable maps timestamp columns to t.date()", () => {
+    const tbl = sqliteTable("ts", {
+      a: integer("a", { mode: "timestamp" }).notNull(),
+      b: integer("b", { mode: "timestamp_ms" }),
+    });
+    const s = schemaFromTable(tbl);
+    expect(s.shape.a.kind).toBe("date");
+    const r = validate(s, { a: "2026-01-01T00:00:00Z", b: null });
+    expect(r.ok).toBe(true);
+    expect((r as any).value.a).toBeInstanceOf(Date);
+    expect(schemaFromTable(tbl, { mode: "select" }).shape.b.kind).toBe("date");
+  });
+
+  const Company = t.object({ id: t.integer(), legalName: t.string() });
+  const companies = tableFromSchema("companies", Company, { casing: "snake_case" });
+
+  test("casing: snake_case renames SQL columns, keeps camelCase keys", async () => {
+    expect(companies.sql[0]).toBe(`CREATE TABLE "companies" (\n  "id" INTEGER PRIMARY KEY,\n  "legal_name" TEXT NOT NULL\n)`);
+    expect(getTableConfig(companies.table).columns.map((c) => c.name)).toEqual(["id", "legal_name"]);
+    const p = tableFromSchema("people", t.object({ personID: t.string(), firstName: t.string(), createdAt: t.date() }), {
+      casing: "snake_case",
+      primaryKey: "personID",
+      indexes: [["firstName", "createdAt"]],
+    });
+    expect(p.description.columns.map((c) => c.name)).toEqual(["person_id", "first_name", "created_at"]);
+    expect(p.sql[1]).toBe(`CREATE INDEX "people_first_name_created_at_idx" ON "people" ("first_name", "created_at")`);
+    const database = sqlite();
+    await migrate(database, [companies.migration("1")]);
+    const orm = drizzleFor(database);
+    await orm.insert(companies.table).values({ legalName: "Acme" });
+    expect(await orm.select().from(companies.table)).toEqual([{ id: 1, legalName: "Acme" }]);
+    expect(Object.keys((schemaFromTable(companies.table).json as any).properties)).toEqual(["id", "legalName"]);
+  });
+
+  test("references: SQL FOREIGN KEY and Drizzle .references, with casing and onDelete", async () => {
+    const contactsT = tableFromSchema(
+      "contacts",
+      t.object({ id: t.integer(), companyId: t.nullable(t.integer()), managerId: t.optional(t.integer()), name: t.string() }),
+      {
+        casing: "snake_case",
+        references: {
+          companyId: { table: companies.table, onDelete: "set null" },
+          managerId: { table: "contacts", onDelete: "cascade" },
+        },
+      },
+    );
+    expect(contactsT.sql[0]).toContain(`FOREIGN KEY ("company_id") REFERENCES "companies" ("id") ON DELETE SET NULL`);
+    expect(contactsT.sql[0]).toContain(`FOREIGN KEY ("manager_id") REFERENCES "contacts" ("id") ON DELETE CASCADE`);
+    const fks = getTableConfig(contactsT.table).foreignKeys.map((fk) => {
+      const r = fk.reference();
+      return [r.columns[0].name, getTableConfig(r.foreignTable).name, r.foreignColumns[0].name, fk.onDelete];
+    });
+    expect(fks).toEqual([
+      ["company_id", "companies", "id", "set null"],
+      ["manager_id", "contacts", "id", "cascade"],
+    ]);
+
+    const database = sqlite();
+    await migrate(database, [companies.migration("1"), contactsT.migration("2")]);
+    const orm = drizzleFor(database);
+    await orm.insert(companies.table).values({ legalName: "Acme" });
+    await orm.insert(contactsT.table).values({ companyId: 1, name: "Boss" });
+    await orm.insert(contactsT.table).values({ companyId: 1, managerId: 1, name: "Report" });
+    // Drizzle wraps driver errors ("Failed query: ..."); the SQLite error is the cause.
+    const fkErr: any = await orm.insert(contactsT.table).values({ companyId: 99, name: "Ghost" }).run().catch((e) => e);
+    expect(String(fkErr?.cause?.message ?? fkErr)).toMatch(/FOREIGN KEY/);
+    await orm.delete(companies.table);
+    expect((await orm.select().from(contactsT.table)).map((c) => c.companyId)).toEqual([null, null]);
+    await orm.delete(contactsT.table).where(eq(contactsT.table.id, 1));
+    expect(await orm.select().from(contactsT.table)).toEqual([]);
+  });
+
+  test("references accept a tableFromSchema result and an explicit column", () => {
+    const users = tableFromSchema("users", t.object({ id: t.integer(), handle: t.string() }), { indexes: [{ columns: ["handle"], unique: true }] });
+    const posts = tableFromSchema("posts", t.object({ id: t.integer(), author: t.string() }), {
+      references: { author: { table: users, column: "handle", onDelete: "restrict" } },
+    });
+    expect(posts.sql[0]).toContain(`FOREIGN KEY ("author") REFERENCES "users" ("handle") ON DELETE RESTRICT`);
+  });
+
+  test("bad references explain the fix", () => {
+    const codeOf = (f: () => unknown) => {
+      try {
+        f();
+      } catch (e) {
+        return e as any;
+      }
+    };
+    const unknownField = codeOf(() => tableFromSchema("a", t.object({ x: t.integer() }), { references: { y: { table: companies.table } } as any }));
+    expect(unknownField?.code).toBe("MIU_E_DB_SCHEMA");
+    const unknownColumn = codeOf(() => tableFromSchema("a", t.object({ x: t.integer() }), { references: { x: { table: companies.table, column: "nope" } } }));
+    expect(unknownColumn?.code).toBe("MIU_E_DB_SCHEMA");
+    expect(unknownColumn.fix).toContain("legalName");
+    const otherString = codeOf(() => tableFromSchema("a", t.object({ x: t.integer() }), { references: { x: { table: "companies" } } }));
+    expect(otherString?.code).toBe("MIU_E_DB_SCHEMA");
+    expect(otherString.fix).toContain("table object");
+  });
+});
