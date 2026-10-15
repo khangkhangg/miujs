@@ -1,0 +1,25 @@
+
+== bun quiz: cold start (machine CPU busy before start: 3%)
+   first response 51 ms, idle RSS 39.2 MB, idle stop → exit 15 ms
+== bun quiz: soak 60 s
+   236 ops/s, p50 6.36 / p95 30.20 / p99 94.00 ms, errors 0, heap warm 3.7 → end 4.7 → settled 1.2 MB (27.8% / -67.3%)  SUSPECTED LEAK
+   growing types: RegExp +-1, StructureChain +-3, FunctionExecutable +-52, UnlinkedFunctionExecutable +-56, SymbolTable +-80, WeakSet +-120, UnlinkedFunctionCodeBlock +-168, Headers +-208
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":0,"serverAnswersAfter":200,"servedDelta":201,"wsAborts":50,"wsWelcomed":50,"roomsAfterWsAbort":{"rooms":50,"players":50,"connected":0}}; stop after load → exit in 19 ms
+
+== bun core: cold start (machine CPU busy before start: 5%)
+   first response 42 ms, idle RSS 37.0 MB, idle stop → exit 14 ms
+== bun core: soak 60 s
+   69,951 ops/s, p50 0.90 / p95 1.18 / p99 1.70 ms, errors 0, heap warm 0.7 → end 0.6 → settled 0.6 MB (-11.0% / -18.3%)
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":null,"serverAnswersAfter":200,"servedDelta":0}; stop after load → exit in 12 ms
+
+== node core: cold start (machine CPU busy before start: 6%)
+   first response 201 ms, idle RSS 69.2 MB, idle stop → exit 36 ms
+== node core: soak 60 s
+   26,772 ops/s, p50 2.29 / p95 3.37 / p99 5.15 ms, errors 0, heap warm 9.0 → end 8.9 → settled 8.8 MB (-1.8% / -2.8%)
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":null,"serverAnswersAfter":200,"servedDelta":0}; stop after load → exit in 32 ms
+
+== deno core: cold start (machine CPU busy before start: 8%)
+   first response 125 ms, idle RSS 39.4 MB, idle stop → exit 59 ms
+== deno core: soak 60 s
+   67,385 ops/s, p50 0.86 / p95 1.84 / p99 2.65 ms, errors 0, heap warm 3.7 → end 3.6 → settled 3.6 MB (-0.5% / -1.2%)
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":null,"serverAnswersAfter":200,"servedDelta":0}; stop after load → exit in 46 ms

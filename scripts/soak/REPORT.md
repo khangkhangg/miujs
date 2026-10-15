@@ -6,21 +6,29 @@ Code under test: branch `feat/mvp-core`.
 
 - The final Bun runs were at `7df5ae6`, plus uncommitted work by other agents in `packages/` (13–14 files).
 - The Node run was at `d53f0f2` and the Deno run at `99ea235`.
-- Other agents committed fixes during and after this work. Every number below was measured before the fixes listed under "Status of findings".
+- Other agents committed fixes during and after this work. Numbers marked "before" were measured before the fixes listed under "Status of findings"; numbers marked "after" come from the re-soak described below.
 - Each JSON result records the exact `HEAD` and the number of dirty files (`codeState`).
+
+**Re-soak after the fixes** (same day, same machine, same parameters: 60 s, same concurrency, 65 s settle for realtime apps):
+
+- Code: `2891f99` (includes `4754301` F1, `e6bad9c` F2, `6ddb1ae` F4 + long-poll, `fa56f78` + `553cedc` F5), plus one uncommitted file by another agent (`packages/miujs/src/app.ts`) and the new, unused `packages/bots/`.
+- Re-soaked: core (Bun wrapper, Bun `app.listen`, Node, Deno), api, quiz, arena. crm was not re-run.
+- Results are saved next to the originals with an `-after` suffix (`results/*-after.json`, `full-bun-after.log`, `runtimes-after.log`, `bench-after.log`). The "before" numbers below are the original runs.
+- The machine is shared with other agents. The runner now records whole-machine CPU before each app (3–10% idle load on every run) and per second during load. quiz showed noisy tail latency and was run three times (see "Noise and caveats").
 
 ## Status of findings
 
-| Finding | Package | Status |
-| --- | --- | --- |
-| F1: argon2id RSS spike on concurrent sign-ins | `@miujs/auth` | **Fixed** in the auth commit after `fa56f78`: argon2id at 19 MiB, at most 4 hashes at once. 32 concurrent verifies now peak at +78 MB RSS, down from +1,284 MB. |
-| F2: `ranFor` grows forever | `examples/api` | **Fixed** in `examples/api` (coordinator, after this run). Not re-soaked. |
-| F3: rate-limit windows, ~1.4 KB per new IP/account | `@miujs/auth` | Informational. Bounded by window expiry and `maxKeys`. |
-| F4: finished games kept in memory for 60 s | `@miujs/game` / `@miujs/realtime` | **Fixed**: rooms close 5 s after the result (`closeAfterResultMs`). Not re-soaked. |
-| F5: JSON body read ~0.4 µs slower per request | `miujs` core | **Fixed** in `fa56f78` (Content-Length requests) and the follow-up body-read commit (requests without one): `POST /json` is at 103–104% of the best other framework, peak heap 9 KB per 10k requests (was 265 KB). |
-| Long-poll ignores client disconnect | `@miujs/game` | **Fixed**: the wait ends when the request is aborted (`ctx.req.signal`). |
-| Shutdown hang with open room timers | `miujs` / `@miujs/realtime` | **Fixed** in `3d837b1` (`app.stop()` and the plugin `stop()` hook). |
-| Expired join codes, sessions and limiter windows not swept | `@miujs/realtime`, `@miujs/session`, `@miujs/auth` | **Fixed** by other agents during this work. |
+| Finding | Package | Status | Before → after (re-soak) |
+| --- | --- | --- | --- |
+| F1: argon2id RSS spike on concurrent sign-ins | `@miujs/auth` | **Fixed** in `4754301`: argon2id at 19 MiB, at most 4 hashes at once. **Verified.** | `argon2-burst.ts 32`: +1,282 MB → **+77 to +96 MB** peak RSS (8 at once: +512 → +76 MB). api soak RSS peak **1,353 → 177 MB**; `register` p50/p99 195/541 → 29/96 ms. |
+| F2: `ranFor` grows forever | `examples/api` | **Fixed** in `e6bad9c` (keeps the last 100). **Verified.** | `ranFor` length after 60 s: 112,557 → **100**. api settled heap 6.2 → **3.9 MB**; settled growth +68% → **+16.5%**; growing `string`s +92,729 → +7,200. The rest is F3 (bounded), see F2 below. |
+| F3: rate-limit windows, ~1.4 KB per new IP/account | `@miujs/auth` | Informational. Bounded by window expiry and `maxKeys`. | Now the only api growth: +7,626 `Object`s for ~1,925 users after warm-up, 3.96 per user (F3 measured 4.17). |
+| F4: finished games kept in memory for 60 s | `@miujs/game` / `@miujs/realtime` | **Fixed** in `6ddb1ae`: rooms close 5 s after the result (`closeAfterResultMs`). **Verified.** | arena live rooms: peak 34,882 → **3,091** (flat at ~3,000 = games/s × 5 s); at end of load 22,726 → **0**. Heap after GC at end 131.8 → **3.2 MB**; RSS peak / settled 444 / 128 → **152 / 80 MB**. |
+| F5: JSON body read ~0.4 µs slower per request | `miujs` core | **Fixed** in `fa56f78` + `553cedc`. **Verified.** | `bun bench/run.ts` `POST /json`: 347,000 req/s (92% of best other) → **408,500 (104%)**; peak heap per 10k requests 288 KB → **7.8 KB**. Over real HTTP the core soak is load-generator bound (unchanged, see below). |
+| Long-poll ignores client disconnect | `@miujs/game` | **Fixed** in `6ddb1ae`: the wait ends when the request is aborted (`ctx.req.signal`). **Verified.** | Requests in flight 2 s after the client vanished: 1 → **0**. |
+| Shutdown hang with open room timers | `miujs` / `@miujs/realtime` | **Fixed** in `3d837b1` (`app.stop()` and the plugin `stop()` hook). | Still passes: 12–46 ms after load on every re-soaked app and runtime. |
+| Expired join codes, sessions and limiter windows not swept | `@miujs/realtime`, `@miujs/session`, `@miujs/auth` | **Fixed** by other agents during this work. | – |
+| F7 (new, minor): `findMatch` does not leave the queue when it gives up | `@miujs/game` client | Open. See F7. | – |
 
 ## How it works
 
@@ -99,27 +107,37 @@ Every note created dispatches a queue job.
 
 ## Results (Bun, 60 s each)
 
+"Before" is the original run; "after" is the re-soak at `2891f99`. crm was not re-run.
+
 **Throughput and latency**
 
-| App | ops/s | p50 ms | p95 ms | p99 ms | Errors |
+| App | ops/s before → after | p50 ms | p95 ms | p99 ms | Errors |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| core | 69,527 | 0.91 | 1.21 | 1.61 | 0 |
-| api | 10,412 | 1.72 | 4.61 | 8.53 | 0 |
-| quiz | 236 (plus 1,465 WS frames/s in) | 5.97 | 7.43 | 18.0 | 0 |
-| crm | 1,329 | 13.6 | 34.8 | 52.7 | 1,574 ¹ |
-| arena | 9,672 (plus 10,617 WS frames/s in) | 6.20 | 66.0 | 106 | 0 |
+| core | 69,527 → 68,016 | 0.91 → 0.91 | 1.21 → 1.33 | 1.61 → 2.20 | 0 → 0 |
+| api | 10,412 → **17,697** ² | 1.72 → 1.46 | 4.61 → 2.97 | 8.53 → 4.42 | 0 → 0 |
+| quiz | 236 → 234 (plus ~1,465 WS frames/s in) | 5.97 → 6.08 | 7.43 → 9.53 | 18.0 → 34.4 ³ | 0 → 0 |
+| crm | 1,329 (not re-run) | 13.6 | 34.8 | 52.7 | 1,574 ¹ |
+| arena | 9,672 → 9,896 (plus ~10,600 WS frames/s in) | 6.20 → 6.45 | 66.0 → 66.6 | 106 → 89.5 | 0 → 0 |
 
 **Memory**
 
 | App | RSS start / peak / end MB | Heap after GC: warm-up → end → settled MB | Growth end / settled | Verdict |
 | --- | --- | --- | --- | --- |
-| core | 39.1 / 53.7 / 46.9 | 0.8 → 0.7 → 0.6 | −10% / −17% | flat |
-| api | 43.1 / **1,353** / 67.1 | 3.7 → 6.5 → 6.2 | +77% / +68% | grows: the example's `ranFor` plus auth limiter windows (F2, F3) |
-| quiz | 42.9 / 65.6 / 64.9 | 3.7 → 4.7 → 1.2 | +28% / **−67%** | no leak: rooms are kept 60 s by design, then all disposed |
-| crm | 60.2 / **461** / 153.7 | 10.5 → 10.2 → 9.3 | −3% / −11% | flat |
-| arena | 49.1 / 444 / 393 | 49.1 → **131.8** → 2.8 | +168% / **−94%** | no leak, but finished games are held heavily (F4) |
+| core before | 39.1 / 53.7 / 46.9 | 0.8 → 0.7 → 0.6 | −10% / −17% | flat |
+| core after | 28.1 / 48.7 / 39.7 | 0.8 → 0.7 → 0.6 | −10% / −17% | flat |
+| api before | 43.1 / **1,353** / 67.1 | 3.7 → 6.5 → 6.2 | +77% / +68% | grows: the example's `ranFor` plus auth limiter windows (F2, F3) |
+| api after | 37.7 / **177** / 63.4 | 3.3 → 4.3 → 3.9 | +29% / +16.5% | F1 and F2 fixed; what remains is F3 limiter windows (~4 `Object`s per user, bounded), with ~2× as many users as before |
+| quiz before | 42.9 / 65.6 / 64.9 | 3.7 → 4.7 → 1.2 | +28% / **−67%** | no leak: rooms are kept 60 s by design, then all disposed |
+| quiz after | 40.7 / 63.2 / 63.1 | 3.7 → 4.7 → 1.2 | +28% / −67% | unchanged (quiz rooms do not use `gameRoom`, so F4's fix does not apply): peak 360 rooms, 280 at end of load, 0 settled |
+| crm (not re-run) | 60.2 / **461** / 153.7 | 10.5 → 10.2 → 9.3 | −3% / −11% | flat |
+| arena before | 49.1 / 444 / 393 | 49.1 → **131.8** → 2.8 | +168% / **−94%** | no leak, but finished games are held heavily (F4) |
+| arena after | 46.3 / **152** / 82.5 | 24.3 → **3.2** → 3.0 | −87% / −88% | flat: finished rooms close 5 s after the result; 0 live rooms at end of load |
 
 ¹ Every crm error is a `429` on `POST /admin/login`. The harness logs in again every 500 operations, so the three seeded accounts hit the per-account sign-in limit (50 per 15 min). That is the auth rate limiter working as designed. No other request failed.
+
+² api clients spend much less time in `register`/`login` (argon2id at 19 MiB, F1), so they do ~70% more notes requests and sign up ~2,400 users instead of ~1,450 in 60 s. Compare per-route latency, not total ops/s.
+
+³ quiz tail latency varied run to run on the shared machine (p99 32, 94 and 34 ms in three after-runs; the table shows the quietest). Its p50 and its answer/broadcast latency are unchanged; no fix touched quiz. See "Noise and caveats".
 
 "ops" counts HTTP requests plus timed WebSocket round trips.
 
@@ -127,8 +145,8 @@ Every note created dispatches a queue job.
 
 **api**
 
-- Notes routes: ~1.7 / 7.2, at 1.4k–4.2k requests/s each.
-- `register`: 195 / 541. `login`: 190 / 426. Both are dominated by argon2id cost (before the F1 fix).
+- Notes routes: ~1.7 / 7.2, at 1.4k–4.2k requests/s each (after: ~1.4 / 4.4, at 2.3k–7.2k requests/s each).
+- `register`: 195 / 541 → **28.5 / 96**. `login`: 190 / 426 → **28.2 / 235**. Before the F1 fix both were dominated by argon2id cost at 64 MiB with no cap.
 
 **quiz**
 
@@ -136,12 +154,12 @@ Every note created dispatches a queue job.
 - The host's start or next until every player sees the question: 6.1 / 11.4.
 - Joins: 2.0 / 25.
 
-**arena** (~1,160 games/s)
+**arena** (~1,160 games/s before, ~1,190 after; before → after)
 
-- Matchmaking, from join to matched: 10.1 / 81.5.
+- Matchmaking, from join to matched: 10.1 / 81.5 → 10.4 / 56.4.
 - Ticket to seated: 9.2 / 29.
 - A move until the board updates: 5.4 / 13.7.
-- A whole game: 62 / 185.
+- A whole game: 62 / 185 → 63.7 / 124.
 
 **crm**
 
@@ -150,7 +168,9 @@ Every note created dispatches a queue job.
 - Writes (create, update, delete, with audit and workflows): ~18–23 / 64.
 - Login: 115 / 393.
 
-### Idle and startup (Bun)
+### Idle and startup (Bun, before)
+
+After the fixes, first response was 34 ms (core wrapper), 42 ms (core `app.listen`), 54 ms (api), 45 ms (quiz) and 57 ms (arena), within run-to-run noise of the table. Idle RSS after load + settle fell for arena (128.0 → 80.0 MB) and api (62.4 → 56.7 MB); the others moved by about 4–6 MB.
 
 | App | Process ready (ms) | First response (ms) | Idle RSS after start (MB) | Idle heap (MB) | Idle RSS after load + settle (MB) | Heap after load + settle (MB) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -169,7 +189,7 @@ After load, RSS stays well above where it started, even when the JS heap is back
 - arena: 128 MB RSS with a 2.8 MB heap
 - crm: 150 MB RSS with a 9 MB heap
 
-That is the allocator and GC keeping pages after the peaks (argon2 buffers, tens of thousands of rooms), not a JS leak. In every app the settled heap is at or below the warm-up heap.
+That is the allocator and GC keeping pages after the peaks (argon2 buffers, tens of thousands of rooms), not a JS leak. In every app the settled heap is at or below the warm-up heap. With the F1 and F4 fixes the peaks are smaller, and so is the retained RSS: arena settles at 80 MB.
 
 ### Runtimes: the bare core app via `app.listen()`
 
@@ -177,19 +197,22 @@ Each runtime ran 60 s with 64 clients from 3 Bun driver processes.
 
 **Throughput and latency**
 
-| Runtime | ops/s | p50 ms | p95 ms | p99 ms | Errors |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Bun 1.4.3 | **69,612** | 0.90 | 1.24 | 1.73 | 0 |
-| Deno 2 | 66,133 | 0.86 | 1.86 | 2.61 | 0 |
-| Node 24 | 26,489 | 2.29 | 3.51 | 5.92 | 0 |
+| Runtime | ops/s before → after | p50 ms | p95 ms | p99 ms | `POST /echo` (JSON body) req/s | Errors |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Bun 1.4.3 | **69,612 → 69,951** | 0.90 → 0.90 | 1.24 → 1.18 | 1.73 → 1.70 | 3,473 → 3,493 | 0 |
+| Deno 2 | 66,133 → 67,385 | 0.86 → 0.86 | 1.86 → 1.84 | 2.61 → 2.65 | 3,310 → 3,362 | 0 |
+| Node 24 | 26,489 → 26,772 | 2.29 → 2.29 | 3.51 → 3.37 | 5.92 → 5.15 | 1,330 → 1,340 | 0 |
 
-**Startup, memory and shutdown**
+**Startup, memory and shutdown** (before → after)
 
-| Runtime | First response (ms) | Idle RSS (MB) | RSS peak / end (MB) | Heap warm-up → settled (MB) | Shutdown |
+| Runtime | First response (ms) | Idle RSS (MB) | RSS peak / end (MB) | Heap warm-up → settled (MB) | Shutdown after load |
 | --- | ---: | ---: | --- | --- | --- |
-| Bun 1.4.3 | **46** | **26.0** | 46.2 / 39.5 | 0.7 → 0.6 | exits in 16 ms |
-| Deno 2 | 78 | 37.6 | 48.2 / 46.9 | 3.7 → 3.6 | exits in 42 ms |
-| Node 24 | 203 | 71.2 | **191.7 / 190.1** | 9.0 → 8.8 | exits in 33 ms |
+| Bun 1.4.3 | **46 → 42** | **26.0 → 37.0** | 46.2 / 39.5 → 52.5 / 44.7 | 0.7 → 0.6, after: 0.7 → 0.6 | 16 → 12 ms |
+| Deno 2 | 78 → 125 | 37.6 → 39.4 | 48.2 / 46.9 → 48.1 / 46.8 | 3.7 → 3.6, after: 3.7 → 3.6 | 42 → 46 ms |
+| Node 24 | 203 → 201 | 71.2 → 69.2 | **191.7 / 190.1 → 193.4 / 189.9** | 9.0 → 8.8, after: 9.0 → 8.8 | 33 → 32 ms |
+
+- **F5 over real HTTP.** `POST /echo` is 5% of a load that is bound by the load generator, so its rate does not move; the gain is visible in-process (`bench/run.ts`, see F5). No runtime regressed and the heap is still flat on all three.
+- Bun's idle RSS (26 → 37 MB) and Deno's first response (78 → 125 ms) are single cold-start samples on a shared machine; the Bun wrapper's idle RSS moved the other way (38.2 → 26.7 MB). Treat ±10 MB / ±50 ms on one cold start as noise.
 
 - **No leaks on any runtime.** The heap is flat on all three, the mid-body and aborted-fetch checks pass, and the server answers afterwards.
 - **Bun vs Deno.** Throughput is close, but Deno's tail latency is about 50% longer.
@@ -213,7 +236,7 @@ The test: call `server.stop()` and then `app.stop()`; the process must exit with
 | arena | 11 ms | 23 ms | 62–163 ms |
 | core on Node / Deno | 21 / 48 ms | 33 / 42 ms | – |
 
-All apps pass.
+All apps pass. After the fixes (load, then stop): core 17 ms, api 20 ms, quiz 17–19 ms, arena 22 ms; core via `app.listen` on Bun / Node / Deno 12 / 32 / 46 ms.
 
 **Fixed: quiz did not exit before `3d837b1`.**
 
@@ -235,12 +258,14 @@ All apps pass.
 
 ² `serve-core.ts` has no in-flight counter. A hung body read would show up as the server not answering, or the process not exiting on stop. Neither happened.
 
-**The arena long-poll ignores client disconnects** (minor; FIXED: the wait now ends on `ctx.req.signal` abort).
+The re-soak gives the same picture: 0 in flight after the HTTP aborts in every app, and quiz again has 50 rooms with 0 connected after the WebSocket drops.
 
-- What happens: a client queues, starts `GET /match/duel/status?wait=20000`, and vanishes after 100 ms. The handler keeps waiting.
-- Evidence: one request is **still in flight 2 s after the abort**, and none only after the 20 s wait expires. See `stuck.inflight2sAfterAbort` and `inflight21sAfterAbort` in `results/bun-arena.json`.
-- Impact: the wait is bounded, but a client can hold one timer and one subscription per request for the whole long-poll without keeping a socket open.
-- Fix: in `packages/game/src/matchmaker.ts` (`match_status`), also resolve when `ctx.req.signal` aborts, and unsubscribe.
+**The arena long-poll ignored client disconnects** (minor; FIXED in `6ddb1ae` and verified: the wait now ends on `ctx.req.signal` abort).
+
+- What happened: a client queues, starts `GET /match/duel/status?wait=20000`, and vanishes after 100 ms. The handler kept waiting.
+- Evidence before: one request was **still in flight 2 s after the abort**, and none only after the 20 s wait expired. See `stuck.inflight2sAfterAbort` and `inflight21sAfterAbort` in `results/bun-arena.json`.
+- **After: 0 in flight 2 s after the abort** (`results/bun-arena-after.json`), so Bun's `Request.signal` does fire on client disconnect and the handler unsubscribes.
+- Impact before: the wait was bounded, but a client could hold one timer and one subscription per request for the whole long-poll without keeping a socket open.
 
 ## Findings
 
@@ -264,7 +289,19 @@ Reproduce with `bun scripts/soak/repro/argon2-burst.ts 32`.
 - crm peaked at 461 MB RSS, with its JS heap under 11 MB.
 - Failed logins cost the same: the dummy hash used for unknown emails is just as expensive.
 
-**Fix** (the auth commit after `fa56f78`): argon2id at 19 MiB, at most 4 hashes at once. 32 concurrent verifies now peak at +78 MB RSS. The api and crm peaks above were measured before the fix.
+**Fix** (`4754301`): argon2id at 19 MiB, at most 4 hashes at once.
+
+**Re-soak (verified):**
+
+| Concurrent `verifyPassword` | Peak RSS above baseline, before → after | Time for the batch, after |
+| ---: | ---: | ---: |
+| 1 | +64 → +19 MB | 22 ms |
+| 8 | +512 → +76 MB | 59 ms |
+| 32 | +1,282 → +77 / +96 MB (two runs) | 223 ms |
+
+- api: RSS peak **1,353 → 177 MB**; `register` p50/p99 195/541 → 28.5/96 ms, `login` 190/426 → 28.2/235 ms.
+- The cap queues hashes instead of running them at once, so a burst of 32 sign-ins takes ~0.22 s in total.
+- crm was not re-run; its 461 MB peak was measured before the fix.
 
 ### F2. `examples/api` (example code, not a package): `ranFor` grows forever (FIXED)
 
@@ -272,7 +309,9 @@ Reproduce with `bun scripts/soak/repro/argon2-burst.ts 32`.
 - **Evidence.**
   - After 60 s the array held 112,557 strings. The settled heap went from 3.7 to 6.2 MB, with 92,729 more `string` objects.
   - With `SOAK_TRIM_RANFOR=1`, the wrapper empties the array every second. The string growth then disappears and settled growth falls from +68% to +11% (`results/bun-api-trimmed-ranFor.json`).
-- **Fix.** The coordinator changed `examples/api` after this run. It has not been re-soaked.
+- **Fix.** `e6bad9c` keeps only the last 100 titles (`examples/api/app.ts:63`).
+- **Re-soak (verified).** `ranFor` holds 100 entries after 60 s (was 112,557). Settled heap 6.2 → 3.9 MB, settled growth +68% → +16.5%, `string` growth +92,729 → +7,200.
+- **What is left is F3.** The +16.5% is +7,626 `Object`s and +7,200 `string`s for ~1,925 users signed up after the warm-up sample: 3.96 objects per user, the limiter-window cost measured in F3. The re-soak signed up ~2,400 users in 60 s (before: ~1,450), because sign-in got cheaper. The runner's 10% rule still flags api for this reason; it is bounded by window expiry and `maxKeys`.
 
 ### F3. `@miujs/auth`: in-memory rate-limit windows, ~1.4 KB per new IP/account (bounded, informational)
 
@@ -315,7 +354,19 @@ Reproduce with `bun scripts/soak/repro/argon2-burst.ts 32`.
 - Let a game room close itself, or shorten its grace period, once it reports a result: `reportResult()` or phase `over` in `packages/game/src/room.ts`.
 - Or give matchmaker-created rooms a much shorter `emptyMs` in `packages/realtime/src/registry.ts`.
 
-The quiz example shows the same pattern at a smaller scale: up to 360 live rooms for 40 concurrent games, all disposed after settle.
+The quiz example shows the same pattern at a smaller scale: up to 360 live rooms for 40 concurrent games, all disposed after settle. quiz builds its room with `@miujs/realtime` directly, not `gameRoom`, so `closeAfterResultMs` does not apply to it; the re-soak shows the same 360 / 280 / 0 rooms (peak / end of load / settled).
+
+**Re-soak (verified, `6ddb1ae`):**
+
+| | Before | After |
+| --- | ---: | ---: |
+| Live rooms, peak during load | 34,882 | **3,091** (flat at ~3,000 ≈ 595 games/s × 5 s) |
+| Live rooms at end of load | 22,726 | **0** |
+| Live rooms 10 s / 20 s after load | 28,462 / 22,281 | 0 / 0 |
+| Heap after GC: warm-up → end → settled | 49.1 → 131.8 → 2.8 MB | 24.3 → **3.2** → 3.0 MB |
+| RSS peak / end / settled | 444 / 393 / 128 MB | **152 / 82.5 / 80** MB |
+
+Steady-state memory is now bounded by `game rate × 5 s` instead of `× 60 s`. One room was alive at the settled sample; it was created 85 s after the load stopped and had no players. That is F7, not F4.
 
 ### F5. `miujs` core: JSON body reading cost ~0.4 µs more per request (perf regression; FIXED in `fa56f78`)
 
@@ -332,7 +383,17 @@ The quiz example shows the same pattern at a smaller scale: up to 360 live rooms
 - In `bench/run.ts`, `POST /json` fell from 106–111% to 84–92% of the best other framework.
 - It was also the only MiuJS route with a large transient heap: 288 KB per 10k requests, against 4–14 KB for Elysia and Hono.
 
-**Fix.** `fa56f78` brings `POST /json` back to ~378k req/s in-process. The regression note and the 84–92% row in `bench/README.md` predate the fix; re-run `bun bench/run.ts` to refresh them.
+**Fix.** `fa56f78` (requests with a Content-Length) and `553cedc` (requests without one) read the body with `req.text()`.
+
+**Re-measured** (`bun bench/run.ts`, `results/bench-after.log`, against `results/bench.log` run 3 on an idle machine):
+
+| `POST /json (body validation → JSON)` | Before | After |
+| --- | ---: | ---: |
+| MiuJS req/s | 347,000 | **408,500** |
+| vs best other (Elysia 373,000 / Hono 393,500) | 92% | **104%** |
+| Heap per 10k requests, retained / peak | 7.6 KB / 288.1 KB | −1.4 KB / **7.8 KB** |
+
+Over real HTTP (core soak, 5% `POST /echo`) the rate is unchanged on every runtime, because the soak is bound by the load generator, not by the body read.
 
 ### F6. Fixed by other agents during this work (verified)
 
@@ -340,9 +401,23 @@ The quiz example shows the same pattern at a smaller scale: up to 360 live rooms
 - **`@miujs/realtime` `MemoryCodeStore`:** expired join codes were deleted only when someone looked them up again, so every `createRoom` kept a 6-hour code forever. The store now sweeps expired codes.
 - **`@miujs/session` `memorySessionStore` and `@miujs/auth` `memoryRateLimiter`:** expired entries are now swept. The api and crm examples use cookie sessions, so the soak did not exercise the session store.
 
+### F7. `@miujs/game` client: `findMatch` gives up without leaving the queue (new, minor; open)
+
+Found in the arena re-soak. Not a leak, but it can make empty rooms and ghost matches.
+
+- **Cause.** When `findMatch` hits its `timeoutMs`, it throws `MIU_E_GAME_MATCH_TIMEOUT` (`packages/game/src/connect.ts:53`) without calling `DELETE /match/:queue/leave`. The server keeps the player queued until the queue's own `maxWaitMs` (120 s for arena, `packages/game/examples/arena/app.ts:39`), and can still match them in that time.
+- **Evidence** (`results/bun-arena-after.json`, per-second samples):
+  - After the load stopped, two clients kept long-polling (2 in flight from 65 s to 120 s) without being matched with each other.
+  - At 120 s their 60 s `findMatch` timeout fired and they stopped. The server still had them queued.
+  - At 145 s the matchmaker paired them: a room was created that nobody joined. It was still there at the settled sample (`settledExtras.rooms`: 1 room, 0 players).
+- **Why the two were not paired sooner.** Most likely the Elo window: it starts at ±100 and widens by 100 every 5 s (`packages/game/src/queue.ts:165-167`, used at `:231-240`). After a minute of random-move games the two last players can be far apart in rating. This part is inferred: the run did not record their ratings.
+- **Impact.** A real player can be matched against someone who already gave up, and then wait in a room for an opponent who never comes. The empty room is disposed by the normal empty-room timeout, so nothing is retained for long.
+- **Suggested fix.** In `findMatch`, call `leave` (best effort) before throwing on timeout, and on any other early exit. The soak harness's arena client could also leave when the load stops (`scripts/soak/scenarios.ts`, arena `vu`).
+
 ### What the soak did not find
 
-- No growth in core request handling on any runtime. On Bun the heap stayed flat over 4.17M requests.
+- No growth in core request handling on any runtime. On Bun the heap stayed flat over 4.17M requests (4.08M in the re-soak).
+- After the fixes, nothing still grows or sticks except the bounded F3 limiter windows in api.
 - No hung handler after half-sent bodies or aborted fetches, in any app.
 - No room left `connected` after abrupt WebSocket drops.
 - No shutdown hang at the final code.
@@ -350,7 +425,7 @@ The quiz example shows the same pattern at a smaller scale: up to 360 live rooms
 
 ## Reproduce
 
-Run everything from the repo root, with Bun 1.4.3. Results go to `scripts/soak/results/` as `<runtime>[-listen]-<app>.json`. Each file holds per-second samples, object-type diffs and per-operation latency.
+Run everything from the repo root, with Bun 1.4.3. Results go to `scripts/soak/results/` as `<runtime>[-listen]-<app>[-<suffix>].json`. Each file holds per-second samples, object-type diffs and per-operation latency.
 
 ```bash
 # Full soak, every example on Bun (60 s each; realtime apps settle 65 s) – about 12 minutes
@@ -362,6 +437,10 @@ bun scripts/soak/run.ts --apps=arena --duration=120   # one app, longer
 bun scripts/soak/run.ts --apps=core --listen
 bun scripts/soak/run.ts --apps=core --runtime=node    # set NODE_BIN=... to override the path
 bun scripts/soak/run.ts --apps=core --runtime=deno    # set DENO_BIN=... to override the path
+
+# The re-soak after the fixes (writes *-after.json next to the originals)
+bun scripts/soak/run.ts --apps=core,api,quiz,arena --suffix=after
+bun scripts/soak/run.ts --apps=core --listen --suffix=after   # and --runtime=node / --runtime=deno
 
 # F2 attribution: the same api soak with the example's ranFor array emptied every second
 SOAK_TRIM_RANFOR=1 bun scripts/soak/run.ts --apps=api --skip-cold --skip-checks
@@ -383,10 +462,14 @@ Other `run.ts` options:
 - `--drivers=<n>`: number of load-driver processes.
 - `--skip-checks`: skip the stuck-handler checks.
 - `--skip-cold`: skip the cold-start step.
+- `--suffix=<name>`: add `-<name>` to the result file name, so a re-run keeps earlier results.
+
+Each result also records `machineBusyBeforePct` (whole-machine CPU in the 2 s before the app starts), `machineCpuDuringLoad` (mean and max of the per-second `cpu` samples) and a `cpu` field per sample. Runs made before this was added do not have them.
 
 ## Noise and caveats
 
 - **Shared machine.** The load generator and the server shared a 20-thread laptop that throttles under sustained load, and other agents ran `bun test` suites during some runs. Treat absolute ops/s as ±10–15%, and compare apps or runtimes only within one table.
-- **Moving code.** Package sources changed while the soak ran (see `codeState` in each result file). The tables come from the last run of each app, and the fixes for F1, F2 and F5 landed after it.
+- **Re-soak noise.** CPU busy before each re-soaked app was 3–10%, so no other heavy job was running at the start. Other agents were still active (an uncommitted `packages/miujs/src/app.ts`, a new `packages/bots/`, a `bun` process seen between runs). quiz is the most sensitive app, because 40 games start together and ~300 WebSocket joins arrive at once. Its p99 was 32, 94 and 34 ms in three after-runs (`bun-quiz-after.json`, `-after-rerun.json`, `-after-rerun2.json`; the tables use `-after-rerun2`, the only one with per-second CPU, mean 10%). Join p95 varied from 32 to 100 ms. Its p50 and answer latency matched the original run every time, and no fix touched quiz, so treat its tail as noise. core, api, arena and the runtimes were run once each. Their numbers matched the originals where the code did not change, so they were not repeated.
+- **Moving code.** Package sources changed while the soak ran (see `codeState` in each result file). The "before" tables come from the last run of each app, before the fixes for F1, F2, F4 and F5; the "after" numbers come from `2891f99`.
 - **Heap metrics differ by engine.** "Heap" is JSC `heapStats().heapSize` after `Bun.gc(true)` on Bun, and V8 `heapUsed` after `gc()` on Node and Deno. The engines count differently, so compare heap *trends* across runtimes, not absolute sizes.
 - **Per-second samples** in the JSON are taken without a GC first, so they include garbage as well as live data.

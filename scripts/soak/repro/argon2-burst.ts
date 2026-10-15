@@ -1,5 +1,6 @@
 // RSS during a burst of concurrent sign-ins with @miujs/auth's default password hashing
-// (argon2id via Bun.password, Bun's default cost: 64 MiB memory per hash).
+// (argon2id via Bun.password at the package defaults: 64 MiB per hash with no cap before the F1 fix,
+// 19 MiB and at most 4 at once after it). The printed hash shows the m= cost in use.
 //
 //   bun scripts/soak/repro/argon2-burst.ts [concurrency=32]
 import { hashPassword, verifyPassword } from "../../../packages/auth/src/password.ts";
@@ -17,4 +18,4 @@ await Promise.all(Array.from({ length: n }, () => verifyPassword("correct horse 
 const ms = performance.now() - t;
 clearInterval(timer);
 await new Promise((r) => setTimeout(r, 200));
-console.log(`${n} concurrent verifyPassword (argon2id defaults): RSS before ${mb(base)} MB, peak ${mb(peak)} MB (+${mb(peak - base)} MB), after ${mb(process.memoryUsage().rss)} MB; ${ms.toFixed(0)} ms total, hash ${hash.slice(0, 32)}…`);
+console.log(`${n} concurrent verifyPassword (package defaults): RSS before ${mb(base)} MB, peak ${mb(peak)} MB (+${mb(peak - base)} MB), after ${mb(process.memoryUsage().rss)} MB; ${ms.toFixed(0)} ms total, hash ${hash.slice(0, 32)}…`);

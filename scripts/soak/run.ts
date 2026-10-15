@@ -37,6 +37,17 @@ const codeState = () => {
   return { head: git("rev-parse", "--short", "HEAD"), dirtyPackages: git("diff", "--stat", "HEAD", "--", "packages").split("\n").pop(), at: new Date().toISOString() };
 };
 const skipChecks = !!argv["skip-checks"];
+// --suffix=after writes <runtime>-<app>-after.json, so a re-run keeps the earlier results.
+const suffix = argv.suffix ? `-${argv.suffix}` : "";
+/** CPU busy % across all cores over `ms`, before the server starts: shows other load on a shared machine. */
+async function machineBusy(ms = 2000) {
+  const { cpus } = await import("node:os");
+  const snap = () => cpus().reduce((a, c) => { const t = c.times; a.idle += t.idle; a.total += t.user + t.nice + t.sys + t.idle + t.irq; return a; }, { idle: 0, total: 0 });
+  const a = snap();
+  await sleep(ms);
+  const b = snap();
+  return Math.round(100 * (1 - (b.idle - a.idle) / (b.total - a.total)));
+}
 const exitWaitS = Number(argv["exit-wait"] ?? 90);
 
 type Mem = { rss: number; heap: number; objects?: number; inflight?: number; maxInflight?: number; served?: number; rooms?: { rooms: number; players: number; connected: number } | null; types?: Record<string, number>; [k: string]: unknown };
@@ -148,14 +159,21 @@ async function soak(app: string) {
   const durationMs = durationS * 1000;
   const warmMs = Math.max(5000, durationMs * 0.2);
 
-  const samples: { t: number; rss: number; heap: number; inflight?: number; rooms?: number; connected?: number }[] = [];
+  const samples: { t: number; rss: number; heap: number; inflight?: number; rooms?: number; connected?: number; cpu?: number }[] = [];
+  // Whole-machine CPU busy % per sample (server + load + anything else running on a shared machine).
+  const { cpus } = await import("node:os");
+  const cpuSnap = () => cpus().reduce((a, c) => { const t = c.times; a.idle += t.idle; a.total += t.user + t.nice + t.sys + t.idle + t.irq; return a; }, { idle: 0, total: 0 });
+  let lastCpu = cpuSnap();
   let sampling = true;
   const t0 = performance.now();
   const sampler = (async () => {
     while (sampling) {
       try {
         const m = await mem(s);
-        samples.push({ t: Math.round(performance.now() - t0), rss: m.rss, heap: m.heap, inflight: m.inflight, rooms: m.rooms?.rooms, connected: m.rooms?.connected });
+        const c = cpuSnap();
+        const cpu = Math.round(100 * (1 - (c.idle - lastCpu.idle) / Math.max(1, c.total - lastCpu.total)));
+        lastCpu = c;
+        samples.push({ t: Math.round(performance.now() - t0), rss: m.rss, heap: m.heap, inflight: m.inflight, rooms: m.rooms?.rooms, connected: m.rooms?.connected, cpu });
       } catch {}
       await sleep(1000);
     }
@@ -279,6 +297,7 @@ async function soak(app: string) {
     stuck,
     shutdownAfterLoad: shutdown,
     stderrTail,
+    machineCpuDuringLoad: (() => { const l = samples.filter((x) => x.t <= durationMs && x.cpu !== undefined).map((x) => x.cpu!); return l.length ? { mean: Math.round(l.reduce((a, b) => a + b, 0) / l.length), max: Math.max(...l) } : null; })(),
     samples,
   };
   return result;
@@ -287,18 +306,20 @@ async function soak(app: string) {
 mkdirSync(join(import.meta.dir, "results"), { recursive: true });
 const all: any[] = [];
 for (const app of apps) {
-  console.error(`\n== ${runtime} ${app}: cold start`);
+  const busyBefore = await machineBusy();
+  console.error(`\n== ${runtime} ${app}: cold start (machine CPU busy before start: ${busyBefore}%)`);
   const cold = argv["skip-cold"] ? null : await coldStart(app);
   if (cold) console.error(`   first response ${cold.firstResponseMs.toFixed(0)} ms, idle RSS ${fmtMB(cold.idleRss)} MB, idle stop → exit ${cold.shutdownIdle.exited ? cold.shutdownIdle.ms.toFixed(0) + " ms" : "STUCK"}`);
   console.error(`== ${runtime} ${app}: soak ${durationS} s`);
-  const r = { ...(await soak(app)), cold };
+  const r = { ...(await soak(app)), cold, machineBusyBeforePct: busyBefore };
   all.push(r);
-  writeFileSync(join(import.meta.dir, "results", `${runtime}${argv.listen ? "-listen" : ""}-${app}${quick ? "-quick" : ""}.json`), JSON.stringify(r, null, 2));
+  writeFileSync(join(import.meta.dir, "results", `${runtime}${argv.listen ? "-listen" : ""}-${app}${quick ? "-quick" : ""}${suffix}.json`), JSON.stringify(r, null, 2));
   console.error(
     `   ${fmtNum(r.rps)} ops/s, p50 ${r.p50.toFixed(2)} / p95 ${r.p95.toFixed(2)} / p99 ${r.p99.toFixed(2)} ms, errors ${r.errors}, heap warm ${fmtMB(r.heap.afterWarmup)} → end ${fmtMB(r.heap.end)} → settled ${fmtMB(r.heap.settled)} MB (${(r.heap.growth * 100).toFixed(1)}% / ${(r.heap.settledGrowth * 100).toFixed(1)}%)${r.suspectedLeak ? "  SUSPECTED LEAK" : ""}`,
   );
   if (r.errors) console.error("   errors:", r.errorKinds);
   if (r.suspectedLeak) console.error("   growing types:", r.typeGrowthSettled.slice(0, 8).map((d) => `${d.type} +${d.delta}`).join(", "));
+  console.error(`   machine CPU during load: ${JSON.stringify(r.machineCpuDuringLoad)}`);
   console.error(`   stuck checks: ${JSON.stringify(r.stuck)}; stop after load → ${r.shutdownAfterLoad.exited ? `exit in ${r.shutdownAfterLoad.ms.toFixed(0)} ms` : `STUCK > 3 s (eventual exit: ${r.shutdownAfterLoad.eventualExitMs === null ? "never, killed" : (r.shutdownAfterLoad.eventualExitMs / 1000).toFixed(1) + " s"})`}`);
 }
 
