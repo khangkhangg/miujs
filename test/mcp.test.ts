@@ -111,3 +111,48 @@ describe("MCP", () => {
     expect((await rpc(makeApp().use(mcp()), "ping")).body.result).toEqual({});
   });
 });
+
+describe("MCP CSRF protection", () => {
+  const victimApp = () =>
+    new Miu({ logger: false })
+      .use(async (c, next) => {
+        if (c.cookie("sid") === "victim") c.set("user", "victim");
+        await next();
+      })
+      .post("/transfer", (c) => ({ by: c.get("user") ?? null }))
+      .use(mcp());
+  const call = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "post_transfer", arguments: {} } });
+
+  test("a cross-site text/plain form post cannot run tools (415)", async () => {
+    const res = await victimApp().request("/mcp", {
+      method: "POST",
+      headers: { "content-type": "text/plain", cookie: "sid=victim", "sec-fetch-site": "cross-site" },
+      body: call,
+    });
+    expect(res.status).toBe(415);
+  });
+
+  test("a cross-site browser request riding on cookies is refused even with a JSON type (403)", async () => {
+    const res = await victimApp().request("/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: "sid=victim", "sec-fetch-site": "cross-site" },
+      body: call,
+    });
+    expect(res.status).toBe(403);
+  });
+
+  test("bearer-authenticated and same-origin clients still work", async () => {
+    const bearer = await victimApp().request("/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer t", "sec-fetch-site": "cross-site" },
+      body: call,
+    });
+    expect(bearer.status).toBe(200);
+    const same = await victimApp().request("/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json; charset=utf-8", cookie: "sid=victim", "sec-fetch-site": "same-origin" },
+      body: call,
+    });
+    expect(((await same.json()) as any).result.structuredContent).toEqual({ by: "victim" });
+  });
+});

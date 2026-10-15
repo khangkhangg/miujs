@@ -133,6 +133,16 @@ export function mcp(opts: McpOptions = {}): Middleware {
     if (c.method !== "POST") {
       return c.newResponse(null, 405, { allow: "POST" });
     }
+    // CSRF: tool calls replay the caller's cookies, so a hostile page must not be able to post here.
+    // MCP clients always send JSON (which browsers only allow cross-site after a CORS preflight), and
+    // a cross-site browser request may only proceed with explicit bearer credentials.
+    const type = (c.req.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+    if (type !== "application/json") {
+      return c.json(rpcError(null, -32600, "MCP requests must use Content-Type: application/json"), 415);
+    }
+    if (c.req.headers.get("sec-fetch-site") === "cross-site" && !c.req.headers.has("authorization")) {
+      return c.json(rpcError(null, -32600, "Cross-site MCP requests require an Authorization header"), 403);
+    }
     let msg: JsonRpcRequest;
     try {
       msg = (await c.req.json()) as JsonRpcRequest;
