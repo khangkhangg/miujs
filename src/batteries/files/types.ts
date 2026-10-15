@@ -25,7 +25,11 @@ export interface GetOptions {
 
 export interface BlobStore {
   put(key: string, body: BlobBody, opts?: PutOptions): Promise<BlobMeta>;
-  get(key: string, opts?: GetOptions): Promise<{ meta: BlobMeta; body: ReadableStream<Uint8Array> } | undefined>;
+  /**
+   * The blob's bytes (the requested range, if any). Drivers that can may also return `blob`, a lazy,
+   * sized Blob with the same bytes; servers prefer it (Content-Length, sendfile) and cancel `body`.
+   */
+  get(key: string, opts?: GetOptions): Promise<{ meta: BlobMeta; body: ReadableStream<Uint8Array>; blob?: Blob } | undefined>;
   head(key: string): Promise<BlobMeta | undefined>;
   delete(key: string): Promise<boolean>;
   list(prefix?: string, opts?: { cursor?: string; limit?: number }): Promise<{ items: BlobMeta[]; cursor?: string }>;

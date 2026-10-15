@@ -15,7 +15,8 @@
  * a key and a key below it (`a` and `a/b`) can coexist.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readdir, readFile, realpath, rename, rmdir, unlink, type FileHandle } from "node:fs/promises";
+import { openAsBlob } from "node:fs";
+import { mkdir, open, readdir, readFile, realpath, rename, rmdir, unlink } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { assertSafeKey, toBytes, type BlobBody, type BlobMeta, type BlobStore } from "../batteries/files/types.ts";
 
@@ -24,6 +25,11 @@ export interface DiskBlobStoreOptions {
   root: string;
   /** Clock for `uploadedAt`, in ms (tests). */
   now?: () => number;
+  /**
+   * How long a superseded or deleted data file is kept before removal, so reads that already started
+   * (lazy Blob bodies) can finish. Default 60 s; 0 deletes immediately.
+   */
+  retainMs?: number;
 }
 
 interface Sidecar {
@@ -32,7 +38,6 @@ interface Sidecar {
   meta: BlobMeta;
 }
 
-const CHUNK = 64 * 1024;
 const ID = /^[A-Za-z0-9-]{1,64}$/;
 
 const isCode = (e: unknown, ...codes: string[]) => codes.includes((e as { code?: string })?.code ?? "");
@@ -45,34 +50,6 @@ function escapeError(key: string): Error {
   return new Error(`Storage key ${JSON.stringify(key)} resolves outside the store root (symlink?)`);
 }
 
-/** A byte stream over [start, end) of an open file; closes the handle when done or cancelled. */
-function fileStream(handle: FileHandle, start: number, end: number): ReadableStream<Uint8Array> {
-  let pos = start;
-  const close = () => handle.close().catch(() => {});
-  return new ReadableStream<Uint8Array>({
-    async pull(ctl) {
-      try {
-        if (pos >= end) {
-          await close();
-          return ctl.close();
-        }
-        const n = Math.min(CHUNK, end - pos);
-        const buf = new Uint8Array(n);
-        const { bytesRead } = await handle.read(buf, 0, n, pos);
-        if (bytesRead === 0) {
-          await close();
-          return ctl.close();
-        }
-        pos += bytesRead;
-        ctl.enqueue(bytesRead === n ? buf : buf.subarray(0, bytesRead));
-      } catch (e) {
-        await close();
-        ctl.error(e);
-      }
-    },
-    cancel: close,
-  });
-}
 
 /** Blobs on the local filesystem; see the module comment for the on-disk layout and guarantees. */
 export function diskBlobStore(opts: DiskBlobStoreOptions): BlobStore {
@@ -170,19 +147,29 @@ export function diskBlobStore(opts: DiskBlobStoreOptions): BlobStore {
     }
   }
 
-  async function openData(key: string): Promise<{ meta: BlobMeta; handle: FileHandle } | undefined> {
+  // Bodies are lazy, sized Blobs over the data file (no handle is held until the body is read, and
+  // runtimes keep Content-Length / use sendfile). Data files therefore outlive their sidecar briefly.
+  async function openData(key: string): Promise<{ meta: BlobMeta; blob: Blob } | undefined> {
     const d = await dirs();
-    // Retry once: an overwrite may delete the data file between reading the sidecar and opening it.
+    // Retry once: an overwrite may retire the data file between reading the sidecar and opening it.
     for (let attempt = 0; attempt < 2; attempt++) {
       const found = await readSidecar(key);
       if (!found) return undefined;
       try {
-        return { meta: found.sidecar.meta, handle: await open(join(d.data, found.sidecar.file), "r") };
+        return { meta: found.sidecar.meta, blob: await openAsBlob(join(d.data, found.sidecar.file), { type: found.sidecar.meta.contentType }) };
       } catch (e) {
         if (!isCode(e, "ENOENT") || attempt === 1) throw e;
       }
     }
     return undefined;
+  }
+
+  const retainMs = opts.retainMs ?? 60_000;
+  function retire(path: string): void {
+    const remove = () => void unlink(path).catch(() => {});
+    if (retainMs <= 0) return remove();
+    const t = setTimeout(remove, retainMs) as unknown as { unref?: () => void };
+    t.unref?.();
   }
 
   return {
@@ -217,7 +204,7 @@ export function diskBlobStore(opts: DiskBlobStoreOptions): BlobStore {
             await fh.close();
           }
           await rename(tmpMeta, path); // commit point
-          if (old) await unlink(join(d.data, old.sidecar.file)).catch(() => {});
+          if (old) retire(join(d.data, old.sidecar.file));
           return structuredClone(meta);
         } catch (e) {
           await Promise.all([unlink(tmpData), unlink(tmpMeta), unlink(dataPath)].map((p) => p.catch(() => {})));
@@ -229,14 +216,14 @@ export function diskBlobStore(opts: DiskBlobStoreOptions): BlobStore {
     async get(key, o = {}) {
       const opened = await openData(key);
       if (!opened) return undefined;
-      const { meta, handle } = opened;
-      let start = 0;
-      let end = meta.size;
+      const { meta } = opened;
+      let blob = opened.blob;
       if (o.range) {
-        start = Math.min(meta.size, Math.max(0, o.range.offset));
-        end = o.range.length === undefined ? meta.size : Math.min(meta.size, start + Math.max(0, o.range.length));
+        const start = Math.min(meta.size, Math.max(0, o.range.offset));
+        const end = o.range.length === undefined ? meta.size : Math.min(meta.size, start + Math.max(0, o.range.length));
+        blob = blob.slice(start, end, meta.contentType);
       }
-      return { meta: structuredClone(meta), body: fileStream(handle, start, end) };
+      return { meta: structuredClone(meta), body: blob.stream(), blob };
     },
 
     async head(key) {
@@ -254,7 +241,7 @@ export function diskBlobStore(opts: DiskBlobStoreOptions): BlobStore {
           if (isCode(e, "ENOENT")) return false;
           throw e;
         }
-        await unlink(join(d.data, found.sidecar.file)).catch(() => {});
+        retire(join(d.data, found.sidecar.file));
         await pruneEmptyDirs(found.path, d.meta);
         return true;
       });

@@ -39,17 +39,27 @@ describe("diskBlobStore", () => {
     expect((await s.list()).items.map((i) => i.key)).toEqual(["a", "a/b"]);
   });
 
-  test("overwrites atomically and leaves no temp or stale files", async () => {
+  test("overwrites atomically and leaves no temp or stale files (retainMs: 0)", async () => {
     const root = await tempRoot();
-    const s = diskBlobStore({ root });
+    const s = diskBlobStore({ root, retainMs: 0 });
     await s.put("k", "first");
     await s.put("k", "second, longer");
     expect(await text((await s.get("k"))!.body)).toBe("second, longer");
     expect((await s.head("k"))!.size).toBe(14);
     expect(await readdir(join(root, "tmp"))).toEqual([]);
+    await Bun.sleep(5); // retirement of the superseded data file is asynchronous
     expect((await readdir(join(root, "data"))).length).toBe(1);
     expect(await s.delete("k")).toBe(true);
+    await Bun.sleep(5); // retirement is asynchronous even with retainMs: 0
     expect(await readdir(join(root, "data"))).toEqual([]);
+  });
+
+  test("superseded data is retained for retainMs so in-flight reads finish", async () => {
+    const root = await tempRoot();
+    const s = diskBlobStore({ root });
+    await s.put("k", "first");
+    await s.put("k", "second");
+    expect((await readdir(join(root, "data"))).length).toBe(2);
   });
 
   test("an open read stream survives a concurrent overwrite", async () => {

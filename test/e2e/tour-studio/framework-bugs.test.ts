@@ -30,7 +30,7 @@ describe("framework bugs (documented with failing tests)", () => {
    * FinalizationRegistry that closes it quietly; better, return a Blob (`Bun.file(path).slice()` /
    * `fs.openAsBlob`) which also fixes the Content-Length bug below and lets the runtime use sendfile.
    */
-  test.failing("a diskBlobStore body that is never read does not crash the process at GC", async () => {
+  test("a diskBlobStore body that is never read does not crash the process at GC", async () => {
     const dir = tmp();
     const script = `
       import { diskBlobStore } from ${JSON.stringify(join(ROOT, "src/adapters/node.ts"))};
@@ -54,7 +54,7 @@ describe("framework bugs (documented with failing tests)", () => {
    * without Content-Length is unusual for media players. Node's adapter keeps the header.
    * Fix: as above — serve a Blob/BunFile slice (Bun keeps its size), or a byte stream with a known length.
    */
-  test.failing("panoramas served from diskBlobStore keep Content-Length on Bun (200 and 206)", async () => {
+  test("panoramas served from diskBlobStore keep Content-Length on Bun (200 and 206)", async () => {
     const dir = tmp();
     const files = diskBlobStore({ root: dir });
     await files.put("p/x.png", new Uint8Array(5000), { contentType: "image/png" });
@@ -78,7 +78,7 @@ describe("framework bugs (documented with failing tests)", () => {
    * revalidation (~465 µs per 304 in-process vs ~360 µs for the whole public tour bundle). R2 pays a GET.
    * Fix: when the request has If-None-Match (or If-Modified-Since), use store.head() first.
    */
-  test.failing("a conditional GET that ends in 304 never opens the blob body", async () => {
+  test("a conditional GET that ends in 304 never opens the blob body", async () => {
     const inner = memoryBlobStore();
     let gets = 0;
     const store: BlobStore = { ...inner, get: (k, o) => (gets++, inner.get(k, o)) };

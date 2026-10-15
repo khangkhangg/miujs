@@ -128,17 +128,14 @@ export async function serveBlob(c: Context<any, any>, store: BlobStore, key: str
   const rangeHeader = req.get("range");
   const head = c.req.method === "HEAD";
 
-  // Fast path: one store call for a plain GET.
-  if (!rangeHeader && !head) {
+  // Fast path: one store call for a plain, unconditional GET. Conditional requests go through head()
+  // first so a 304 never opens the blob.
+  if (!rangeHeader && !head && !req.has("if-none-match")) {
     const got = await store.get(key);
     if (!got) return problem(404, { detail: `No such file: ${key}` });
     const h = blobHeaders(got.meta, opts);
-    if (etagMatches(req.get("if-none-match"), got.meta.etag)) {
-      await got.body.cancel().catch(() => {});
-      return new Response(null, { status: 304, headers: h });
-    }
     h.set("content-length", String(got.meta.size));
-    return new Response(got.body, { headers: h });
+    return new Response(bodyOf(got), { headers: h });
   }
 
   const meta = await store.head(key);
@@ -155,5 +152,14 @@ export async function serveBlob(c: Context<any, any>, store: BlobStore, key: str
 
   const got = await store.get(key, range ? { range: { offset: range.start, length: range.end - range.start + 1 } } : {});
   if (!got) return problem(404, { detail: `No such file: ${key}` });
-  return new Response(got.body, { status, headers: h });
+  return new Response(bodyOf(got), { status, headers: h });
+}
+
+/** Prefer a sized Blob when the store offers one: runtimes keep Content-Length and can use sendfile. */
+function bodyOf(got: { body: ReadableStream<Uint8Array>; blob?: Blob }): BodyInit {
+  if (got.blob) {
+    got.body.cancel().catch(() => {});
+    return got.blob;
+  }
+  return got.body;
 }
