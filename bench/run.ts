@@ -3,6 +3,7 @@
 // building, not the network or Bun's HTTP server (identical for all three on Bun).
 //
 // Run: bun bench/run.ts   (then a memory table and a cold-start row)
+//      BENCH_HTTP=1 bun bench/run.ts   (adds GET / over real HTTP via Bun.serve)
 
 import { Elysia, t as et } from "elysia";
 import { Hono } from "hono";
@@ -103,6 +104,92 @@ for (const [sname, row] of Object.entries(results)) {
   console.log(`${sname.padEnd(38)}${Object.values(row).map(fmt).join("")}   ${(ratio * 100).toFixed(0)}%`);
 }
 console.log("\nreq/s, higher is better.");
+
+// ---- GET / with Bun's server as the 2nd argument (in-process) ----
+// Bun.serve calls `fetch(req, server)`. MiuJS only skips `content-type` on string responses when
+// that argument is Bun's real server (Bun then adds `text/plain;charset=utf-8` on the wire), so
+// the table above, which calls `fetch(req)` like a test does, still pays for the header. This row
+// passes a real server object, the way `export default app` / `app.listen()` run on Bun.
+const argServer = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
+const serverArgApps: Record<string, Fetch> = {
+  miujs: (r) => miuApp.fetch(r, argServer),
+  elysia: (r) => elysiaApp.handle(r),
+  hono: (r) => honoApp.fetch(r, argServer),
+};
+const argRow: Record<string, number> = Object.fromEntries(names.map((n) => [n, 0]));
+for (let r = 0; r < ROUNDS; r++) {
+  for (const aname of names.map((_, i) => names[(i + r) % names.length])) {
+    argRow[aname] = Math.max(argRow[aname], await measure(serverArgApps[aname], scenarios["GET / (text)"], DURATION));
+  }
+}
+argServer.stop(true);
+const ratioOf = (row: Record<string, number>) => row.miujs / Math.max(...Object.entries(row).filter(([a]) => a !== "miujs").map(([, v]) => v));
+console.log(`\nIn-process, fetch(req, bunServer) as Bun.serve calls it (best of ${ROUNDS})`);
+console.log(`${"GET / (text), server arg".padEnd(38)}${names.map((a) => fmt(argRow[a])).join("")}   ${(ratioOf(argRow) * 100).toFixed(0)}%`);
+
+// ---- optional: over real HTTP (BENCH_HTTP=1) ----
+// Each framework behind its own Bun.serve on 127.0.0.1; the load comes from Worker threads (keep-alive
+// fetch loops), so the server's event loop does only server work. Includes Bun's HTTP stack and the
+// client, so framework differences shrink; treat small gaps as noise.
+if (process.env.BENCH_HTTP === "1") {
+  const CLIENTS = Number(process.env.BENCH_HTTP_CLIENTS ?? 2);
+  const CONC = Number(process.env.BENCH_HTTP_CONC ?? 32);
+  const servers = {
+    miujs: Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: miuApp.fetch }),
+    elysia: Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (r) => elysiaApp.handle(r) }),
+    hono: Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: honoApp.fetch }),
+    // Ceiling: Bun.serve with no framework, the most any of the three can reach on this machine.
+    bare: Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("Hi") }),
+  } as Record<string, ReturnType<typeof Bun.serve>>;
+  for (const [aname, s] of Object.entries(servers)) {
+    const res = await fetch(`http://127.0.0.1:${s.port}/`);
+    if ((await res.text()) !== "Hi" || !/^text\/plain/i.test(res.headers.get("content-type") ?? "")) {
+      throw new Error(`${aname}: GET / over HTTP returned ${res.headers.get("content-type")}`);
+    }
+  }
+  const workerSrc = `
+    self.onmessage = async (e) => {
+      const { url, conc, ms } = e.data;
+      let n = 0;
+      const end = performance.now() + ms;
+      // A stuck connection fails after 5 s instead of hanging the run (seen on Windows above ~64 connections).
+      const loop = async () => {
+        while (performance.now() < end) {
+          try { await (await fetch(url, { signal: AbortSignal.timeout(5000) })).text(); n++; } catch {}
+        }
+      };
+      await Promise.all(Array.from({ length: conc }, loop));
+      postMessage(n);
+    };`;
+  const workerUrl = URL.createObjectURL(new Blob([workerSrc], { type: "application/javascript" }));
+  const workers = Array.from({ length: CLIENTS }, () => new Worker(workerUrl));
+  const runLoad = (url: string, ms: number) =>
+    Promise.all(
+      workers.map(
+        (w) =>
+          new Promise<number>((resolve) => {
+            w.onmessage = (e) => resolve(e.data as number);
+            w.postMessage({ url, conc: CONC, ms });
+          }),
+      ),
+    ).then((ns) => ns.reduce((a, b) => a + b, 0) / (ms / 1000));
+  const httpRow: Record<string, number> = Object.fromEntries(names.map((n) => [n, 0]));
+  let bare = 0;
+  for (let r = 0; r < ROUNDS; r++) {
+    for (const aname of [...names.map((_, i) => names[(i + r) % names.length]), "bare"]) {
+      const url = `http://127.0.0.1:${servers[aname].port}/`;
+      await runLoad(url, 300); // warm-up
+      const rps = await runLoad(url, DURATION);
+      if (aname === "bare") bare = Math.max(bare, rps);
+      else httpRow[aname] = Math.max(httpRow[aname], rps);
+    }
+  }
+  for (const w of workers) w.terminate();
+  for (const s of Object.values(servers)) s.stop(true);
+  console.log(`\nOver HTTP, Bun.serve on 127.0.0.1, ${CLIENTS} client workers × ${CONC} keep-alive connections (best of ${ROUNDS})`);
+  console.log(`${"GET / (text), HTTP".padEnd(38)}${names.map((a) => fmt(httpRow[a])).join("")}   ${(ratioOf(httpRow) * 100).toFixed(0)}%`);
+  console.log(`${"  (bare Bun.serve, no framework)".padEnd(38)}${fmt(bare)}`);
+}
 
 // ---- memory: heap per 10k requests (in-process) ----
 // retained: live-heap growth per 10k requests after a full GC (leakCheck from scripts/lib/leak.ts);

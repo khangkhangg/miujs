@@ -63,6 +63,8 @@ export const createOrder = route.post("/orders", {
 
 Return an object (JSON), a string (text), `undefined` or `null` (204), or any `Response`. Params and query are coerced from strings; unknown body keys are dropped. In dev mode responses are checked against `response`.
 
+A string is served as `text/plain; charset=utf-8`. When Bun's own server calls the app (`export default app` or `app.listen()` on Bun), no `onResponse` plugin is installed, the method isn't `HEAD` and the route set no headers, the header is left off the `Response` object and Bun adds `text/plain;charset=utf-8` on the wire, which saves ~120 ns per text response. Everywhere the object can be seen (`app.fetch(req)` in tests, `app.tools()` calls, MCP, `app.dispatch`, Node, Deno, Workers) it carries the header.
+
 Other route options: `name`, `description`, `tags`, `mcp: false`, `permission` (checked via `ctx.authorize`, provided by `@miujs/access`), `maxBodySize`, `internal`.
 
 ## Schemas

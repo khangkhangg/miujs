@@ -212,6 +212,11 @@ const JSON_HEADERS = new Headers({ "content-type": JSON_TYPE });
 const TEXT_HEADERS = new Headers({ "content-type": TEXT_TYPE });
 const TEXT_INIT: ResponseInit = { headers: TEXT_HEADERS };
 
+/** Bun's own server object (`[object HTTPServer]`, `DebugHTTPServer`, `HTTPSServer`, ...), not a look-alike. */
+function isBunServer(s: unknown): boolean {
+  return /HTTPS?Server\]$/.test(Object.prototype.toString.call(s));
+}
+
 const MAX_SUGGEST_PATH = 200;
 
 function levenshtein(a: string, b: string): number {
@@ -262,6 +267,13 @@ export class App {
   private logRequests: boolean;
   private basePlatform: PlatformInfo;
   private serverPlatform: PlatformInfo | null = null;
+  /**
+   * The platform for requests Bun.serve hands to `fetch` directly. Only `fetch` uses it (public
+   * `dispatch` swaps it for `serverPlatform`), so its identity marks a Response that goes
+   * straight to the wire: string results then skip `content-type` and Bun adds
+   * `text/plain;charset=utf-8` itself, saving ~110–130 ns per text response.
+   */
+  private wirePlatform: PlatformInfo | null = null;
   private toolCache: { routeTools: ReturnType<typeof buildRouteTool>[]; pluginTools: McpTool[] } | null = null;
 
   constructor(options: MiuOptions = {}) {
@@ -459,6 +471,11 @@ export class App {
       return new Response(null, { status: st === 200 ? 204 : st, headers });
     }
     if (typeof result === "string") {
+      // Straight to Bun's server and nobody can see the object (no onResponse hook; not HEAD, whose
+      // body is stripped and which gets no header from Bun): let Bun add the content-type on the wire.
+      if (!headers && ctx._platform === this.wirePlatform && this.responseHooks.length === 0 && ctx.method !== "HEAD") {
+        return st === 200 ? new Response(result) : new Response(result, { status: st });
+      }
       if (!headers) return new Response(result, st === 200 ? TEXT_INIT : { status: st, headers: TEXT_HEADERS });
       if (!headers.has("content-type")) headers.set("content-type", TEXT_TYPE);
       return new Response(result, { status: st, headers });
@@ -527,18 +544,28 @@ export class App {
     let platform = this.basePlatform;
     if (envOrServer && typeof envOrServer.upgrade === "function") {
       let sp = this.serverPlatform;
-      if (sp === null || sp.bunServer !== envOrServer) this.serverPlatform = sp = { runtime: this.runtime, bunServer: envOrServer, pending: this.background, trustProxy: this.options.trustProxy };
-      platform = sp;
+      if (sp === null || sp.bunServer !== envOrServer) {
+        this.serverPlatform = sp = { runtime: this.runtime, bunServer: envOrServer, pending: this.background, trustProxy: this.options.trustProxy };
+        this.wirePlatform = this.runtime === "bun" && isBunServer(envOrServer) ? { ...sp } : null;
+      }
+      platform = this.wirePlatform ?? sp;
     } else if (envOrServer && envOrServer.remoteAddr && typeof envOrServer.remoteAddr.hostname === "string") {
       // Deno.serve info, or the Node adapter: the client address for ctx.ip.
       platform = { runtime: this.runtime, pending: this.background, remoteAddr: envOrServer.remoteAddr, trustProxy: this.options.trustProxy };
     }
-    return this.dispatch(req, this.staticEnv, platform);
+    return this.dispatchCore(req, this.staticEnv, platform);
   };
 
   /** Handle a request without the network. Used by tests, MCP tool calls and adapters. */
   dispatch(req: Request, env: unknown, platform: PlatformInfo): Response | Promise<Response> {
-    if (!this.isReady) return this.ready().then(() => this.dispatch(req, env, platform));
+    // Callers here read the Response (MCP, plugins re-dispatching with ctx._platform), so never
+    // the wire-only platform: their string responses keep the content-type.
+    if (platform === this.wirePlatform && this.serverPlatform !== null) platform = this.serverPlatform;
+    return this.dispatchCore(req, env, platform);
+  }
+
+  private dispatchCore(req: Request, env: unknown, platform: PlatformInfo): Response | Promise<Response> {
+    if (!this.isReady) return this.ready().then(() => this.dispatchCore(req, env, platform));
     const start = this.logRequests ? performance.now() : 0;
     const ctx = new RequestContext(req, pathOf(req.url), env, platform, this.log);
     let out: Response | Promise<Response>;

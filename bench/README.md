@@ -3,6 +3,7 @@
 ```bash
 bun bench/run.ts            # 3 rounds × 2 s per framework and scenario, then memory and cold start
 BENCH_MS=500 bun bench/run.ts
+BENCH_HTTP=1 bun bench/run.ts  # also GET / over real HTTP (Bun.serve on 127.0.0.1)
 ```
 
 For real-HTTP/WebSocket soak tests of the example apps (memory over time, latency percentiles,
@@ -23,10 +24,46 @@ shutdown), see [`scripts/soak/REPORT.md`](../scripts/soak/REPORT.md).
   - *peak*: the highest heap size above the post-GC baseline while serving 10k requests,
     sampled every 500 requests. JSC collects young garbage on its own schedule, so treat this as
     approximate garbage pressure, not an exact allocation count.
+- **`GET /` with the server argument**: Bun.serve calls `fetch(req, server)`. The main table calls
+  `fetch(req)` the way a test does, which keeps MiuJS's `content-type` header on text responses.
+  An extra row passes a real Bun `Server` object as the second argument (Elysia ignores it, Hono
+  receives it as `env`), which is what `export default app` and `app.listen()` do on Bun.
+- **Over HTTP** (`BENCH_HTTP=1`, `GET /` only): each framework behind its own `Bun.serve` on
+  127.0.0.1, with load from Worker threads running keep-alive `fetch` loops (default 2 workers × 32
+  connections; `BENCH_HTTP_CLIENTS`, `BENCH_HTTP_CONC`), plus a bare `Bun.serve` returning
+  `new Response("Hi")` as the ceiling. Before timing, it checks that every framework returns `Hi`
+  with a `text/plain` content-type on the wire. On Windows, more than ~64 connections made Bun's
+  loopback throughput collapse (14–22k req/s), so keep the defaults there.
 - **Cold start**: `bench/cold.ts` in a fresh `bun` process: runtime boot, importing the framework,
   building the same 3-route app and reading one response. Median of 7 interleaved runs.
 
-## Latest results (2026-10-15, night)
+## Text responses on Bun.serve (2026-10-15, late night)
+
+MiuJS now leaves `content-type` off a string Response when it goes straight to Bun's server and
+nothing can see the object (rule in "What still blocks", item 1). Bun adds
+`text/plain;charset=utf-8` on the wire. Same machine as below, `BENCH_HTTP=1`, two full runs with
+the new branch disabled ("before") and two with it enabled ("after"), all back to back:
+
+| `GET /` text | MiuJS before (run 1 / 2) | MiuJS after (run 1 / 2) | vs best other, before | vs best other, after |
+| --- | ---: | ---: | ---: | ---: |
+| In-process `fetch(req)` (main table; this path is unchanged) | 1,382,000 / 1,383,000 | 1,279,500 / 1,460,500 | 70% / 75% | 70% / 79% |
+| In-process `fetch(req, bunServer)` | 1,249,500 / 1,252,500 | 1,406,000 / 1,487,000 | **72% / 72%** | **85% / 84%** |
+| Over HTTP, 2 × 32 connections | 70,273 / 70,626 | 71,989 / 71,869 | 99% / 97% | 101% / 98% |
+
+Elysia was the best other framework in every in-process row (1.66M–1.96M req/s). Over HTTP all
+three frameworks were within 3% of each other and of a bare `Bun.serve` (71.6k–73.0k req/s).
+
+- The gain shows where expected: with Bun's server as the second argument, `GET /` went from 72%
+  to 84–85% of Elysia (about +12 points, in line with the earlier experiment's 87%).
+- The main `fetch(req)` table uses the unchanged path (the header is still set). It moved only
+  within the usual ±5-point noise.
+- **Over HTTP the change is not measurable on this machine.** Bun's HTTP server on Windows
+  loopback tops out at ~72k req/s even with no framework (~14 µs per request). A ~0.12 µs saving
+  is far below that noise, and every framework sits at the ceiling. Seeing framework differences
+  over the wire would take a faster load generator or Linux.
+- Memory and cold start did not change (cold start 11.3–11.8 ms for MiuJS vs 50.8–54.5 ms for Elysia).
+
+## Earlier results (2026-10-15, night)
 
 Bun 1.4.3 on Windows 11, laptop CPU (20 logical cores), MiuJS after the body-read fix below. Two
 back-to-back runs on an otherwise idle machine. Absolute req/s move ±10% between runs for every
@@ -166,7 +203,19 @@ Framework dispatch alone (handler returns a prebuilt `Response`): MiuJS ~150–1
 
 ### What still blocks "within 10%" on trivial routes
 
-1. **`content-type` on text responses (~110–130 ns, ~12–15 points on `GET /`).** Elysia returns
+1. **`content-type` on text responses (~110–130 ns, ~12–15 points on `GET /`). Resolved for
+   Bun.serve (late night).** MiuJS now builds a string Response without headers when all of these hold:
+   - the request came from Bun's own server (`export default app` or `app.listen()` on Bun), and
+     the second argument's `Object.prototype.toString` tag is Bun's `HTTPServer`/`HTTPSServer`,
+     not a look-alike;
+   - no plugin has `onResponse`;
+   - the method is not `HEAD` (Bun adds no content-type to a bodyless HEAD response);
+   - the route set no headers.
+
+   In that case Bun adds the content-type on the wire. Every path that can read the object keeps
+   the header: `app.fetch(req)`, `app.tools()`, MCP and any `app.dispatch`, which swaps the
+   wire-only platform for the normal one. Node, Deno and Workers also keep it.
+   Original analysis: Elysia returns
    `new Response("Hi")`, which on Bun has *no* `content-type` on the Response object (Bun.serve adds
    one on the wire). MiuJS sets `text/plain; charset=utf-8` on the object so tests, plugins and
    the Node/Workers adapters see it. With that header removed as an experiment, `GET /` went from
@@ -179,5 +228,5 @@ Framework dispatch alone (handler returns a prebuilt `Response`): MiuJS ~150–1
    with `new Function`. MiuJS cannot (Workers forbid it; see AGENTS.md), so it pays a few generic
    branches per request instead.
 
-Unblocking item 1 is a product decision: either drop `content-type` from string Response objects
-on Bun, as Elysia does, or keep the header and accept the gap.
+Item 1 is now resolved for Bun.serve, as described above. The `fetch(req)` table still pays for the
+header by design, since tests and adapters use that path.
