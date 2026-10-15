@@ -1,6 +1,6 @@
 {
   "name": "miujs",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Fast, secure, runs anywhere (Bun, Node, Cloudflare Workers), and every route is automatically an agent tool.",
   "type": "module",
   "license": "AGPL-3.0-or-later",
