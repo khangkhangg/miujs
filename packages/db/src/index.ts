@@ -131,7 +131,7 @@ interface BunDb {
 /** A `sqlite()` database: the D1 interface plus `close()`. */
 export interface SqliteDatabase extends Database {
   /**
-   * Closes the file (statements are finalized after each use, so nothing keeps it open). Idempotent;
+   * Closes the file (cached statements are finalized first, so nothing keeps it open). Idempotent;
    * using the database afterwards throws `MIU_E_DB_CLOSED`. Only needed for short-lived handles
    * (CLIs, tests, deleting the file on Windows).
    */
@@ -231,7 +231,12 @@ export function splitSql(sql: string): string[] {
   return out;
 }
 
+/** Compiled statements `sqlite()` keeps for reuse by default. */
+export const DEFAULT_STATEMENT_CACHE = 200;
+
 export interface SqliteOptions {
+  /** Most compiled statements kept for reuse (keyed by SQL text, least recently used evicted). 0 turns caching off. Default 200. */
+  statementCache?: number;
   /** @internal Override runtime detection (tests). */
   runtime?: Runtime;
 }
@@ -266,13 +271,40 @@ export function sqlite(path: string = ":memory:", opts: SqliteOptions = {}): Sql
     })());
   };
 
-  // Each statement is finalized right after use: an unfinalized one keeps the file open after close().
+  // Compiled statements, reused by SQL text (least recently used first; Map keeps insertion order).
+  // Bounded, and every statement is finalized on eviction and on close(): an unfinalized statement
+  // keeps the file open after close() (and locked on Windows).
+  const maxStatements = Math.max(0, opts.statementCache ?? DEFAULT_STATEMENT_CACHE);
+  const statements = new Map<string, BunStmt>();
+  const finalizeAll = () => {
+    for (const stmt of statements.values()) {
+      try {
+        stmt.finalize();
+      } catch {}
+    }
+    statements.clear();
+  };
+  // Cached statements keep the column list they were compiled with (e.g. for SELECT *): a schema
+  // change drops them all, and DDL itself is never cached.
+  const DDL = /^\s*(create|alter|drop)\b/i;
   const use = <T>(handle: BunDb, sql: string, fn: (stmt: BunStmt) => T): T => {
-    const stmt = handle.prepare(sql);
+    const ddl = DDL.test(sql);
+    if (ddl) finalizeAll();
+    let stmt = statements.get(sql);
+    if (stmt) statements.delete(sql);
+    else stmt = handle.prepare(sql);
     try {
       return fn(stmt);
     } finally {
-      stmt.finalize();
+      if (ddl || maxStatements === 0 || closed) stmt.finalize();
+      else {
+        statements.set(sql, stmt); // most recently used goes last
+        if (statements.size > maxStatements) {
+          const [oldest, old] = statements.entries().next().value!;
+          statements.delete(oldest);
+          old.finalize();
+        }
+      }
     }
   };
 
@@ -339,6 +371,7 @@ export function sqlite(path: string = ":memory:", opts: SqliteOptions = {}): Sql
       const handle = await open();
       const start = performance.now();
       const parts = splitSql(sql);
+      finalizeAll(); // exec() is how schemas usually change: compile statements afresh
       for (const p of parts) handle.run(p);
       return { count: parts.length, duration: performance.now() - start };
     },
@@ -349,7 +382,9 @@ export function sqlite(path: string = ":memory:", opts: SqliteOptions = {}): Sql
       opened = null;
       if (!pending) return;
       try {
-        (await pending).close();
+        const handle = await pending;
+        finalizeAll();
+        handle.close();
       } catch {
         // Opening failed (e.g. not Bun): nothing to close.
       }
@@ -398,12 +433,13 @@ export async function migrate(database: Database, migrations: Migration[]): Prom
   return applied;
 }
 
-const migrated = new WeakMap<object, Map<Migration[], Promise<string[]>>>();
+// Weak on both levels: a caller passing a fresh migrations array per call must not pile up promises.
+const migrated = new WeakMap<object, WeakMap<Migration[], Promise<string[]>>>();
 
 /** Runs `migrate` at most once per (database, migrations) pair in this isolate. */
 export function migrateOnce(database: Database, migrations: Migration[]): Promise<string[]> {
   let byList = migrated.get(database);
-  if (!byList) migrated.set(database, (byList = new Map()));
+  if (!byList) migrated.set(database, (byList = new WeakMap()));
   let p = byList.get(migrations);
   if (!p) {
     p = migrate(database, migrations);

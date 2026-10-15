@@ -65,7 +65,8 @@ export function vite(opts: ViteOptions = {}) {
     const target = devUrl + ctx.path + ctx.url.search;
     let res: Response;
     try {
-      res = await fetch(target, { method: ctx.method, headers, redirect: "manual" });
+      // The client's signal: a browser that leaves (or reloads) mid-request aborts the request to Vite.
+      res = await fetch(target, { method: ctx.method, headers, redirect: "manual", signal: ctx.req.signal });
     } catch (err) {
       throw webErrors.viteDevUnreachable(devUrl!, err);
     }

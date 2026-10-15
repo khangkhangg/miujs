@@ -200,6 +200,8 @@ export function migrateProxy(opts: MigrateProxyOptions) {
       }
     }
     const noBody = req.method === "HEAD" || res.status === 204 || res.status === 304;
+    // Release the upstream connection when its (empty) body is not passed on.
+    if (noBody) res.body?.cancel().catch(() => {});
     return new Response(noBody ? null : res.body, { status: res.status, statusText: res.statusText, headers: out });
   }
 

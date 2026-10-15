@@ -83,8 +83,8 @@ export interface ProviderRuntime {
   timeoutMs: number;
   /** Retries on 429, 5xx and network errors. */
   retries: number;
-  /** Injectable for tests. */
-  sleep: (ms: number) => Promise<void>;
+  /** Back-off wait (injectable for tests). `signal` (when given) ends it early; send() also stops waiting on abort. */
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 export interface ProviderFeatures {

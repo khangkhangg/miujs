@@ -27,9 +27,16 @@ export function memoryTransport(): MemoryTransport {
     waitFor(count = 1, timeoutMs = 1000) {
       if (outbox.length >= count) return Promise.resolve([...outbox]);
       return new Promise((resolve, reject) => {
-        const w = { count, resolve };
+        // The timer is cleared once the wait is satisfied, so it never keeps a finished process alive.
+        const w = {
+          count,
+          resolve: (v: OutgoingMail[]) => {
+            clearTimeout(timer);
+            resolve(v);
+          },
+        };
         waiters.push(w);
-        setTimeout(() => {
+        const timer = setTimeout(() => {
           if (!waiters.includes(w)) return;
           waiters = waiters.filter((x) => x !== w);
           reject(new Error(`memoryTransport: expected ${count} message${count === 1 ? "" : "s"}, got ${outbox.length} within ${timeoutMs} ms`));
@@ -73,6 +80,28 @@ function sendFailed(kind: string, status: number, detail: string) {
   });
 }
 
+/** Runs one provider call with a deadline covering the whole exchange (headers and body). */
+async function withTimeout<T>(provider: string, timeoutMs: number | undefined, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const ms = timeoutMs ?? 30_000;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(new DOMException("timed out", "TimeoutError")), ms);
+  try {
+    return await fn(ctrl.signal);
+  } catch (err) {
+    if (ctrl.signal.aborted) {
+      throw errors.custom({
+        code: "MIU_E_MAIL_TIMEOUT",
+        status: 504,
+        message: `${provider} did not answer within ${ms} ms`,
+        fix: "Check the provider's status and your network; raise the transport's timeoutMs if it is just slow. The email may or may not have been sent.",
+      });
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function readDetail(res: Response): Promise<string> {
   try {
     const text = await res.text();
@@ -88,6 +117,8 @@ async function readDetail(res: Response): Promise<string> {
 }
 
 export interface ResendTransportOptions {
+  /** Milliseconds to wait for the provider before failing with MIU_E_MAIL_TIMEOUT. Default 30000. */
+  timeoutMs?: number;
   /** API key. Default: `env[apiKeyEnv]`. */
   apiKey?: string;
   /** Env var / secret holding the key. Default `RESEND_API_KEY`. */
@@ -118,14 +149,17 @@ export function resendTransport(opts: ResendTransportOptions = {}): MailTranspor
       body.text = m.text;
       if (m.replyTo) body.reply_to = m.replyTo;
       if (Object.keys(m.headers).length) body.headers = m.headers;
-      const res = await (opts.fetch ?? fetch)(`${base}/emails`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-        body: JSON.stringify(body),
+      return withTimeout("Resend", opts.timeoutMs, async (signal) => {
+        const res = await (opts.fetch ?? fetch)(`${base}/emails`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+          body: JSON.stringify(body),
+          signal,
+        });
+        if (!res.ok) throw sendFailed("Resend", res.status, await readDetail(res));
+        const json = (await res.json().catch(() => ({}))) as { id?: unknown };
+        return typeof json.id === "string" ? { id: json.id } : {};
       });
-      if (!res.ok) throw sendFailed("Resend", res.status, await readDetail(res));
-      const json = (await res.json().catch(() => ({}))) as { id?: unknown };
-      return typeof json.id === "string" ? { id: json.id } : {};
     },
     inspect: () => ({ apiKey: opts.apiKey ? "(set)" : `env.${envName}` }),
   };
@@ -133,6 +167,8 @@ export function resendTransport(opts: ResendTransportOptions = {}): MailTranspor
 
 export interface HttpTransportOptions {
   url: string;
+  /** Milliseconds to wait for the provider before failing with MIU_E_MAIL_TIMEOUT. Default 30000. */
+  timeoutMs?: number;
   /** Static headers, or a function of env (for API keys from secrets). */
   headers?: Record<string, string> | ((env: Env) => Record<string, string>);
   /** Turns the message into the provider's JSON body. */
@@ -150,11 +186,17 @@ export function httpTransport(opts: HttpTransportOptions): MailTransport {
       const extra = typeof opts.headers === "function" ? opts.headers(env) : opts.headers;
       const headers = new Headers(extra);
       if (!headers.has("content-type")) headers.set("content-type", "application/json");
-      const res = await (opts.fetch ?? fetch)(opts.url, { method: "POST", headers, body: JSON.stringify(opts.map(m)) });
-      if (!res.ok) throw sendFailed(new URL(opts.url).host, res.status, await readDetail(res));
-      if (!opts.id) return {};
-      const json = await res.json().catch(() => null);
-      return { id: opts.id(json) };
+      const host = new URL(opts.url).host;
+      return withTimeout(host, opts.timeoutMs, async (signal) => {
+        const res = await (opts.fetch ?? fetch)(opts.url, { method: "POST", headers, body: JSON.stringify(opts.map(m)), signal });
+        if (!res.ok) throw sendFailed(host, res.status, await readDetail(res));
+        if (!opts.id) {
+          await res.body?.cancel();
+          return {};
+        }
+        const json = await res.json().catch(() => null);
+        return { id: opts.id(json) };
+      });
     },
     inspect: () => ({ url: opts.url }),
   };

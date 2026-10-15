@@ -4,7 +4,7 @@ export { files, MIN_SECRET, type FilesOptions, type FilesService } from "./plugi
 export type { FilesClient, GetOptions, PutOptions, SignedPrefixOptions, SignedUrlOptions } from "./client.ts";
 export type { HandleUploadOptions, UploadedFile } from "./upload.ts";
 export type { MultipartOptions } from "./multipart.ts";
-export { memoryStore } from "./memory.ts";
+export { memoryStore, type MemoryStoreOptions } from "./memory.ts";
 export { localStore } from "./local.ts";
 export { r2Store, type R2BucketLike, type R2MultipartUploadLike, type R2ObjectBodyLike, type R2ObjectLike } from "./r2.ts";
 export { KNOWN_TYPES, sniff } from "./sniff.ts";

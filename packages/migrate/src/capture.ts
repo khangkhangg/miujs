@@ -109,12 +109,9 @@ async function readLimited(stream: ReadableStream<Uint8Array> | null, max: numbe
   return out;
 }
 
-async function decodeBody(
-  stream: ReadableStream<Uint8Array> | null,
-  headers: Headers,
-  max: number,
-  ropts: RedactOptions,
-): Promise<{ value: unknown; omitted?: string }> {
+type Decoded = { value: unknown; omitted?: string };
+
+async function decodeBody(stream: ReadableStream<Uint8Array> | null, headers: Headers, max: number, ropts: RedactOptions): Promise<Decoded> {
   const declared = Number(headers.get("content-length") ?? NaN);
   if (declared > max) {
     await stream?.cancel().catch(() => {});
@@ -187,7 +184,8 @@ export function memorySink() {
 export function jsonlFileSink(path: string): CaptureSink {
   let chain: Promise<void> = Promise.resolve();
   return (line: string) => {
-    chain = chain.then(async () => {
+    // Writes stay in order; one failed write (full disk, missing folder) must not stop later ones.
+    chain = chain.catch(() => {}).then(async () => {
       if (detectRuntime() === "workerd") throw migrateError("CONFIG", 500, "jsonlFileSink needs a filesystem", "On Workers, pass a sink that writes to R2, KV or a queue.");
       const mod = "node:fs/promises";
       const fs = (await import(/* @vite-ignore */ mod)) as { appendFile(p: string, d: string): Promise<void> };
@@ -241,25 +239,33 @@ export function captureMiddleware(opts: CaptureOptions) {
         const prev = query[k];
         query[k] = prev === undefined ? v : Array.isArray(prev) ? [...prev, v] : [prev, v];
       }
-      ctx.state[STATE] = { start: performance.now(), query, clone: hasBody ? ctx.req.clone() : null };
+      // Read the request copy right away (up to `max` bytes, then cancel it). A tee'd branch read only
+      // after the handler or proxy has streamed the original would buffer the whole upload.
+      let reqBody: Promise<Decoded> = Promise.resolve({ value: null });
+      if (hasBody) {
+        const declared = Number(ctx.req.headers.get("content-length") ?? NaN);
+        if (declared > max) reqBody = Promise.resolve({ value: null, omitted: "too large" });
+        else {
+          const clone = ctx.req.clone();
+          reqBody = decodeBody(clone.body, clone.headers, max, ropts).catch(() => ({ value: null, omitted: "unreadable" }));
+        }
+      }
+      ctx.state[STATE] = { start: performance.now(), query, reqBody };
     },
     onResponse(ctx, res) {
-      const st = ctx.state[STATE] as { start: number; query: Record<string, string | string[]>; clone: Request | null } | undefined;
+      const st = ctx.state[STATE] as { start: number; query: Record<string, string | string[]>; reqBody: Promise<Decoded> } | undefined;
       if (!st) return;
       const proxied = ctx.state[PROXIED] === true;
-      if (opts.only === "proxied" && !proxied) {
-        st.clone?.body?.cancel().catch(() => {});
-        return;
-      }
+      if (opts.only === "proxied" && !proxied) return;
       const durationMs = Math.round((performance.now() - st.start) * 100) / 100;
-      const copy = res.clone();
+      // An event stream may never end: recording it would keep this capture (and a tee of the
+      // stream) alive for as long as the upstream keeps sending.
+      const streaming = (res.headers.get("content-type") ?? "").toLowerCase().startsWith("text/event-stream");
+      const copy = streaming ? new Response(null, { status: res.status, headers: res.headers }) : res.clone();
       ctx.waitUntil(
         (async () => {
           try {
-            const [reqBody, resBody] = await Promise.all([
-              st.clone ? decodeBody(st.clone.body, st.clone.headers, max, ropts) : Promise.resolve({ value: null } as { value: unknown; omitted?: string }),
-              decodeBody(copy.body, copy.headers, max, ropts),
-            ]);
+            const [reqBody, resBody] = await Promise.all([st.reqBody, streaming ? Promise.resolve<Decoded>({ value: null, omitted: "event stream" }) : decodeBody(copy.body, copy.headers, max, ropts)]);
             const entry: CaptureEntry = {
               v: 1,
               ts: new Date().toISOString(),

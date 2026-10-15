@@ -33,7 +33,7 @@ export interface AIOptions {
   /** `createAI` only: where usage is logged (debug level). */
   log?: Logger;
   /** @internal Injectable backoff sleep (tests). */
-  sleep?: (ms: number) => Promise<void>;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 /** A tool the model may call. Build with `tool()`, or expose routes with `appTools()`. */
@@ -90,7 +90,18 @@ export interface Internals {
   logUsage(op: string, model: string, usage: Usage, started: number): void;
 }
 
-const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** Back-off sleep that ends (and clears its timer) when `signal` aborts, so nothing waits on a dead request. */
+const realSleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    if (signal?.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done);
+  });
 
 export function internals(opts: AIOptions, scope: Scope): Internals {
   const p = opts.provider;
@@ -144,13 +155,60 @@ export function makeClient(opts: AIOptions, scope: Scope): AIClient {
     return out;
   };
 
-  async function* stream(o: GenerateOptions): AsyncIterable<StreamEvent> {
-    const req = it.request(o, DEFAULT_STREAM_MAX_TOKENS);
+  async function* events(o: GenerateOptions, signal: AbortSignal): AsyncGenerator<StreamEvent> {
+    const req = it.request({ ...o, signal }, DEFAULT_STREAM_MAX_TOKENS);
     const started = performance.now();
     for await (const ev of p.stream(req, it.runtime())) {
       if (ev.type === "finish") it.logUsage("stream", ev.model, ev.usage, started);
       yield ev;
     }
+  }
+
+  /**
+   * The provider stream, cancellable at any time. A generator's return() waits behind a pending
+   * next() (a stalled provider would keep it waiting forever), so stopping early (break, or a
+   * cancelled toSSE response) first aborts the HTTP request. The caller's `signal` and, inside a
+   * request, the client's disconnect abort it too.
+   */
+  function stream(o: GenerateOptions): AsyncIterable<StreamEvent> {
+    return {
+      [Symbol.asyncIterator]() {
+        const ctrl = new AbortController();
+        const sources = [o.signal, scope.ctx?.req?.signal].filter((s): s is AbortSignal => !!s);
+        const stop = (s: AbortSignal) => () => ctrl.abort(s.reason);
+        const links = sources.map((s) => [s, stop(s)] as const);
+        const unlink = () => {
+          for (const [s, fn] of links) s.removeEventListener("abort", fn);
+        };
+        for (const [s, fn] of links) {
+          if (s.aborted) fn();
+          else s.addEventListener("abort", fn, { once: true });
+        }
+        const gen = events(o, ctrl.signal);
+        const settle = async <T>(p: Promise<IteratorResult<T>>) => {
+          try {
+            const r = await p;
+            if (r.done) unlink();
+            return r;
+          } catch (err) {
+            unlink();
+            throw err;
+          }
+        };
+        return {
+          next: () => settle(gen.next()),
+          async return(value?: unknown) {
+            unlink();
+            ctrl.abort(new DOMException("The stream was closed by its consumer", "AbortError"));
+            try {
+              await gen.return(undefined);
+            } catch {}
+            return { done: true, value } as IteratorResult<StreamEvent>;
+          },
+          throw: (err?: unknown) => settle(gen.throw(err)),
+        };
+      },
+    };
   }
 
   async function object<S extends ObjectSchema<any>>(o: ObjectOptions<S>): Promise<Infer<S>> {

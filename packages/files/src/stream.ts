@@ -110,3 +110,37 @@ export async function peek(src: ReadableStream<Uint8Array>, n: number): Promise<
   });
   return { head, stream };
 }
+
+/**
+ * Bytes `offset .. offset+length` of `src`, read lazily: bytes before the range are skipped as
+ * they stream past, and the source is cancelled as soon as the range is complete.
+ */
+export function sliceStream(src: ReadableStream<Uint8Array>, offset: number, length: number): ReadableStream<Uint8Array> {
+  const reader = src.getReader();
+  let pos = 0;
+  const end = offset + length;
+  const finish = (c: ReadableStreamDefaultController<Uint8Array>) => {
+    reader.cancel().catch(() => {});
+    c.close();
+  };
+  return new ReadableStream<Uint8Array>({
+    async pull(c) {
+      for (;;) {
+        if (pos >= end) return finish(c);
+        const { done, value } = await reader.read();
+        if (done) return c.close();
+        const from = pos;
+        pos += value.byteLength;
+        if (pos <= offset) continue;
+        const a = Math.max(0, offset - from);
+        const b = Math.min(value.byteLength, end - from);
+        c.enqueue(a === 0 && b === value.byteLength ? value : value.subarray(a, b));
+        if (pos >= end) finish(c);
+        return;
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+}

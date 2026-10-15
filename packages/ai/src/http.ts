@@ -44,21 +44,43 @@ async function errorMessage(res: Response, secret?: string): Promise<string> {
 
 const isTimeout = (e: unknown) => e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError");
 
+const abortReason = (s: AbortSignal) => s.reason ?? new DOMException("The operation was aborted", "AbortError");
+
+/** Waits out a back-off, but stops (throwing the abort reason) as soon as `signal` aborts. */
+async function pause(rt: ProviderRuntime, ms: number, signal: AbortSignal | null | undefined): Promise<void> {
+  if (!signal) return rt.sleep(ms);
+  if (signal.aborted) throw abortReason(signal);
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(abortReason(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  aborted.catch(() => {});
+  try {
+    await Promise.race([rt.sleep(ms, signal), aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+  if (signal.aborted) throw abortReason(signal);
+}
+
 /**
  * `fetch` with a timeout and retries. Resolves only with an ok response; everything else becomes
- * a MiuError. The timeout covers the time to response headers, so streamed bodies may run longer.
+ * a MiuError. The timeout covers the time to response headers, so streamed bodies may run longer;
+ * `init.signal` stays linked for the whole body, so aborting it also stops a streamed response.
  */
 export async function send(rt: ProviderRuntime, provider: string, url: string, init: RequestInit, secret?: string): Promise<Response> {
+  const outer = init.signal;
   for (let attempt = 0; ; attempt++) {
+    if (outer?.aborted) throw abortReason(outer);
     const last = attempt >= rt.retries;
+    // The timeout only covers the wait for headers; the caller's signal also covers the body.
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(new DOMException("timed out", "TimeoutError")), rt.timeoutMs);
-    const outer = init.signal;
-    const onAbort = () => ctrl.abort(outer?.reason);
-    outer?.addEventListener("abort", onAbort);
+    const signal = outer ? AbortSignal.any([outer, ctrl.signal]) : ctrl.signal;
     let res: Response;
     try {
-      res = await rt.fetch(url, { ...init, signal: ctrl.signal });
+      res = await rt.fetch(url, { ...init, signal });
     } catch (err) {
       if (outer?.aborted) throw err;
       const timedOut = ctrl.signal.aborted || isTimeout(err);
@@ -66,11 +88,10 @@ export async function send(rt: ProviderRuntime, provider: string, url: string, i
         if (timedOut) throw aiErrors.timeout(provider, rt.timeoutMs);
         throw aiErrors.provider(provider, undefined, redact(err instanceof Error ? err.message : String(err), secret));
       }
-      await rt.sleep(backoff(attempt));
+      await pause(rt, backoff(attempt), outer);
       continue;
     } finally {
       clearTimeout(timer);
-      outer?.removeEventListener("abort", onAbort);
     }
     if (res.ok) return res;
 
@@ -80,7 +101,7 @@ export async function send(rt: ProviderRuntime, provider: string, url: string, i
       const tooLong = wait !== undefined && wait > MAX_RETRY_DELAY_MS;
       if (!last && !tooLong) {
         await res.body?.cancel().catch(() => {});
-        await rt.sleep(wait ?? backoff(attempt));
+        await pause(rt, wait ?? backoff(attempt), outer);
         continue;
       }
       if (status === 429) {
@@ -101,10 +122,14 @@ export async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncIterable
   let buf = "";
   let event = "";
   let data: string[] = [];
+  let finished = false;
   try {
     for (;;) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) {
+        finished = true;
+        break;
+      }
       buf += decoder.decode(value, { stream: true });
       let nl: number;
       while ((nl = buf.indexOf("\n")) !== -1) {
@@ -128,6 +153,8 @@ export async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncIterable
     }
     if (data.length) yield { event: event || "message", data: data.join("\n") };
   } finally {
+    // Stopped early (the consumer broke out, "[DONE]", or an error): close the connection too.
+    if (!finished) await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }

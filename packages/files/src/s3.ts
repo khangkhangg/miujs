@@ -2,7 +2,7 @@ import { MiuError, processEnv, type Env } from "miujs";
 import { filesErrors } from "./errors.ts";
 import { encodeRfc3986, sha256Hex, signV4, type SigV4Credentials } from "./sigv4.ts";
 import { DEFAULT_TYPE, type FileObject, type FileStore, type StoredFile, type StorePutOptions, type UploadedPart } from "./store.ts";
-import { collect } from "./stream.ts";
+import { collect, sliceStream } from "./stream.ts";
 
 /** A literal value, or the name of an env var to read it from (per request on Workers). */
 export type S3Setting = string | { env: string };
@@ -244,7 +244,13 @@ function bucketStore(r: Resolved, pathStyle: boolean, fetchFn: FetchLike): FileS
         return { ...info(key, res, size), body: res.body ?? empty(), range: { offset: Number(cr[1]), length: Number(cr[2]) - Number(cr[1]) + 1 } };
       }
       if (!range) return { ...info(key, res, Number(res.headers.get("content-length") ?? 0)), body: res.body ?? empty() };
-      // The server ignored the Range header: cut the slice out ourselves.
+      // The server ignored the Range header: cut the slice out of the stream, never reading past it.
+      const total = Number(res.headers.get("content-length") ?? NaN);
+      if (res.body && Number.isSafeInteger(total)) {
+        const offset = Math.min(range.offset, total);
+        const length = Math.min(range.length, total - offset);
+        return { ...info(key, res, total), body: sliceStream(res.body, offset, length), range: { offset, length } };
+      }
       const all = new Uint8Array(await res.arrayBuffer());
       const offset = Math.min(range.offset, all.byteLength);
       const slice = all.subarray(offset, Math.min(all.byteLength, offset + range.length));

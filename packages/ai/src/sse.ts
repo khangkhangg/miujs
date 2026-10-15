@@ -15,11 +15,13 @@ export function toSSE(stream: AsyncIterable<StreamEvent>, init: { headers?: Head
   const enc = new TextEncoder();
   const frame = (event: string, data: unknown) => enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   let iter: AsyncIterator<StreamEvent> | undefined;
+  let cancelled = false;
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
       iter ??= stream[Symbol.asyncIterator]();
       try {
         const { value, done } = await iter.next();
+        if (cancelled) return;
         if (done) return controller.close();
         if (value.type === "finish") {
           const { message: _m, ...rest } = value;
@@ -28,12 +30,16 @@ export function toSSE(stream: AsyncIterable<StreamEvent>, init: { headers?: Head
           controller.enqueue(frame(value.type, value));
         }
       } catch (err) {
+        // After a cancel the pending read fails with the abort: nobody is listening any more.
+        if (cancelled) return;
         const payload = isMiuError(err) ? err.toJSON() : { error: { code: "MIU_E_INTERNAL", message: "Stream failed" } };
         controller.enqueue(frame("error", payload));
         controller.close();
       }
     },
     async cancel() {
+      // The client went away: stop the model call (ctx.ai streams abort their HTTP request here).
+      cancelled = true;
       await iter?.return?.();
     },
   });
