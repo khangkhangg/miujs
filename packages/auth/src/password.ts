@@ -15,11 +15,47 @@ export interface PasswordOptions {
   algorithm?: "argon2id" | "pbkdf2";
   /** PBKDF2 iterations. Default 600,000 (OWASP 2023). Lower only in tests. */
   iterations?: number;
+  /** Argon2id memory in KiB. Default 19,456 (19 MiB, OWASP's argon2id setting); each hash in flight uses this much. */
+  memoryCost?: number;
+  /** Argon2id passes. Default 2. */
+  timeCost?: number;
+  /**
+   * Hashes and verifications allowed at once in this process (default 4); the rest wait. Caps
+   * memory (concurrency x memoryCost) and CPU when many sign-ins arrive together.
+   */
+  concurrency?: number;
   /** @internal Override `Bun.password` (null = pretend it is absent). */
   bunPassword?: BunPasswordLike | null;
 }
 
 export const DEFAULT_ITERATIONS = 600_000;
+export const DEFAULT_MEMORY_COST = 19_456;
+export const DEFAULT_TIME_COST = 2;
+export const DEFAULT_PASSWORD_CONCURRENCY = 4;
+
+/** A counting semaphore per configured limit, shared by every call in the process. */
+const gates = new Map<number, { active: number; waiting: (() => void)[] }>();
+
+async function limited<T>(opts: PasswordOptions, fn: () => Promise<T>): Promise<T> {
+  const limit = Math.max(1, Math.floor(opts.concurrency ?? DEFAULT_PASSWORD_CONCURRENCY));
+  let gate = gates.get(limit);
+  if (!gate) gates.set(limit, (gate = { active: 0, waiting: [] }));
+  if (gate.active >= limit) await new Promise<void>((r) => gate!.waiting.push(r));
+  gate.active++;
+  try {
+    return await fn();
+  } finally {
+    gate.active--;
+    gate.waiting.shift()?.();
+  }
+}
+
+/** m and t from a "$argon2id$v=19$m=…,t=…,p=…$…" hash. */
+function argonParams(stored: string): { m: number; t: number } | null {
+  const m = /[$,]m=(\d+)/.exec(stored);
+  const t = /[$,]t=(\d+)/.exec(stored);
+  return m && t ? { m: Number(m[1]), t: Number(t[1]) } : null;
+}
 
 /** Stored for accounts with no password (made by OAuth sign-in). Never matches anything, like Django's `!` hashes. */
 export const UNUSABLE_PASSWORD = "!";
@@ -60,12 +96,12 @@ export async function hashPassword(password: string, opts: PasswordOptions = {})
   if (preferred(opts) === "argon2id") {
     const bp = bunPassword(opts);
     if (!bp) unsupported("argon2id");
-    return bp.hash(password, { algorithm: "argon2id" });
+    return limited(opts, () => bp.hash(password, { algorithm: "argon2id", memoryCost: opts.memoryCost ?? DEFAULT_MEMORY_COST, timeCost: opts.timeCost ?? DEFAULT_TIME_COST }));
   }
   const iterations = opts.iterations ?? DEFAULT_ITERATIONS;
   // Salt: random bytes as a base64url string, used as UTF-8 like Django's alphanumeric salts.
   const salt = base64urlEncode(randomBytes(16));
-  const hash = await pbkdf2(password, salt, iterations);
+  const hash = await limited(opts, () => pbkdf2(password, salt, iterations));
   return `${PREFIX}$${iterations}$${salt}$${base64Encode(hash)}`;
 }
 
@@ -82,7 +118,7 @@ export async function verifyPassword(password: string, stored: string, opts: Pas
     if (!Number.isSafeInteger(iterations) || iterations < 1) return false;
     const expected = base64Decode(parts[3]);
     if (!expected) return false;
-    const actual = await pbkdf2(password, parts[2], iterations);
+    const actual = await limited(opts, () => pbkdf2(password, parts[2], iterations));
     return timingSafeEqual(actual, expected);
   }
   const isArgon = stored.startsWith("$argon2");
@@ -91,7 +127,7 @@ export async function verifyPassword(password: string, stored: string, opts: Pas
     const bp = bunPassword(opts);
     if (!bp) unsupported(isArgon ? "argon2" : "bcrypt");
     try {
-      return await bp.verify(password, stored);
+      return await limited(opts, () => bp.verify(password, stored));
     } catch {
       return false;
     }
@@ -102,7 +138,12 @@ export async function verifyPassword(password: string, stored: string, opts: Pas
 /** True when `stored` should be replaced by a fresh `hashPassword` (done on login). */
 export function needsRehash(stored: string, opts: PasswordOptions = {}): boolean {
   const want = preferred(opts);
-  if (want === "argon2id") return !stored.startsWith("$argon2id$");
+  if (want === "argon2id") {
+    if (!stored.startsWith("$argon2id$")) return true;
+    // Upgrade weaker hashes; never downgrade stronger ones (e.g. Bun's older 64 MiB default).
+    const p = argonParams(stored);
+    return !p || p.m < (opts.memoryCost ?? DEFAULT_MEMORY_COST) || p.t < (opts.timeCost ?? DEFAULT_TIME_COST);
+  }
   if (!stored.startsWith(`${PREFIX}$`)) return true;
   const iterations = Number(stored.split("$")[1]);
   return !(iterations >= (opts.iterations ?? DEFAULT_ITERATIONS));
