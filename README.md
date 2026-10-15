@@ -26,7 +26,7 @@ deno serve app.ts   # Deno
 wrangler deploy     # Cloudflare Workers (or: miu deploy cloudflare)
 ```
 
-> Status: **0.2 preview**: core, 18 packages and the CLI are built and tested; the admin/CRM, game and tour kits are in progress. APIs may still change. See [the spec](https://claude.ai/code/artifact/cea50b68-c0e3-4821-a540-fb6b0f4903fc) for the full plan.
+> Status: **0.2 preview**: the core, the CLI, 16 batteries and the admin/CRM, game and 3D tour kits are built and tested (3,300+ tests, soak-tested for memory and shutdown). Not yet deployed to a real Cloudflare account or published to npm. APIs may still change. See [the spec](https://claude.ai/code/artifact/cea50b68-c0e3-4821-a540-fb6b0f4903fc) for the full plan.
 
 ## Why MiuJS
 
@@ -36,7 +36,10 @@ wrangler deploy     # Cloudflare Workers (or: miu deploy cloudflare)
 | **Agent-native** | `mcp: true` serves every route as an MCP tool at `/mcp`. `miu inspect --json` describes the whole app. Errors carry a stable `MIU_E_*` code and a `fix`. |
 | **No build** | Erasable TypeScript, run as written. Validators are composed at startup without `eval`, so they work on Workers. |
 | **Batteries** | Auth (passwords, OAuth, passkeys), sessions, SQL + Drizzle, cache, queues, files, mail, permissions, audit log, rate limits, workflows, AI and realtime rooms as official `@miujs/*` packages with swappable adapters (memory/SQLite/Redis/S3 locally, Cloudflare bindings in production). |
-| **Games** | `@miujs/realtime` rooms run on Durable Objects or in-process — enough for a Kahoot-style quiz. See [examples/quiz](examples/quiz). |
+| **Games** | `@miujs/realtime` rooms run on Durable Objects or in-process — enough for a Kahoot-style quiz. `@miujs/game` adds matchmaking, lobbies, leaderboards and Unity/Godot clients. See [examples/quiz](examples/quiz). |
+| **Bot-aware** | `@miujs/bots` tells humans from search engines, AI crawlers and scrapers (Cloudflare bot score, user agent, headers) and reads the visitor's country. Block them, give them partial data, or answer from a cache so they never touch your database. |
+| **Back office** | `@miujs/admin` turns resource definitions into a CRM-style admin with tables, CSV import/export and a visual workflow builder. |
+| **Fast and lean** | Starts in ~11 ms, validates JSON bodies faster than Elysia and Hono, and keeps memory flat under load (see [Performance](#performance)). |
 
 ## Packages
 
@@ -60,9 +63,53 @@ wrangler deploy     # Cloudflare Workers (or: miu deploy cloudflare)
 | [`@miujs/bots`](packages/bots) | Bot, AI crawler and location detection; block, trim or serve cached responses to crawlers |
 | [`@miujs/ai`](packages/ai) | Claude, OpenAI-compatible and Workers AI; structured output, tool loops, RAG |
 | [`@miujs/migrate`](packages/migrate) | Port Laravel, Django or FastAPI apps route by route (proxy, shared sessions, contract tests) |
-| `@miujs/admin`, `@miujs/game`, `@miujs/tour` | In progress: CRM/back-office, game and 3D tour kits |
+| [`@miujs/admin`](packages/admin) | Admin + CRM kit: resources become tables, API, MCP tools and an admin UI; visual workflow builder |
+| [`@miujs/game`](packages/game) | Game kit: matchmaking, lobbies, game rooms with timers, leaderboards, achievements, Unity/Godot clients |
+| [`@miujs/tour`](packages/tour) | 3D and 360° tours: scenes, hotspots, floor plans, tiling jobs, live guided tours, analytics, field encryption |
 
 Full guide: [docs/guide.md](docs/guide.md). Every error code: [docs/errors.md](docs/errors.md).
+
+## Architecture
+
+```
+ Requests: browsers, apps, MCP agents, search and AI crawlers
+     │
+     ▼
+ Visitor gate (@miujs/bots, optional) ── block (403) or cached copy ──▶ answered here: no handler, no DB
+     │ full or partial
+     ▼
+ Your app: route files, rooms, jobs, workflows (plain TypeScript, no build)
+     │
+     ▼
+ MiuJS core: router, t schemas, errors, plugins    Agent layer: MCP, OpenAPI, inspect    CLI (miu)
+     │
+     ▼
+ Kits: admin (back office, CRM) · game · tour
+     │
+     ▼
+ Batteries: auth session db cache queue realtime files web mail access audit workflows ratelimit ai migrate bots
+     │
+     ├─▶ Cloudflare bindings: D1, KV, R2, Queues, Durable Objects, Workflows, Cache API, bot score and geo
+     └─▶ Local and self-hosted: SQLite, memory, disk, Redis, S3, HTTP mail
+     │
+     ▼
+ Runtimes: Cloudflare Workers · Bun · Deno · Node
+```
+
+Your code talks only to the core and the battery APIs. The adapter under each battery is picked
+by where the app runs, so the same files deploy to Workers, Bun, Deno or Node.
+
+**Request path**, in order:
+
+1. **Visitor gate** (`@miujs/bots`): classifies the caller (human, search, AI crawler, bot,
+   unknown), reads location, then blocks, serves a cached copy, trims the response, or lets it
+   through. Signed-in users, MCP and `/_miu/*` are never affected.
+2. **Plugin `onRequest` hooks** in the order listed (session, auth, rate limits, access).
+3. **Router and validation**: params, query and body checked against the route's schemas; bodies
+   capped at `maxBodySize`.
+4. **Handler**, then `onResponse` hooks (the bot cache stores eligible responses here).
+5. **Background work** (`waitUntil`, jobs, room timers). `app.stop()` drains it and calls each
+   plugin's `stop()`, so processes exit cleanly.
 
 ## Core concepts
 
@@ -167,8 +214,33 @@ miu deploy cloudflare           # wrangler.toml from your plugins, then wrangler
 
 ## Performance
 
-`bun bench/run.ts` compares in-process `fetch()` throughput with Elysia and Hono on the same
-Bun. See [bench/README.md](bench/README.md) for the latest numbers and method.
+In-process `fetch()` on Bun 1.4.3 against Elysia and Hono (Windows laptop, best of 3 rounds;
+compare within a row, since absolute numbers move ±10% between runs):
+
+| Scenario | MiuJS | Compared with the fastest of Elysia and Hono |
+| --- | ---: | ---: |
+| `POST /json`, body validation → JSON | ~400k req/s | **103–104%** (fastest) |
+| `GET /users/:id`, params → JSON | ~950k–1M req/s | 82–90% |
+| `GET /` text, called the way `Bun.serve` calls it | ~1.5M req/s | 84–90% |
+| Cold start, process start → first response | **~11 ms** | Hono ~13 ms, Elysia ~53 ms |
+
+Over real HTTP all three frameworks hit the same loopback ceiling (~72k req/s on this
+machine). Memory kept per 10,000 requests is about zero for all three. Method and history:
+[bench/README.md](bench/README.md); run it with `bun bench/run.ts` (`BENCH_HTTP=1` adds HTTP).
+
+**Memory and stability** ([soak report](scripts/soak/REPORT.md)): the example apps ran under
+sustained load over real HTTP and WebSockets on Bun, Node and Deno.
+
+- Heap stays flat on every runtime. Every package has a leak test (forced-GC rounds, bytes and
+  objects per iteration) and an exit test (a process using it exits on its own).
+- Shutdown takes 12–46 ms, and no request or socket is left hanging after clients disconnect.
+- Fixes from the soak include:
+  - **Sign-ins:** argon2id is capped at 19 MiB per hash and 4 hashes at a time. 32 concurrent
+    sign-ins went from +1.3 GB to +78 MB.
+  - **Game rooms:** finished rooms now close 5 s after the result. Live rooms after load went
+    from 22,726 to 0, and heap from 132 MB to 3 MB.
+  - **Long-polls:** they stop when the client disconnects.
+  - **JSON bodies:** the read is faster, and peak heap per 10,000 requests dropped from 288 KB to 8 KB.
 
 ## Security defaults
 
@@ -204,9 +276,12 @@ that runs end to end. The full plan is in the
 | Phase | Status | What it adds |
 | --- | --- | --- |
 | **1. Foundations** | Done | `@miujs/files` (uploads, signed URLs, resumable uploads, R2), `@miujs/web` (static files, HTML/JSX without a build, htmx, Vite, security headers), `@miujs/access` (roles, per-record policies, organizations, invites), `@miujs/audit` (tamper-evident audit log), `@miujs/mail` (+ email verification and password reset), `@miujs/workflows` (durable automation) |
-| **2. Admin + CRM kit** | In progress | Define a resource once and get tables, API, MCP tools, lifecycle events and an admin UI. Pipelines, tasks, search, CSV import/export, and a visual workflow builder |
-| **3. Game kit** | In progress | Room timers on Durable Object alarms, matchmaking and lobbies, join codes, leaderboards, achievements, Unity/Godot clients |
-| **4. 3D tour kit** | In progress | 360° tiling and 3D model compression jobs, hotspots and floor plans, live guided tours, viewing analytics. Healthcare building blocks: field encryption, consent, retention |
+| **2. Admin + CRM kit** | Done (preview) | Define a resource once and get tables, API, MCP tools, lifecycle events and an admin UI. Pipelines, tasks, search, CSV import/export, and a visual workflow builder |
+| **3. Game kit** | Done (preview) | Room timers on Durable Object alarms, matchmaking and lobbies, join codes, leaderboards, achievements, Unity/Godot clients |
+| **4. 3D tour kit** | Done (preview) | 360° tiling and 3D model compression jobs, hotspots and floor plans, live guided tours, viewing analytics. Healthcare building blocks: field encryption, consent, retention |
+| **5. Hardening** | Done | Leak and exit tests for every package, soak tests over HTTP and WebSockets, memory caps for password hashing, faster body reads, `app.stop()` |
+| **6. Traffic and operations** | In progress | `@miujs/bots` (done): bot, AI crawler and location detection with block / partial / cached / full. Admin System area (in progress): every package shows its status, lists, settings and actions in the admin and as MCP tools |
+| **Next** | Planned | First real Cloudflare deploy (D1, KV, R2, Queues, Durable Objects, bot score and geo), npm release with prebuilt JS for Node, a Postgres-over-Hyperdrive guide |
 
 ### Automation workflows
 
@@ -228,10 +303,10 @@ export const followUp = defineWorkflow("contact-follow-up", {
 - **Triggers:** events, cron schedules, signed webhooks, or a manual start.
 - **Control:** approvals, retries, cancel and retry-from-failed-step, and run history.
 - **AI agents:** MCP tools so agents can start and inspect runs.
-- **No-code:** the same engine runs JSON-defined workflows, which phase 2's visual builder will
-  produce.
+- **No-code:** the same engine runs JSON-defined workflows, which the admin's visual builder
+  produces.
 
-## Known limitations (0.1)
+## Known limitations (0.2)
 
 - **Cloudflare:** never deployed to a real account. Durable Objects, D1, KV and Queues are tested
   against in-test fakes, and every package bundles for a Workers target. Pending `after`/`tick`
@@ -240,13 +315,15 @@ export const followUp = defineWorkflow("contact-follow-up", {
   validation, body limits, cookies, `ctx.ip`, MCP, `waitUntil`); all pass. The full test suite runs on
   Bun only. Published packages will need prebuilt JS for Node, because Node won't strip types inside
   `node_modules`.
-- **Speed:** level with Elysia on validated bodies, 20–30% behind on trivial routes
-  ([bench](bench/README.md)).
+- **Speed:** fastest on validated JSON bodies; 10–18% behind Elysia on a params route and
+  10–16% behind on a trivial text route under `Bun.serve`. Elysia compiles one function per route
+  with `new Function`, which Workers forbid ([bench](bench/README.md)).
+- **Bot detection:** without Cloudflare's bot score, detection relies on user agents and headers,
+  so a crawler that copies a browser's headers passes as human.
 - **Verified only against fakes:** Redis and S3 adapters (fake servers, AWS signature test vectors),
   Laravel/Django session crypto (independent reference ports, no real PHP/Python app yet), OAuth
   providers and the Anthropic/Workers AI APIs (recorded shapes, no live calls).
-- **Not built yet:** the admin UI and visual workflow builder (phase 2), parts of the game and tour
-  kits, and an npm release (`scripts/build-packages.ts` builds it; the `@miujs` npm scope isn't
+- **Not built yet:** an npm release (`scripts/build-packages.ts` builds it; the `@miujs` npm scope isn't
   registered yet).
 
 ## Developing MiuJS
