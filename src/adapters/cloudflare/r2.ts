@@ -1,5 +1,6 @@
 import type { Context } from "../../core/context.ts";
 import { HttpError, problem } from "../../core/errors.ts";
+import { hardenBlobHeaders, rangeNotSatisfiable, setRangeHeaders } from "../../batteries/files/serve.ts";
 import {
   resolveBinding,
   type BindingRef,
@@ -20,6 +21,10 @@ export interface R2PutFileOptions {
 export interface ServeOptions {
   /** `Cache-Control` header. Default: the object's own, else `no-cache` (always revalidate via ETag). */
   cacheControl?: string;
+  /** Force a download with this file name. */
+  download?: string;
+  /** Serve HTML/SVG/XML/JS inline instead of as a sandboxed attachment (see `serveBlob`). */
+  allowActiveContent?: boolean;
 }
 
 export interface R2Files {
@@ -28,7 +33,11 @@ export interface R2Files {
   delete(key: string): Promise<void>;
   /** One page of objects under `prefix`; continue with the returned `cursor` while `truncated`. */
   list(prefix?: string, opts?: { cursor?: string; limit?: number }): Promise<R2Objects>;
-  /** Respond with an object: `ETag`/`If-None-Match` (304), single `Range` requests (206/416), 404 when missing. */
+  /**
+   * Respond with an object: `ETag`/`If-None-Match` (304), single `Range` requests (206/416), 404 when
+   * missing, `nosniff`, and active content (HTML/SVG/XML/JS) as a sandboxed attachment — the same
+   * hardening as `serveBlob`, in a single R2 call.
+   */
   serve(c: Context<any, any>, key: string, opts?: ServeOptions): Promise<Response>;
 }
 
@@ -77,7 +86,7 @@ export function r2Files(bucket: BindingRef<R2Bucket>): R2Files {
         // R2 throws for unsatisfiable ranges.
         const head = await b().head(key);
         if (!head) return problem(404);
-        return new Response(null, { status: 416, headers: { "content-range": `bytes */${head.size}` } });
+        return rangeNotSatisfiable(head.size);
       }
       if (!obj) return problem(404, { detail: `No object ${key}` });
 
@@ -87,15 +96,14 @@ export function r2Files(bucket: BindingRef<R2Bucket>): R2Files {
       headers.set("etag", obj.httpEtag);
       headers.set("cache-control", o.cacheControl ?? obj.httpMetadata?.cacheControl ?? "no-cache");
       headers.set("accept-ranges", "bytes");
+      hardenBlobHeaders(headers, key, o);
       if (!("body" in obj)) return new Response(null, { status: 304, headers });
 
       if (range && obj.range) {
         const r = obj.range as { offset?: number; length?: number; suffix?: number };
         const start = r.suffix !== undefined ? Math.max(0, obj.size - r.suffix) : (r.offset ?? 0);
         const length = r.suffix !== undefined ? obj.size - start : (r.length ?? obj.size - start);
-        const end = Math.min(obj.size, start + length) - 1;
-        headers.set("content-range", `bytes ${start}-${end}/${obj.size}`);
-        headers.set("content-length", String(end - start + 1));
+        setRangeHeaders(headers, { start, end: Math.min(obj.size, start + length) - 1 }, obj.size);
         return new Response(obj.body, { status: 206, headers });
       }
       headers.set("content-length", String(obj.size));
@@ -123,8 +131,9 @@ const extension = (name: string) => {
 };
 
 /**
- * Route handler for `multipart/form-data` uploads into R2. Responds 201 with
- * `{ key, size, contentType, etag }`. Use with a route that has no `body` schema.
+ * Route handler for `multipart/form-data` uploads into R2. Note: it trusts the client's MIME type;
+ * prefer `uploadRoute(r2BlobStore(bucket), …)`, which sniffs the real type and generates safe keys.
+ * Responds 201 with `{ key, size, contentType, etag }`. Use with a route that has no `body` schema.
  */
 export function uploadHandler(opts: UploadHandlerOptions) {
   const field = opts.field ?? "file";

@@ -107,3 +107,4 @@ export function serve(app: AppLike, opts: NodeServeOptions = {}): Promise<NodeSe
     });
   });
 }
+export { diskBlobStore, type DiskBlobStoreOptions } from "./node-files.ts";
