@@ -142,7 +142,7 @@ async function readBody(req: Request, limit: number): Promise<{ value: unknown; 
   }
   if (type.includes("application/x-www-form-urlencoded") || type.includes("multipart/form-data")) {
     const bytes = await readLimited(req, limit);
-    const fd = await new Response(bytes, { headers: { "content-type": req.headers.get("content-type") ?? type } }).formData();
+    const fd = await new Response(bytes as BodyInit, { headers: { "content-type": req.headers.get("content-type") ?? type } }).formData();
     const out: Record<string, unknown> = {};
     for (const [k, v] of fd as unknown as Iterable<[string, unknown]>) {
       const prev = out[k];
