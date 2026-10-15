@@ -1,6 +1,7 @@
 import type { App } from "./app.ts";
 import type { Context } from "./context.ts";
 import type { RouteDef } from "./route.ts";
+import type { ManageSection } from "./manage.ts";
 import type { JsonSchema } from "./schema.ts";
 
 type MaybePromise<T> = T | Promise<T>;
@@ -68,6 +69,11 @@ export interface Plugin {
   inspect?(): unknown;
   /** Cloudflare bindings this plugin uses when deployed to Workers. */
   cloudflare?(): CloudflareNeeds;
+  /**
+   * What an operator can see and do with this plugin: status, lists, runtime settings and
+   * actions. `@miujs/admin` renders them, checks permissions and audits every change.
+   */
+  manage?(): ManageSection[];
 }
 
 export function definePlugin<P extends Plugin>(plugin: P): P {

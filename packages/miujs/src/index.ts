@@ -5,6 +5,7 @@ export { DOCS_BASE, MiuError, errors, isMiuError, type MiuErrorInit } from "./er
 export { createLogger, type LogLevel, type Logger } from "./logger.ts";
 export { MCP_PROTOCOL_VERSIONS, type McpOptions } from "./mcp.ts";
 export { generateOpenApi, type OpenApiInfo } from "./openapi.ts";
+export type { ManageAction, ManageColumn, ManageList, ManageListQuery, ManageSection, ManageSettings, ManageStat, ManageStatus, ManageTable, ManageValue } from "./manage.ts";
 export { definePlugin, type CloudflareNeeds, type McpTool, type Plugin } from "./plugin.ts";
 export { isRoute, route, type AuthRequirement, type HandlerContext, type Method, type RouteConfig, type RouteDef, type RouteExtensions } from "./route.ts";
 export { Router, normalizePath, pathParams } from "./router.ts";
