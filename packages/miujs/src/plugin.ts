@@ -1,0 +1,51 @@
+import type { App } from "./app.ts";
+import type { Context } from "./context.ts";
+import type { RouteDef } from "./route.ts";
+import type { JsonSchema } from "./schema.ts";
+
+type MaybePromise<T> = T | Promise<T>;
+
+/** An extra MCP tool a plugin offers (for example a realtime room's `join`). */
+export interface McpTool {
+  name: string;
+  description?: string;
+  inputSchema: JsonSchema;
+  outputSchema?: JsonSchema;
+  call(args: Record<string, unknown>, ctx: Context): MaybePromise<unknown>;
+}
+
+/** Cloudflare bindings a plugin needs. `miu deploy cloudflare` turns these into wrangler config. */
+export interface CloudflareNeeds {
+  kv?: string[];
+  d1?: string[];
+  r2?: string[];
+  queues?: { producers?: string[]; consumers?: string[] };
+  durableObjects?: { binding: string; className: string }[];
+  crons?: string[];
+}
+
+/**
+ * Batteries and user extensions. Hooks are flattened into each route's pipeline at startup,
+ * so a plugin costs nothing on requests it doesn't handle.
+ */
+export interface Plugin {
+  name: string;
+  /** Runs once before the first request. Register routes, Workers handlers, etc. */
+  setup?(app: App): MaybePromise<void>;
+  /** Extra routes this plugin serves (e.g. `/auth/login`). */
+  routes?: RouteDef[];
+  /** Runs after route matching, before validation and auth checks. Return a Response to short-circuit. */
+  onRequest?(ctx: Context): MaybePromise<void | Response>;
+  /** Runs on every response, including errors. Return a new Response to replace it. */
+  onResponse?(ctx: Context, res: Response): MaybePromise<void | Response>;
+  /** Extra MCP tools. */
+  mcpTools?(): McpTool[];
+  /** Shown in `miu inspect` and `/_miu/app.json`. */
+  inspect?(): unknown;
+  /** Cloudflare bindings this plugin uses when deployed to Workers. */
+  cloudflare?(): CloudflareNeeds;
+}
+
+export function definePlugin<P extends Plugin>(plugin: P): P {
+  return plugin;
+}

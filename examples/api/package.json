@@ -1,0 +1,1 @@
+{ "name": "example-api", "private": true, "type": "module", "dependencies": { "miujs": "workspace:*", "@miujs/auth": "workspace:*", "@miujs/session": "workspace:*", "@miujs/db": "workspace:*", "@miujs/cache": "workspace:*", "@miujs/queue": "workspace:*" } }

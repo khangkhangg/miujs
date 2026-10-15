@@ -1,0 +1,12 @@
+{
+  "name": "@miujs/realtime",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
+  },
+  "files": ["src", "PROTOCOL.md"],
+  "dependencies": { "miujs": "workspace:*" }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "miujs",
+  "version": "0.1.0",
+  "description": "Fast, no-build TypeScript web framework for Bun, Deno, Node and Cloudflare Workers, built for AI agents.",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node.ts"
+  },
+  "files": ["src"]
+}

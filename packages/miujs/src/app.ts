@@ -1,0 +1,682 @@
+import { RequestContext, pathOf, type Context, type PlatformInfo, type RouteInfo } from "./context.ts";
+import { MiuError, errors, isMiuError } from "./errors.ts";
+import { createLogger, type LogLevel, type Logger } from "./logger.ts";
+import { createMcpHandler, buildRouteTool, type McpOptions } from "./mcp.ts";
+import { generateOpenApi, type DescribedRoute, type OpenApiInfo } from "./openapi.ts";
+import type { McpTool, Plugin } from "./plugin.ts";
+import { isRoute, type AuthRequirement, type RouteDef } from "./route.ts";
+import { Router, normalizePath, pathParams } from "./router.ts";
+import { detectRuntime, processEnv, type Runtime } from "./runtime.ts";
+import type { Issue, Schema } from "./schema.ts";
+import { bunWebSocket } from "./websocket.ts";
+
+export type RouteSource = RouteDef | readonly RouteSource[] | Record<string, unknown>;
+
+export interface MiuOptions {
+  name?: string;
+  version?: string;
+  routes?: RouteSource[];
+  plugins?: Plugin[];
+  /** Serve every route as an MCP tool at `/mcp`. */
+  mcp?: boolean | McpOptions;
+  /** Serve OpenAPI at `/_miu/openapi.json`. Default: on in dev, off in production. */
+  openapi?: boolean | { path?: string; info?: Partial<OpenApiInfo> };
+  /** Dev mode checks response schemas and serves `/_miu/*`. Default: on unless MIU_ENV/NODE_ENV is production or running on Workers. */
+  dev?: boolean;
+  logLevel?: LogLevel | "silent";
+  /** One log line per request. Default: on in dev. */
+  logRequests?: boolean;
+}
+
+export interface CallInput {
+  params?: Record<string, unknown>;
+  query?: Record<string, unknown>;
+  body?: unknown;
+  headers?: HeadersInit;
+}
+
+export interface TestResponse {
+  status: number;
+  ok: boolean;
+  headers: Headers;
+  text: string;
+  /** Parsed JSON, or the text when the body is not JSON. */
+  body: any;
+  expectStatus(status: number): TestResponse;
+}
+
+export type CallFn = (route: RouteDef, input?: CallInput) => Promise<TestResponse>;
+
+export interface RouteTest {
+  name: string;
+  fn: (call: CallFn) => unknown;
+}
+
+interface Compiled {
+  name: string;
+  method: string;
+  path: string;
+  def: RouteDef | null;
+  info: RouteInfo;
+  run: (ctx: RequestContext) => Response | Promise<Response>;
+}
+
+type WorkersHandler = (...args: any[]) => unknown;
+
+const METHOD_ORDER = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
+
+function defaultDev(runtime: Runtime): boolean {
+  if (runtime === "workerd") return false;
+  const env = processEnv();
+  const mode = env.MIU_ENV ?? env.NODE_ENV;
+  return mode !== "production";
+}
+
+function deriveName(method: string, path: string): string {
+  const parts = normalizePath(path)
+    .split("/")
+    .filter(Boolean)
+    .map((s) => (s.startsWith(":") ? `by_${s.slice(1)}` : s.startsWith("*") ? "rest" : s.replace(/[^A-Za-z0-9]+/g, "_")));
+  return [method.toLowerCase(), ...parts].join("_");
+}
+
+function check<T>(schema: Schema<T>, value: unknown, where: string, coerce: boolean): T {
+  const issues: Issue[] = [];
+  const out = schema.parse(value, where, issues, coerce);
+  if (issues.length) throw errors.validation(where, issues);
+  return out;
+}
+
+async function readBody(req: Request): Promise<{ value: unknown; form: boolean }> {
+  const type = (req.headers.get("content-type") ?? "").toLowerCase();
+  if (type.includes("application/json") || type.includes("+json")) {
+    const text = await req.text();
+    if (text === "") return { value: undefined, form: false };
+    try {
+      return { value: JSON.parse(text), form: false };
+    } catch {
+      throw errors.custom({
+        code: "MIU_E_BAD_JSON",
+        status: 400,
+        message: "Request body is not valid JSON",
+        fix: "Send a JSON body with `content-type: application/json`.",
+      });
+    }
+  }
+  if (type.includes("application/x-www-form-urlencoded") || type.includes("multipart/form-data")) {
+    const fd = await req.formData();
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of fd as unknown as Iterable<[string, unknown]>) {
+      const prev = out[k];
+      if (prev === undefined) out[k] = v;
+      else if (Array.isArray(prev)) prev.push(v);
+      else out[k] = [prev, v];
+    }
+    return { value: out, form: true };
+  }
+  if (type.startsWith("text/")) return { value: await req.text(), form: false };
+  if (!req.body) return { value: undefined, form: false };
+  const buf = new Uint8Array(await req.arrayBuffer());
+  return { value: buf.length ? buf : undefined, form: false };
+}
+
+const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
+const TEXT_HEADERS = { "content-type": "text/plain; charset=utf-8" };
+
+function levenshtein(a: string, b: string): number {
+  const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = dp[j];
+      dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = tmp;
+    }
+  }
+  return dp[b.length];
+}
+
+/**
+ * A MiuJS application. `export default app` works as-is on Bun, Deno (`deno serve`) and
+ * Cloudflare Workers; call `app.listen()` to start a server yourself.
+ */
+export class App {
+  readonly name: string;
+  readonly version: string;
+  readonly runtime: Runtime;
+  readonly dev: boolean;
+  readonly log: Logger;
+  readonly tests: RouteTest[] = [];
+  readonly plugins: Plugin[];
+  /** Bun reads this from the default export to enable WebSockets. */
+  readonly websocket = bunWebSocket;
+
+  private options: MiuOptions;
+  private routers = new Map<string, Router<Compiled>>();
+  private compiled: Compiled[] = [];
+  private pending: RouteDef[] = [];
+  private isReady = false;
+  private readyPromise: Promise<void> | null = null;
+  private requestHooks: NonNullable<Plugin["onRequest"]>[] = [];
+  private responseHooks: NonNullable<Plugin["onResponse"]>[] = [];
+  private workers: { queue: WorkersHandler[]; scheduled: WorkersHandler[] } = { queue: [], scheduled: [] };
+  private staticEnv: Record<string, unknown>;
+  private logRequests: boolean;
+  private toolCache: { routeTools: ReturnType<typeof buildRouteTool>[]; pluginTools: McpTool[] } | null = null;
+
+  constructor(options: MiuOptions = {}) {
+    this.options = options;
+    this.name = options.name ?? "miujs-app";
+    this.version = options.version ?? "0.0.0";
+    this.runtime = detectRuntime();
+    this.dev = options.dev ?? defaultDev(this.runtime);
+    this.log = createLogger(options.logLevel ?? (this.dev ? "info" : "warn"), { app: this.name });
+    this.logRequests = options.logRequests ?? false;
+    this.plugins = options.plugins ?? [];
+    this.staticEnv = this.runtime === "workerd" ? {} : processEnv();
+    for (const src of options.routes ?? []) this.collect(src, undefined);
+    for (const p of this.plugins) for (const r of p.routes ?? []) this.collect(r, undefined);
+  }
+
+  /** Add routes before the first request (plugins call this from `setup`). */
+  add(...sources: RouteSource[]): this {
+    if (this.isReady) throw errors.config("MIU_E_APP_STARTED", "Routes cannot be added after the app has started", "Add routes in `miu({ routes })` or in a plugin's `setup`.");
+    for (const s of sources) this.collect(s, undefined);
+    return this;
+  }
+
+  /** Register a Cloudflare Workers `queue` or `scheduled` handler. */
+  on(event: "queue" | "scheduled", handler: WorkersHandler): this {
+    this.workers[event].push(handler);
+    return this;
+  }
+
+  ready(): Promise<void> {
+    return (this.readyPromise ??= this.init());
+  }
+
+  private collect(src: RouteSource, hint: string | undefined): void {
+    if (isRoute(src)) {
+      if (!src.name && hint) src.name = hint;
+      this.pending.push(src);
+      return;
+    }
+    if (Array.isArray(src)) {
+      for (const s of src) this.collect(s, undefined);
+      return;
+    }
+    if (src && typeof src === "object") {
+      for (const [key, value] of Object.entries(src)) {
+        if (key === "tests" && value && typeof value === "object" && !isRoute(value)) {
+          for (const [name, fn] of Object.entries(value as Record<string, unknown>)) {
+            if (typeof fn === "function") this.tests.push({ name, fn: fn as RouteTest["fn"] });
+          }
+        } else if (isRoute(value) || Array.isArray(value)) {
+          this.collect(value as RouteSource, key === "default" ? undefined : key);
+        }
+      }
+    }
+  }
+
+  private async init(): Promise<void> {
+    for (const p of this.plugins) {
+      if (p.setup) await p.setup(this);
+      if (p.onRequest) this.requestHooks.push(p.onRequest.bind(p));
+      if (p.onResponse) this.responseHooks.push(p.onResponse.bind(p));
+    }
+    const names = new Set<string>();
+    for (const def of this.pending) {
+      const c = this.compile(def);
+      if (names.has(c.name)) {
+        throw errors.config("MIU_E_ROUTE_NAME_DUPLICATE", `Two routes are named "${c.name}"`, "Give one of them a different `name`, or export it under a different name.");
+      }
+      names.add(c.name);
+      this.register(c);
+    }
+    this.registerInternal();
+    const mcp = this.options.mcp;
+    if (mcp) {
+      const { routeTools, pluginTools } = this.mcpTools(typeof mcp === "object" ? mcp : {});
+      const seen = new Map<string, string>();
+      const owners = [...routeTools.map((t) => [t.tool.name, `route ${t.route.name}`]), ...pluginTools.map((t) => [t.name, `plugin tool ${t.name}`])];
+      for (const [tool, owner] of owners) {
+        const prev = seen.get(tool);
+        if (prev) {
+          throw errors.config("MIU_E_MCP_TOOL_DUPLICATE", `MCP tool name "${tool}" is used by ${prev} and ${owner}`, "Rename one of them (route `name`), or exclude one with `mcp: false`. Tool names keep only letters, digits, _ and -.");
+        }
+        seen.set(tool, owner);
+      }
+    }
+    this.isReady = true;
+  }
+
+  private register(c: Compiled): void {
+    let r = this.routers.get(c.method);
+    if (!r) this.routers.set(c.method, (r = new Router()));
+    r.add(c.path, c);
+    if (c.def) this.compiled.push(c);
+  }
+
+  private compile(def: RouteDef): Compiled {
+    const cfg = def.config;
+    const path = normalizePath(def.path);
+    const name = def.name ?? cfg.name ?? deriveName(def.method, path);
+    const P = cfg.params as Schema | undefined;
+    const Q = cfg.query as Schema | undefined;
+    const B = cfg.body as Schema | undefined;
+    const R = this.dev ? (cfg.response as Schema | undefined) : undefined;
+
+    if (P && P.json.type === "object") {
+      const inPath = pathParams(path);
+      const keys = Object.keys((P.json.properties as object) ?? {});
+      const unknown = keys.find((k) => !inPath.includes(k));
+      if (unknown) {
+        throw errors.config("MIU_E_PARAM_UNKNOWN", `Route ${def.method} ${path} declares params.${unknown}, but the path has no :${unknown}`, `Add :${unknown} to the path or remove it from the params schema.`);
+      }
+      const missing = inPath.find((k) => !keys.includes(k));
+      if (missing) {
+        throw errors.config("MIU_E_PARAM_MISSING", `Route ${def.method} ${path} has :${missing} in the path, but the params schema does not declare it`, `Add ${missing}: t.string() (or another type) to the params schema.`);
+      }
+    }
+
+    if (Q && Q.json.type === "object") {
+      const shadow = Object.keys((Q.json.properties as object) ?? {}).find((k) => pathParams(path).includes(k));
+      if (shadow) {
+        throw errors.config("MIU_E_PARAM_SHADOWED", `Route ${def.method} ${path} has "${shadow}" both as a path param and a query key`, `Rename the query key (e.g. "${shadow}Filter") so the two can't be confused.`);
+      }
+    }
+
+    const auth = (cfg.auth ?? false) as AuthRequirement;
+    const roles = typeof auth === "object" && auth ? ([] as string[]).concat(auth.role) : null;
+    const needsUser = auth === "required" || roles !== null;
+    const status = cfg.status ?? 200;
+    const handler = cfg.handler as (ctx: any) => unknown;
+
+    // Stays synchronous unless the body must be read or the handler returns a promise:
+    // every avoided `await` is a microtask saved on the hot path.
+    const callHandler = (ctx: RequestContext): Response | Promise<Response> => {
+      const result = handler(ctx) as any;
+      if (result !== null && typeof result === "object" && typeof result.then === "function") {
+        return result.then((r: unknown) => this.toResponse(r, ctx, status, R));
+      }
+      return this.toResponse(result, ctx, status, R);
+    };
+    const run = (ctx: RequestContext): Response | Promise<Response> => {
+      if (needsUser) {
+        const user = ctx.user as { roles?: string[] } | undefined;
+        if (!user) throw errors.unauthorized();
+        if (roles && !roles.some((r) => user.roles?.includes(r))) {
+          throw errors.forbidden(`Requires role: ${roles.join(" or ")}`, "Sign in as a user with the required role.");
+        }
+      }
+      if (P) ctx.params = check(P, ctx.params, "params", true);
+      if (Q) ctx.query = check(Q, ctx.query, "query", true);
+      if (B) {
+        return readBody(ctx.req).then(({ value, form }) => {
+          ctx.body = check(B, value, "body", form);
+          return callHandler(ctx);
+        });
+      }
+      return callHandler(ctx);
+    };
+
+    const info: RouteInfo = { name, method: def.method, path, auth, tags: cfg.tags ?? [] };
+    return { name, method: def.method, path, def, info, run };
+  }
+
+  private toResponse(result: unknown, ctx: RequestContext, status: number, R: Schema | undefined): Response {
+    if (result instanceof Response) return result;
+    const hasSet = ctx._hasSet;
+    const st = hasSet && ctx.set.status ? ctx.set.status : status;
+    const headers = hasSet ? ctx.set.headers : undefined;
+    if (result === undefined || result === null) {
+      return new Response(null, { status: st === 200 ? 204 : st, headers });
+    }
+    if (typeof result === "string") {
+      if (headers && !headers.has("content-type")) headers.set("content-type", TEXT_HEADERS["content-type"]);
+      return new Response(result, { status: st, headers: headers ?? TEXT_HEADERS });
+    }
+    if (result instanceof Uint8Array || result instanceof ArrayBuffer || result instanceof ReadableStream) {
+      return new Response(result as BodyInit, { status: st, headers });
+    }
+    if (R) check(R, result, "response", false);
+    if (!headers && st === 200) return Response.json(result);
+    if (headers && !headers.has("content-type")) headers.set("content-type", JSON_HEADERS["content-type"]);
+    return new Response(JSON.stringify(result), { status: st, headers: headers ?? JSON_HEADERS });
+  }
+
+  private registerInternal(): void {
+    const internal = (method: string, path: string, run: Compiled["run"]) =>
+      this.register({ name: `_miu${path}`, method, path, def: null, info: { name: `_miu${path}`, method, path, auth: false, tags: ["internal"] }, run });
+
+    if (this.dev) {
+      internal("GET", "/_miu/app.json", async () => Response.json(this.inspect()));
+    }
+    const oa = this.options.openapi ?? this.dev;
+    if (oa) {
+      const path = (typeof oa === "object" && oa.path) || "/_miu/openapi.json";
+      internal("GET", path, async () => Response.json(this.openapi()));
+    }
+    const mcp = this.options.mcp;
+    if (mcp) {
+      const opts: McpOptions = typeof mcp === "object" ? mcp : {};
+      const handler = createMcpHandler(
+        {
+          name: this.name,
+          version: this.version,
+          tools: () => this.mcpTools(opts),
+          dispatch: async (r, ctx) => this.dispatch(r, (ctx as unknown as RequestContext).env, (ctx as unknown as RequestContext)._platform),
+        },
+        opts,
+      );
+      const path = opts.path ?? "/mcp";
+      for (const m of ["POST", "GET", "DELETE"]) internal(m, path, (ctx) => handler(ctx as unknown as Context));
+    }
+  }
+
+  private mcpTools(opts: McpOptions) {
+    if (this.toolCache) return this.toolCache;
+    const routeTools = this.described()
+      .filter((r) => r.def.config.mcp !== false && (!opts.include || opts.include(r)))
+      .map(buildRouteTool);
+    const pluginTools = this.plugins.flatMap((p) => p.mcpTools?.() ?? []);
+    return (this.toolCache = { routeTools, pluginTools });
+  }
+
+  private described(): DescribedRoute[] {
+    return this.compiled.map((c) => ({ name: c.name, method: c.method, path: c.path, def: c.def! }));
+  }
+
+  /**
+   * The fetch handler. Signature covers Workers `(req, env, ctx)`, Bun `(req, server)` and
+   * Deno `(req, info)`.
+   */
+  fetch = (req: Request, envOrServer?: any, executionContext?: any): Response | Promise<Response> => {
+    const platform: PlatformInfo = { runtime: this.runtime };
+    let env: unknown = this.staticEnv;
+    if (this.runtime === "workerd") {
+      env = envOrServer ?? {};
+      platform.executionContext = executionContext;
+    } else if (envOrServer && typeof envOrServer.upgrade === "function") {
+      platform.bunServer = envOrServer;
+    }
+    return this.dispatch(req, env, platform);
+  };
+
+  /** Handle a request without the network. Used by tests, MCP tool calls and adapters. */
+  dispatch(req: Request, env: unknown, platform: PlatformInfo): Response | Promise<Response> {
+    if (!this.isReady) return this.ready().then(() => this.dispatch(req, env, platform));
+    const start = this.logRequests ? performance.now() : 0;
+    const ctx = new RequestContext(req, pathOf(req.url), env, platform, this.log);
+    let out: Response | Promise<Response>;
+    try {
+      out = this.route(ctx);
+    } catch (err) {
+      out = this.errorResponse(err, ctx);
+    }
+    if (out instanceof Promise) {
+      return out.then(
+        (res) => this.after(ctx, res, start),
+        (err) => this.after(ctx, this.errorResponse(err, ctx), start),
+      );
+    }
+    return this.after(ctx, out, start);
+  }
+
+  private after(ctx: RequestContext, res: Response, start: number): Response | Promise<Response> {
+    if (ctx._upgraded) return undefined as unknown as Response; // Bun took over the socket.
+    if (ctx._setCookies === null && this.responseHooks.length === 0 && !this.logRequests) return res;    return this.finalize(ctx, res).then((final) => {
+      if (this.logRequests) {
+        ctx.log.info("request", { route: ctx.route?.name ?? null, status: final.status, ms: Math.round((performance.now() - start) * 100) / 100 });
+      }
+      return final;
+    });
+  }
+
+  private route(ctx: RequestContext): Response | Promise<Response> {
+    const method = ctx.method;
+    let match = this.routers.get(method)?.find(ctx.path) ?? null;
+    let head = false;
+    if (!match && method === "HEAD") {
+      match = this.routers.get("GET")?.find(ctx.path) ?? null;
+      head = match !== null;
+    }
+    if (match) {
+      ctx.params = match.params;
+      ctx.route = match.value.info;
+    }
+    if (this.requestHooks.length) return this.routeWithHooks(ctx, match, head);
+    return this.runMatch(ctx, match, head);
+  }
+
+  private async routeWithHooks(ctx: RequestContext, match: { value: Compiled } | null, head: boolean): Promise<Response> {
+    for (const hook of this.requestHooks) {
+      const r = await hook(ctx as unknown as Context);
+      if (r instanceof Response) return r;
+    }
+    return this.runMatch(ctx, match, head);
+  }
+
+  private runMatch(ctx: RequestContext, match: { value: Compiled } | null, head: boolean): Response | Promise<Response> {
+    if (!match) return this.notMatched(ctx);
+    const res = match.value.run(ctx);
+    if (!head) return res;
+    const strip = (r: Response) => new Response(null, { status: r.status, headers: r.headers });
+    return res instanceof Promise ? res.then(strip) : strip(res);
+  }
+
+  private notMatched(ctx: RequestContext): Response {
+    const allowed: string[] = [];
+    for (const [m, r] of this.routers) if (r.find(ctx.path)) allowed.push(m);
+    if (allowed.includes("GET") && !allowed.includes("HEAD")) allowed.push("HEAD");
+    allowed.sort((a, b) => METHOD_ORDER.indexOf(a) - METHOD_ORDER.indexOf(b));
+    if (allowed.length) {
+      if (ctx.method === "OPTIONS") return new Response(null, { status: 204, headers: { allow: allowed.join(", ") } });
+      return errors
+        .custom({
+          code: "MIU_E_METHOD_NOT_ALLOWED",
+          status: 405,
+          message: `${ctx.method} is not allowed on ${ctx.path}`,
+          fix: `Use one of: ${allowed.join(", ")}.`,
+        })
+        .toResponse({ allow: allowed.join(", ") });
+    }
+    let best: { d: number; label: string } | null = null;
+    for (const c of this.compiled) {
+      const d = levenshtein(ctx.path, c.path.replace(/:[^/]+/g, "x"));
+      if (!best || d < best.d) best = { d, label: `${c.method} ${c.path}` };
+    }
+    const fix =
+      best && best.d <= Math.max(3, ctx.path.length / 3)
+        ? `Did you mean ${best.label}? Run \`miu inspect\` or GET /_miu/app.json in dev to list routes.`
+        : "Run `miu inspect` or GET /_miu/app.json in dev to list routes.";
+    return errors.custom({ code: "MIU_E_ROUTE_NOT_FOUND", status: 404, message: `No route for ${ctx.method} ${ctx.path}`, fix }).toResponse();
+  }
+
+  private errorResponse(err: unknown, ctx: RequestContext): Response {
+    if (isMiuError(err)) {
+      if (err.status >= 500) ctx.log.error(err.message, { code: err.code, err });
+      return err.toResponse();
+    }
+    ctx.log.error("unhandled error", { err, route: ctx.route?.name });
+    const message = this.dev && err instanceof Error ? err.message : "Internal server error";
+    const details = this.dev && err instanceof Error ? { name: err.name, stack: err.stack?.split("\n").slice(0, 8) } : undefined;
+    return new MiuError({
+      code: "MIU_E_INTERNAL",
+      status: 500,
+      message,
+      fix: this.dev ? "See the stack in details and the server log." : undefined,
+      details,
+    }).toResponse();
+  }
+
+  private async finalize(ctx: RequestContext, res: Response): Promise<Response> {
+    for (const hook of this.responseHooks) {
+      try {
+        const r = await hook(ctx as unknown as Context, res);
+        if (r instanceof Response) res = r;
+      } catch (err) {
+        res = this.errorResponse(err, ctx);
+      }
+    }
+    // Cookies go on last, so response hooks (e.g. sessions) can still set them.
+    if (ctx._setCookies) {
+      try {
+        for (const c of ctx._setCookies) res.headers.append("set-cookie", c);
+      } catch {
+        // Immutable headers (e.g. a Response from fetch()): copy first.
+        res = new Response(res.body, res);
+        for (const c of ctx._setCookies) res.headers.append("set-cookie", c);
+      }
+    }
+    return res;
+  }
+
+  /** Cloudflare Workers queue consumer entry. */
+  queue = async (batch: unknown, env: unknown, ctx: unknown): Promise<void> => {
+    await this.ready();
+    for (const h of this.workers.queue) await h(batch, env, ctx, this);
+  };
+
+  /** Cloudflare Workers cron entry. */
+  scheduled = async (controller: unknown, env: unknown, ctx: unknown): Promise<void> => {
+    await this.ready();
+    for (const h of this.workers.scheduled) await h(controller, env, ctx, this);
+  };
+
+  /** Port used by Bun's auto-serve and `listen()`: $PORT or 3000. */
+  get port(): number {
+    return Number(this.staticEnv.PORT) || 3000;
+  }
+
+  /** Start an HTTP server on Bun, Deno or Node. */
+  async listen(port: number = this.port, hostname?: string): Promise<{ port: number; url: string; stop(): Promise<void> }> {
+    await this.ready();
+    const g = globalThis as any;
+    let server: { port: number; url: string; stop(): Promise<void> };
+    if (this.runtime === "bun") {
+      const s = g.Bun.serve({ port, hostname, fetch: this.fetch, websocket: bunWebSocket });
+      server = { port: s.port, url: String(s.url), stop: async () => void s.stop(true) };
+    } else if (this.runtime === "deno") {
+      const s = g.Deno.serve({ port, hostname, onListen() {} }, (r: Request) => this.fetch(r));
+      server = { port: s.addr.port, url: `http://${hostname ?? "localhost"}:${s.addr.port}/`, stop: () => s.shutdown() };
+    } else if (this.runtime === "node") {
+      // A variable specifier keeps bundlers (wrangler/esbuild) from pulling node:http into Workers builds.
+      const nodeAdapter = "./node.ts";
+      const { serveNode } = (await import(/* @vite-ignore */ nodeAdapter)) as typeof import("./node.ts");
+      server = await serveNode(this, { port, hostname });
+    } else {
+      throw errors.config("MIU_E_LISTEN_UNSUPPORTED", `listen() is not available on ${this.runtime}`, "On Cloudflare Workers, `export default app` instead of calling listen().");
+    }
+    this.log.info(`MiuJS listening on ${server.url}`);
+    return server;
+  }
+
+  /** Send a request through the app without a network. */
+  request = async (input: string | Request, init?: RequestInit): Promise<Response> => {
+    const r = typeof input === "string" ? new Request(new URL(input, "http://localhost"), init) : input;
+    return this.dispatch(r, this.staticEnv, { runtime: this.runtime });
+  };
+
+  /** Call a route by its definition. Fills the path, query and JSON body for you. */
+  call: CallFn = async (route, input = {}) => {
+    let path = normalizePath(route.path);
+    for (const [k, v] of Object.entries(input.params ?? {})) {
+      path = path.replace(new RegExp(`[:*]${k}(?=/|$)`), encodeURIComponent(String(v)));
+    }
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(input.query ?? {})) {
+      if (Array.isArray(v)) for (const x of v) qs.append(k, String(x));
+      else if (v !== undefined) qs.append(k, String(v));
+    }
+    const headers = new Headers(input.headers);
+    let body: string | undefined;
+    if (input.body !== undefined) {
+      body = JSON.stringify(input.body);
+      if (!headers.has("content-type")) headers.set("content-type", "application/json");
+    }
+    const q = qs.toString();
+    const res = await this.request(path + (q ? `?${q}` : ""), { method: route.method, headers, body });
+    const text = await res.text();
+    let parsed: unknown = text;
+    try {
+      parsed = text ? JSON.parse(text) : undefined;
+    } catch {}
+    const out: TestResponse = {
+      status: res.status,
+      ok: res.ok,
+      headers: res.headers,
+      text,
+      body: parsed,
+      expectStatus(expected) {
+        if (res.status !== expected) throw new Error(`expected status ${expected}, got ${res.status}: ${text.slice(0, 300)}`);
+        return out;
+      },
+    };
+    return out;
+  };
+
+  routes(): { name: string; method: string; path: string }[] {
+    return this.compiled.map((c) => ({ name: c.name, method: c.method, path: c.path }));
+  }
+
+  openapi(): Record<string, unknown> {
+    const oa = this.options.openapi;
+    const info = { title: this.name, version: this.version, ...(typeof oa === "object" ? oa.info : {}) };
+    return generateOpenApi(this.described(), info);
+  }
+
+  /** Everything an agent needs to understand this app, as JSON. Call after `ready()`. */
+  inspect() {
+    const mcp = this.options.mcp;
+    return {
+      name: this.name,
+      version: this.version,
+      runtime: this.runtime,
+      dev: this.dev,
+      routes: this.compiled.map((c) => {
+        const cfg = c.def!.config;
+        return {
+          name: c.name,
+          method: c.method,
+          path: c.path,
+          summary: cfg.summary,
+          auth: cfg.auth ?? false,
+          tags: cfg.tags ?? [],
+          params: cfg.params?.json,
+          query: cfg.query?.json,
+          body: cfg.body?.json,
+          response: cfg.response?.json,
+        };
+      }),
+      plugins: this.plugins.map((p) => ({ name: p.name, info: p.inspect?.() })),
+      mcp: mcp ? { path: (typeof mcp === "object" && mcp.path) || "/mcp", tools: this.mcpTools(typeof mcp === "object" ? mcp : {}).routeTools.map((t) => t.tool.name) } : null,
+      tests: this.tests.map((x) => x.name),
+      cloudflare: this.cloudflareNeeds(),
+    };
+  }
+
+  private cloudflareNeeds() {
+    const uniq = (xs: string[]) => [...new Set(xs)];
+    const all = this.plugins.map((p) => p.cloudflare?.() ?? {});
+    const dos = new Map<string, { binding: string; className: string }>();
+    for (const n of all) for (const d of n.durableObjects ?? []) dos.set(d.binding, d);
+    return {
+      kv: uniq(all.flatMap((n) => n.kv ?? [])),
+      d1: uniq(all.flatMap((n) => n.d1 ?? [])),
+      r2: uniq(all.flatMap((n) => n.r2 ?? [])),
+      queues: {
+        producers: uniq(all.flatMap((n) => n.queues?.producers ?? [])),
+        consumers: uniq(all.flatMap((n) => n.queues?.consumers ?? [])),
+      },
+      durableObjects: [...dos.values()],
+      crons: uniq(all.flatMap((n) => n.crons ?? [])),
+    };
+  }
+}
+
+/** Create an app. */
+export function miu(options: MiuOptions = {}): App {
+  return new App(options);
+}
