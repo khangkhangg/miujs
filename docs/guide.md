@@ -297,7 +297,7 @@ The `miu` command runs on Bun (`bunx miu …`) and on Node 22 (`node --experimen
 
 | Command | What it does |
 | --- | --- |
-| `miu create <dir> [--template bun\|node\|workers] [--name pkg] [--force]` | Scaffold an app. Refuses a non-empty directory unless `--force` |
+| `miu create <dir> [--template bun\|node\|workers\|admin\|tour] [--with-admin] [--name pkg] [--force]` | Scaffold an app (templates below). Refuses a non-empty directory unless `--force` |
 | `miu routes [entry]` | Route table: `METHOD PATH TOOL SUMMARY` |
 | `miu openapi [entry] [--out file] [--server url]` | OpenAPI 3.1 JSON |
 | `miu llms [entry] [--full] [--base-url url] [--out file]` | llms.txt / llms-full.txt |
@@ -319,3 +319,23 @@ miu llms --base-url https://api.example.com --out public/llms.txt
 
 Importing the entry runs its top-level code, so point the CLI at the module that builds the app (`src/app.ts`),
 not at a file that starts a server. Set `MIU_DEBUG=1` to see stack traces for unexpected errors.
+
+### Templates
+
+| Template | What you get |
+| --- | --- |
+| `bun` (default), `node`, `workers` | A minimal todo API with `mcp()` + `openapi()` for that runtime |
+| `admin` | Bun back-office: two example resources (posts with an author relation and a cover image, authors) defined with `t` schemas, SQLite repositories, disk uploads, sessions and a login page, a seeded admin user (`ADMIN_PASSWORD`, or a generated one printed on first run), DevTools in dev, and a starter test that signs in and creates records |
+| `tour` | Bun virtual-tour site: `tourKit` on SQLite + disk storage, sign up / log in, a landing page of published tours, `bun run seed` for a sample tour from generated 2:1 panoramas, and a starter test that builds and publishes a tour |
+| `tour --with-admin` | The same plus `admin()` at `/admin` for tours, scenes and users (role `admin`; publishing there runs the editor's checks) |
+
+```bash
+miu create shop --template admin && cd shop && bun install && bun run dev   # http://localhost:3000/admin
+miu create tours --template tour --with-admin && cd tours && bun install && bun run seed && bun run dev
+```
+
+The `admin` and `tour` starters export `createApp(config)` from `src/app.ts` (so tests build the app against a
+temporary data directory) and start the server in `src/server.ts`; their scripts are `dev` (`MIU_ENV=development`,
+watch), `start` (production: requires `SESSION_SECRET`), `test` and `typecheck`. Template files may contain
+`{{#feature}}`…`{{/feature}}` / `{{^feature}}`…`{{/feature}}` marker lines (also inside `//`, `#` or `<!-- -->`
+comments) and `_with-<feature>/` directories, resolved from the `--with-<feature>` flags.
