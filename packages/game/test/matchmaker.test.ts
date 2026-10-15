@@ -275,3 +275,22 @@ test("match rooms are created without a join code", async () => {
   expect(calls).toHaveLength(1);
   expect(calls[0].code).toBe(false);
 });
+
+test("long-poll ends as soon as the client disconnects (ctx.req.signal), freeing its subscription", async () => {
+  const { app, join, mm } = setup();
+  const server = await app.listen(0);
+  try {
+    await join("a");
+    const ctrl = new AbortController();
+    const pending = fetch(`${server.url}match/ranked/status?wait=20000`, { headers: { "x-test-user": "a" }, signal: ctrl.signal }).catch((e) => e);
+    const deadline = Date.now() + 2000;
+    while ((mm.inspect() as any).longPolls !== 1 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+    expect((mm.inspect() as any).longPolls).toBe(1);
+    ctrl.abort();
+    await pending;
+    while ((mm.inspect() as any).longPolls !== 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+    expect((mm.inspect() as any).longPolls).toBe(0); // the fake clock never fired: only the abort ended it
+  } finally {
+    await server.stop();
+  }
+});

@@ -332,10 +332,12 @@ export function matchmaker(opts: MatchmakerOptions) {
         if (wait > 0 && h instanceof LocalHost && (status.state === "queued" || status.state === "matching")) {
           status = await new Promise<QueueStatus>((resolve) => {
             let timer: unknown = null;
+            const signal = ctx.req.signal;
             const done = () => {
               clock.clearTimeout(timer);
               unsub();
               waiting.delete(timeout);
+              signal?.removeEventListener("abort", timeout);
             };
             const unsub = h.subscribe(q, ctx.user.id, (s) => {
               if (s.state === "queued" || s.state === "matching") return;
@@ -348,6 +350,9 @@ export function matchmaker(opts: MatchmakerOptions) {
             };
             timer = clock.setTimeout(timeout, wait);
             waiting.add(timeout);
+            // The client went away: stop waiting now instead of holding the subscription for `wait` ms.
+            if (signal?.aborted) timeout();
+            else signal?.addEventListener("abort", timeout, { once: true });
           });
         }
         return { queue: q, status: await inner.present(status, ctx.user.id) };
@@ -431,6 +436,7 @@ export function matchmaker(opts: MatchmakerOptions) {
         Object.entries(opts.queues).map(([n, c]) => [n, { teams: 2, ...c, waiting: local?.cores.get(n)?.size ?? 0 }]),
       ),
       ticketTtlMs: ticketTtl,
+      longPolls: waiting.size,
       durableObject: { binding, className },
       routes: routes.filter((r) => !r.config.internal).map((r) => `${r.method} ${r.path}`),
     }),

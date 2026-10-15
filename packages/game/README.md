@@ -103,6 +103,13 @@ hibernation. Handlers see their own `room.secret` as usual. `seatOf(room, player
 or rostered players. It reports once per room and returns the store's summary
 (`ratings[userId].before/after`, `unlocked`).
 
+After the report, the room sends a final `game.closed` event and closes after
+`closeAfterResultMs` (default 5000). This uses a named timer, so it works on Durable Objects.
+Finished games therefore free their memory instead of lingering through the 30 s reconnect grace
+plus `emptyMs`. Pass `false` to keep the room open, for example for rematches. Rooms that are
+abandoned before any result still live for grace + `emptyMs`. If a `rooms()` plugin only hosts
+match rooms, consider `rooms({ emptyMs: 5_000 })`.
+
 The matchmaker or lobbies plugin receives the report together with `room.env`. On Workers that is the rooms Durable Object's env, so a `d1("DB")` database is reached directly. `gameRoom(type, def, { report: resultReporter(url) })` (a signed HTTP call) remains an option. Leaderboard submits from a room take the env the same way: `board.submit(userId, 1, { env: room.env })`.
 
 Clients: `findMatch()` and `connectMatch()` from `@miujs/game/client` do all of this. See also

@@ -67,7 +67,17 @@ export interface GameRoomOptions {
   open?: string[];
   /** Let `role=spectator` joins in without a ticket (they get no seat). Default false. */
   spectators?: boolean;
+  /**
+   * Close the room this long after `reportResult()` (game over), after a final `game.closed`
+   * event, so finished games free their memory instead of lingering through the reconnect grace
+   * and empty-room timeout. A named timer, so it also fires on Durable Objects. Default 5000;
+   * `false` keeps the room open (e.g. for rematches).
+   */
+  closeAfterResultMs?: number | false;
 }
+
+/** Named timer that closes a finished game room. */
+export const CLOSE_TIMER = "__miu_game_close";
 
 interface GameSecret {
   match: MatchInfo | null;
@@ -197,6 +207,8 @@ export async function reportResult<T = ResultSummary>(room: Room, result: { winn
     g.reported = false;
     throw err;
   }
+  const closeMs = options.get(room.type)?.closeAfterResultMs ?? 5_000;
+  if (closeMs !== false) raw(room).schedule(CLOSE_TIMER, closeMs);
   return { reported: true, result: mapped, summary: summary as T };
 }
 
@@ -262,7 +274,11 @@ export function gameRoom<S, X = undefined, C extends Record<string, Schema<any>>
   };
 
   const wrapRoom = <F extends (ctx: any) => unknown>(fn: F | undefined) => (fn ? ((ctx: any) => fn({ ...ctx, room: facade(ctx.room) })) : undefined);
-  const timers = def.timers ? Object.fromEntries(Object.entries(def.timers).map(([k, fn]) => [k, wrapRoom(fn)!])) : undefined;
+  const timers: Record<string, (ctx: any) => unknown> = def.timers ? Object.fromEntries(Object.entries(def.timers).map(([k, fn]) => [k, wrapRoom(fn)!])) : {};
+  timers[CLOSE_TIMER] = ({ room }: { room: Room }) => {
+    room.broadcast("game.closed", { reason: "game over" });
+    room.close("game over");
+  };
 
   const wrapped: RoomDefinition<S, Wrapped, any> = {
     ...(def as unknown as RoomDefinition<S, Wrapped, any>),
