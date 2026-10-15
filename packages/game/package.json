@@ -1,0 +1,12 @@
+{
+  "name": "@miujs/game",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
+  },
+  "files": ["src", "README.md"],
+  "dependencies": { "miujs": "workspace:*", "@miujs/realtime": "workspace:*", "@miujs/db": "workspace:*" }
+}
