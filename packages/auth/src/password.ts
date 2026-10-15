@@ -20,6 +20,14 @@ export interface PasswordOptions {
 }
 
 export const DEFAULT_ITERATIONS = 600_000;
+
+/** Stored for accounts with no password (made by OAuth sign-in). Never matches anything, like Django's `!` hashes. */
+export const UNUSABLE_PASSWORD = "!";
+
+/** A unique unusable hash (`!` + random), so the column still differs per user. */
+export function unusablePasswordHash(): string {
+  return `!${base64urlEncode(randomBytes(16))}`;
+}
 const PREFIX = "pbkdf2_sha256";
 
 function bunPassword(opts: PasswordOptions): BunPasswordLike | null {
@@ -66,6 +74,7 @@ export async function hashPassword(password: string, opts: PasswordOptions = {})
  * `$2a$/$2b$/$2y$…`. Throws MIU_E_AUTH_HASH_UNSUPPORTED for anything else.
  */
 export async function verifyPassword(password: string, stored: string, opts: PasswordOptions = {}): Promise<boolean> {
+  if (stored.startsWith(UNUSABLE_PASSWORD)) return false;
   if (stored.startsWith(`${PREFIX}$`)) {
     const parts = stored.split("$");
     if (parts.length !== 4) return false;

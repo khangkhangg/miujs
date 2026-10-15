@@ -10,6 +10,8 @@ export interface RateLimitResult {
 
 export interface RateLimiter {
   readonly kind: string;
+  /** Cloudflare Rate Limiting binding name, when this limiter uses one (for `miu deploy cloudflare`). */
+  readonly binding?: string;
   /** Count one hit for `key` and report whether it is within `limit` per `windowSeconds`. */
   hit(key: string, limit: number, windowSeconds: number, env?: Env): Promise<RateLimitResult>;
 }
@@ -50,6 +52,7 @@ interface CfRateLimitBinding {
 export function cloudflareRateLimiter(binding: string): RateLimiter {
   return {
     kind: `cloudflare:${binding}`,
+    binding,
     async hit(key, _limit, windowSeconds, env) {
       const b = env?.[binding] as CfRateLimitBinding | undefined;
       if (!b || typeof b.limit !== "function") {
@@ -72,7 +75,10 @@ export interface RateLimitOptions {
    * Header holding the client IP, set by a proxy you trust in front of the app, e.g.
    * `"cf-connecting-ip"` (Cloudflare in front of a Bun server) or `"x-real-ip"` (nginx). Without it
    * MiuJS uses `ctx.ip` (Workers and Bun know the real address). Never set this to a header clients
-   * can send directly, or attackers pick their own IP.
+   * can send directly, or attackers pick their own IP. With a list (X-Forwarded-For), the rightmost
+   * entry is used: the one your proxy appended.
+   *
+   * @deprecated Prefer core's `miu({ trustProxy })`, which sets `ctx.ip`; auth then needs no option.
    */
   trustProxyHeader?: string;
   login?: { perIpAccount?: number; perAccount?: number; perIp?: number; windowSeconds?: number };

@@ -4,13 +4,19 @@
 import { definePlugin, errors, processEnv, route, t, type AuthUser, type CloudflareNeeds, type Context, type Env, type RouteDef } from "miujs";
 import { getSession, hex, randomId, sha256, timingSafeEqual, utf8, base64urlEncode, randomBytes } from "@miujs/session";
 import { defaultAuthEmails, type AuthEmails, type AuthMailer } from "./emails.ts";
-import { hashPassword, needsRehash, verifyPassword, type PasswordOptions } from "./password.ts";
+import { UNUSABLE_PASSWORD, hashPassword, needsRehash, verifyPassword, type PasswordOptions } from "./password.ts";
 import { RATE_LIMIT_DEFAULTS, memoryRateLimiter, type RateLimitOptions } from "./ratelimit.ts";
 import { memoryUserStore, type OneTimeTokenPurpose, type OneTimeTokenRecord, type StoredUser, type UserStore } from "./store.ts";
+import { OAUTH_STORE_METHODS, oauth as oauthRoutes, type OAuthOptions } from "./oauth.ts";
+import { PASSKEY_STORE_METHODS, passkeys as passkeyRoutes, type PasskeyOptions } from "./passkeys.ts";
 
 export * from "./emails.ts";
 export * from "./password.ts";
 export * from "./ratelimit.ts";
+export * from "./cbor.ts";
+export * from "./jose.ts";
+export * from "./oauth.ts";
+export * from "./passkeys.ts";
 export * from "./store.ts";
 
 export interface TurnstileOptions {
@@ -66,6 +72,14 @@ export interface AuthOptions {
   emails?: Partial<AuthEmails>;
   /** Pages in your app that emailed links open (they read `?token=` and POST it). */
   pages?: { verifyEmail?: string; resetPassword?: string; forgotPassword?: string };
+  /**
+   * Sign in with OAuth / OpenID Connect providers: `GET /auth/oauth/:provider` starts, the provider
+   * returns to `/auth/oauth/:provider/callback`. Register `<appUrl>/auth/oauth/<id>/callback` as the
+   * redirect URI at each provider.
+   */
+  oauth?: OAuthOptions;
+  /** Sign in with passkeys (WebAuthn) under `/auth/passkeys`. */
+  passkeys?: PasskeyOptions;
 }
 
 const MAX_PASSWORD = 1024;
@@ -107,7 +121,7 @@ function requireSession(ctx: Context) {
   return s;
 }
 
-const ACCOUNT_STORE_METHODS = ["markEmailVerified", "changePassword", "createOneTimeToken", "consumeOneTimeToken", "deleteOneTimeTokens"] as const;
+const ACCOUNT_STORE_METHODS = ["markEmailVerified", "changePassword", "createOneTimeToken", "consumeOneTimeToken", "deleteOneTimeTokens", "deleteUserTokens"] as const;
 
 /**
  * Accounts and sign-in.
@@ -144,7 +158,11 @@ export function auth(opts: AuthOptions = {}) {
   function clientIp(ctx: Context): string | undefined {
     if (rl?.trustProxyHeader) {
       const v = ctx.headers.get(rl.trustProxyHeader);
-      if (v) return v.split(",")[0].trim();
+      // The rightmost entry is the one our trusted proxy appended; entries to its left come from the client.
+      if (v) {
+        const last = v.split(",").pop()!.trim();
+        if (last) return last;
+      }
     }
     return ctx.ip;
   }
@@ -359,7 +377,8 @@ export function auth(opts: AuthOptions = {}) {
       if (blocked) return blocked;
       await checkTurnstile(ctx as unknown as Context, ctx.body["cf-turnstile-response"]);
       const user = await users.findUserByEmail(ctx.body.email, ctx.env);
-      if (!user) {
+      // Accounts without a password (made by OAuth) answer exactly like unknown emails.
+      if (!user || user.passwordHash.startsWith(UNUSABLE_PASSWORD)) {
         // Same work as a real check, so response time does not reveal whether the email exists.
         dummyHash ??= hashPassword(randomId(), pw);
         await verifyPassword(ctx.body.password, await dummyHash, pw).catch(() => false);
@@ -539,6 +558,9 @@ export function auth(opts: AuthOptions = {}) {
       const passwordHash = await hashPassword(ctx.body.password, pw);
       const sessionVersion = await store.changePassword(user.id, passwordHash, ctx.env);
       await store.deleteOneTimeTokens(user.id, "reset", ctx.env);
+      // A reset means the account may have been taken over: API tokens an attacker made must stop working.
+      // (A normal change, made with the current password, keeps them.)
+      await store.deleteUserTokens(user.id, ctx.env);
       // Opening the emailed link proves the address belongs to them.
       const emailVerifiedAt = user.emailVerifiedAt ?? Date.now();
       if (user.emailVerifiedAt == null) await store.markEmailVerified(user.id, emailVerifiedAt, ctx.env);
@@ -582,6 +604,46 @@ export function auth(opts: AuthOptions = {}) {
 
   const accountRoutes: RouteDef[] = [...(verification === "off" ? [] : [verifyRequestRoute, verifyRoute]), forgotRoute, resetRoute, changeRoute];
 
+  // --- OAuth / OpenID Connect ------------------------------------------------------------------
+
+  const oauth = opts.oauth
+    ? oauthRoutes(opts.oauth, {
+        base,
+        users,
+        defaultRoles: opts.defaultRoles ?? [],
+        verification,
+        isDev: () => dev,
+        appUrlFor,
+        signIn,
+      })
+    : null;
+
+  const passkeys = opts.passkeys
+    ? passkeyRoutes(opts.passkeys, {
+        base,
+        users,
+        verification,
+        signIn,
+        publicUser,
+        emailUnverified: () => emailUnverified(base),
+        limit: (ctx) => {
+          const ip = clientIp(ctx);
+          return limited(ctx, [[ip ? `passkey:ip:${ip}` : null, loginLimits.perIp]], loginLimits.windowSeconds);
+        },
+      })
+    : null;
+
+  function requireStoreMethods(methods: readonly string[], feature: string) {
+    const missing = methods.filter((m) => typeof (users as unknown as Record<string, unknown>)[m] !== "function");
+    if (missing.length) {
+      throw errors.config(
+        "MIU_E_AUTH_STORE_UNSUPPORTED",
+        `The ${users.kind} user store lacks ${missing.join(", ")}, needed for ${feature}`,
+        "Use memoryUserStore() or dbUserStore(db), or implement those UserStore methods in your store.",
+      );
+    }
+  }
+
   async function userFromToken(token: string, env: Env): Promise<StoredUser | null> {
     if (!token.startsWith(prefix) || token.length > 200) return null;
     const digest = hex(await sha256(token));
@@ -594,7 +656,7 @@ export function auth(opts: AuthOptions = {}) {
 
   return definePlugin({
     name: "auth",
-    routes: [...(opts.register === false ? [] : [registerRoute]), loginRoute, logoutRoute, meRoute, createTokenRoute, deleteTokenRoute],
+    routes: [...(opts.register === false ? [] : [registerRoute]), loginRoute, logoutRoute, meRoute, createTokenRoute, deleteTokenRoute, ...(oauth?.routes ?? []), ...(passkeys?.routes ?? [])],
     setup(app) {
       const si = app.plugins.findIndex((p) => p.name === "session");
       const ai = app.plugins.findIndex((p) => p.name === "auth");
@@ -602,20 +664,23 @@ export function auth(opts: AuthOptions = {}) {
         throw errors.config("MIU_E_AUTH_SESSION_REQUIRED", "auth() needs session() earlier in plugins", "Use miu({ plugins: [session(), auth()] }).");
       }
       dev = app.dev;
-      const hasMail = app.plugins.some((p) => p.name === "mail");
-      if (!opts.mailer && !hasMail && verification === "off") return;
-      if (!opts.mailer && !hasMail) throw mailerMissing();
-      const missing = ACCOUNT_STORE_METHODS.filter((m) => typeof users[m] !== "function");
-      if (missing.length) {
-        throw errors.config(
-          "MIU_E_AUTH_STORE_UNSUPPORTED",
-          `The ${users.kind} user store lacks ${missing.join(", ")}, needed for email verification and password reset`,
-          "Use memoryUserStore() or dbUserStore(db), or implement those UserStore methods in your store.",
-        );
-      }
       if (opts.appUrl !== undefined && !/^https?:\/\/[^\s/]+/i.test(opts.appUrl)) {
         throw errors.config("MIU_E_AUTH_APP_URL_INVALID", `appUrl ${JSON.stringify(opts.appUrl)} is not an http(s) URL`, 'Pass auth({ appUrl: "https://app.example.com" }).');
       }
+      if (oauth) {
+        oauth.validate();
+        requireStoreMethods(OAUTH_STORE_METHODS, "OAuth sign-in");
+        // redirect_uri is built from appUrl; never from the Host header outside dev.
+        if (!dev && !opts.appUrl && app.runtime !== "workerd" && !processEnv().APP_URL) throw appUrlMissing();
+      }
+      if (passkeys) {
+        passkeys.validate();
+        requireStoreMethods(PASSKEY_STORE_METHODS, "passkeys");
+      }
+      const hasMail = app.plugins.some((p) => p.name === "mail");
+      if (!opts.mailer && !hasMail && verification === "off") return;
+      if (!opts.mailer && !hasMail) throw mailerMissing();
+      requireStoreMethods(ACCOUNT_STORE_METHODS, "email verification and password reset");
       // On Workers env arrives per request, so APP_URL is checked when the first link is built.
       if (!dev && !opts.appUrl && app.runtime !== "workerd" && !processEnv().APP_URL) throw appUrlMissing();
       app.add(accountRoutes);
@@ -654,10 +719,15 @@ export function auth(opts: AuthOptions = {}) {
         emailVerification: verification,
         mailer: opts.mailer ? "custom" : "ctx.mail (when mail() is in plugins)",
         appUrl: opts.appUrl ?? "env.APP_URL (request origin in dev)",
+        oauth: oauth ? oauth.inspect() : false,
+        passkeys: passkeys ? passkeys.inspect() : false,
       };
     },
     cloudflare(): CloudflareNeeds {
-      return users.cloudflare?.() ?? {};
+      const needs: CloudflareNeeds = { ...users.cloudflare?.() };
+      // The binding applies one limit to every key, so size it for the strictest login rule.
+      if (limiter?.binding) needs.ratelimits = [{ binding: limiter.binding, limit: loginLimits.perIpAccount, period: 60 }];
+      return needs;
     },
   });
 }

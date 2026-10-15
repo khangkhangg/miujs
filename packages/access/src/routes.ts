@@ -200,6 +200,16 @@ export function accessRoutes(opts: AccessOptions, state: RouteState) {
     params: t.object({ token: t.string({ minLength: 1, maxLength: 200 }) }),
     response: t.object({ org: OrgOut }),
     handler: async (ctx) => {
+      // @miujs/auth sets emailVerified only when email verification is on. An unconfirmed address
+      // could belong to someone else, so it must not unlock an invite sent to that address.
+      if (ctx.user.emailVerified === false) {
+        throw errors.custom({
+          code: "MIU_E_ACCESS_EMAIL_UNVERIFIED",
+          status: 403,
+          message: "Confirm your email address before accepting an invitation",
+          fix: "Open the link in the confirmation email (or request a new one with POST /auth/verify-email/request), then accept the invitation again.",
+        });
+      }
       const store = storeFor(opts, ctx as unknown as Context);
       const invalid = () => errors.custom({ code: "MIU_E_ACCESS_INVITE_INVALID", status: 404, message: "Invitation not found", fix: "Check the link, or ask for a new invitation." });
       const invite = await store.findInviteByHash(await sha256Hex(ctx.params.token));

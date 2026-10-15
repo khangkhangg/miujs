@@ -256,6 +256,49 @@ describe("invitations", () => {
     }
   });
 
+  describe("email verification (auth sets ctx.user.emailVerified only when it is on)", () => {
+    const as = async (emailVerified: boolean | undefined, fn: () => Promise<void>) => {
+      const prev = USERS.carol;
+      USERS.carol = emailVerified === undefined ? { ...prev } : { ...prev, emailVerified };
+      try {
+        await fn();
+      } finally {
+        USERS.carol = prev;
+      }
+    };
+
+    test("emailVerified === false → 403 MIU_E_ACCESS_EMAIL_UNVERIFIED with a fix; the invite stays usable", async () => {
+      const s = await seeded();
+      const token = await invite(s, "carol@example.com");
+      await as(false, async () => {
+        const res = await s.call("POST", `/invites/${token}/accept`, "carol");
+        expect(res.status).toBe(403);
+        expect(res.body.error.code).toBe("MIU_E_ACCESS_EMAIL_UNVERIFIED");
+        expect(res.body.error.fix).toBeTruthy();
+      });
+      expect(await s.store.getMembership(s.A.id, "carol")).toBeNull();
+      await as(true, async () => {
+        expect((await s.call("POST", `/invites/${token}/accept`, "carol")).status).toBe(200);
+      });
+    });
+
+    test("emailVerified === false is refused even with allowAnyEmail", async () => {
+      const s = await seeded({ allowAnyEmail: true });
+      const token = await invite(s, "carol@example.com");
+      await as(false, async () => {
+        expect((await s.call("POST", `/invites/${token}/accept`, "carol")).status).toBe(403);
+      });
+    });
+
+    test("emailVerified absent (verification off) → accepted as before", async () => {
+      const s = await seeded();
+      const token = await invite(s, "carol@example.com");
+      await as(undefined, async () => {
+        expect((await s.call("POST", `/invites/${token}/accept`, "carol")).status).toBe(200);
+      });
+    });
+  });
+
   test("allowAnyEmail lets any signed-in user accept", async () => {
     const s = await seeded({ allowAnyEmail: true });
     const token = await invite(s, "carol@example.com");

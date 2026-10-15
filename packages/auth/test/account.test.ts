@@ -548,6 +548,36 @@ describe("password reset", () => {
     });
   }
 
+  async function apiToken(m: Made, jar: Jar) {
+    const res = await send(m.app, jar, "/auth/tokens", { name: "ci" });
+    expect(res.status).toBe(201);
+    return (await res.json()).token as string;
+  }
+  const bearer = (m: Made, token: string) => m.app.fetch(new Request(`${BASE}/auth/me`, { headers: { authorization: `Bearer ${token}` } }));
+
+  for (const [label, users] of [["memory", () => memoryUserStore()], ["db", () => dbUserStore(sqlite())]] as const) {
+    test(`reset revokes every API token of the user (${label})`, async () => {
+      const m = await withUser({ users: users() });
+      const t1 = await apiToken(m, m.jar);
+      const t2 = await apiToken(m, m.jar);
+      const other = await registerUser(m, "bob@example.com");
+      const bobs = await apiToken(m, other.jar);
+      expect((await bearer(m, t1)).status).toBe(200);
+      const token = await resetToken(m);
+      expect((await send(m.app, new Jar(), "/auth/password/reset", { token, password: "a brand new password" })).status).toBe(200);
+      expect((await bearer(m, t1)).status).toBe(401);
+      expect((await bearer(m, t2)).status).toBe(401);
+      expect((await bearer(m, bobs)).status).toBe(200);
+    });
+  }
+
+  test("a failed reset (bad token) revokes nothing", async () => {
+    const m = await withUser();
+    const t1 = await apiToken(m, m.jar);
+    expect((await send(m.app, new Jar(), "/auth/password/reset", { token: "x".repeat(43), password: "a brand new password" })).status).toBe(400);
+    expect((await bearer(m, t1)).status).toBe(200);
+  });
+
   test("with dbUserStore end to end", async () => {
     const m = await withUser({ users: dbUserStore(sqlite()) });
     const token = await resetToken(m);
@@ -600,6 +630,16 @@ describe("password change", () => {
     const statuses: number[] = [];
     for (let i = 0; i < 3; i++) statuses.push((await send(m.app, jar, "/auth/password/change", { currentPassword: "wrong password!!", newPassword: "a brand new password" })).status);
     expect(statuses).toEqual([403, 403, 429]);
+  });
+
+  test("a normal password change keeps API tokens working", async () => {
+    const m = makeApp();
+    const { jar } = await registerUser(m);
+    const created = await send(m.app, jar, "/auth/tokens", { name: "ci" });
+    const token = (await created.json()).token as string;
+    expect((await send(m.app, jar, "/auth/password/change", { currentPassword: PW, newPassword: "a brand new password" })).status).toBe(200);
+    const res = await m.app.fetch(new Request(`${BASE}/auth/me`, { headers: { authorization: `Bearer ${token}` } }));
+    expect(res.status).toBe(200);
   });
 
   test("a change invalidates outstanding reset links", async () => {

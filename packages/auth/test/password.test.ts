@@ -115,3 +115,14 @@ describe("needsRehash", () => {
     expect(needsRehash(await hashPassword("x"))).toBe(false);
   });
 });
+
+describe("unusable password marker (accounts made by OAuth or passkey sign-in)", () => {
+  test("UNUSABLE_PASSWORD never verifies, for any input, and does not throw", async () => {
+    const { UNUSABLE_PASSWORD, unusablePasswordHash } = await import("../src/password.ts");
+    for (const h of [UNUSABLE_PASSWORD, unusablePasswordHash()]) {
+      expect(h.startsWith("!")).toBe(true);
+      for (const pw of ["", "!", h, h.slice(1), "password"]) expect(await verifyPassword(pw, h)).toBe(false);
+    }
+    expect(unusablePasswordHash()).not.toBe(unusablePasswordHash());
+  });
+});

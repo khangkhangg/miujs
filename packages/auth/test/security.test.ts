@@ -63,6 +63,15 @@ describe("rate limiting", () => {
     expect((await post(app, "/auth/login", { email: "e@example.com", password: "password-e" }, ip(3))).status).toBe(200);
   });
 
+  test("trustProxyHeader uses the rightmost (proxy-appended) entry, so clients cannot rotate a forged leftmost IP", async () => {
+    const app = makeApp({ rateLimit: { trustProxyHeader: "x-forwarded-for", login: { perIp: 3 } } });
+    const statuses: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      statuses.push((await post(app, "/auth/login", { email: `xff${i}@example.com`, password: "whatever-1" }, { "x-forwarded-for": `10.0.0.${i}, 198.51.100.7` })).status);
+    }
+    expect(statuses).toEqual([401, 401, 401, 429]);
+  });
+
   test("one IP trying many accounts is limited", async () => {
     const app = makeApp({ rateLimit: { trustProxyHeader: "cf-connecting-ip", login: { perIp: 5 } } });
     const statuses: number[] = [];
@@ -111,6 +120,19 @@ describe("cloudflareRateLimiter", () => {
     expect((await rl.hit("a", 10, 60, env)).ok).toBe(true);
     expect((await rl.hit("a", 10, 60, env)).ok).toBe(false);
     expect(seen).toEqual(["a", "a"]);
+  });
+
+  test("auth().cloudflare() asks for the [[ratelimits]] binding with the login per-IP+account limit and a 60 s period", () => {
+    const plugin = auth({ password: PW, rateLimit: { limiter: cloudflareRateLimiter("LOGIN_LIMIT"), login: { perIpAccount: 7 } } });
+    expect(plugin.cloudflare()).toEqual({ ratelimits: [{ binding: "LOGIN_LIMIT", limit: 7, period: 60 }] });
+    const dflt = auth({ password: PW, rateLimit: { limiter: cloudflareRateLimiter("RL") } });
+    expect(dflt.cloudflare().ratelimits).toEqual([{ binding: "RL", limit: 10, period: 60 }]);
+  });
+
+  test("without cloudflareRateLimiter, cloudflare() is unchanged (no ratelimits)", () => {
+    expect(auth({ password: PW }).cloudflare()).toEqual({});
+    expect(auth({ password: PW, rateLimit: false }).cloudflare()).toEqual({});
+    expect(auth({ password: PW, rateLimit: { limiter: memoryRateLimiter() } }).cloudflare()).toEqual({});
   });
 
   test("a missing binding fails loudly instead of allowing everything", async () => {

@@ -58,6 +58,8 @@ export interface UserStore {
   findTokenByHash(tokenHash: string, env: Env): Promise<ApiTokenRecord | null>;
   /** Deletes the token only if it belongs to `userId`. */
   deleteToken(id: string, userId: string, env: Env): Promise<boolean>;
+  /** Deletes every API token of `userId` (done on password reset). Returns how many. */
+  deleteUserTokens?(userId: string, env: Env): Promise<number>;
 
   // Needed for email verification and password reset/change (built-in stores have them).
   /** Sets `emailVerifiedAt` unless it is already set. */
@@ -69,8 +71,71 @@ export interface UserStore {
   consumeOneTimeToken?(tokenHash: string, purpose: OneTimeTokenPurpose, env: Env): Promise<OneTimeTokenRecord | null>;
   deleteOneTimeTokens?(userId: string, purpose: OneTimeTokenPurpose, env: Env): Promise<void>;
 
+  // Needed for OAuth sign-in (built-in stores have them).
+  findOAuthAccount?(provider: string, subject: string, env: Env): Promise<OAuthAccountRecord | null>;
+  /** Returns false when (provider, subject) is already linked. */
+  createOAuthAccount?(account: OAuthAccountRecord, env: Env): Promise<boolean>;
+
+  // Needed for passkeys (built-in stores have them).
+  /** Returns false when the credential id is already registered. */
+  createPasskey?(passkey: PasskeyRecord, env: Env): Promise<boolean>;
+  findPasskeyByCredentialId?(credentialId: string, env: Env): Promise<PasskeyRecord | null>;
+  listPasskeys?(userId: string, env: Env): Promise<PasskeyRecord[]>;
+  /** Deletes the passkey only if it belongs to `userId`. */
+  deletePasskey?(id: string, userId: string, env: Env): Promise<boolean>;
+  deleteUserPasskeys?(userId: string, env: Env): Promise<void>;
+  /** Sets the counter and last-used time only if the stored counter is still `expected`. */
+  updatePasskeyUsage?(id: string, expected: number, signCount: number, at: number, env: Env): Promise<boolean>;
+  /** Stores a WebAuthn challenge; also a good moment to drop expired ones. */
+  createChallenge?(challenge: ChallengeRecord, env: Env): Promise<void>;
+  /** Atomically deletes and returns the challenge if it exists with this purpose (expired or not). */
+  consumeChallenge?(challenge: string, purpose: ChallengePurpose, env: Env): Promise<ChallengeRecord | null>;
+
   inspect?(): Record<string, unknown>;
   cloudflare?(): { d1?: string[] };
+}
+
+/** A sign-in identity at an OAuth/OpenID provider, linked to one user. */
+export interface OAuthAccountRecord {
+  id: string;
+  /** Provider id, e.g. `google` or a custom OIDC id. */
+  provider: string;
+  /** The provider's stable user id (`sub`). */
+  subject: string;
+  userId: string;
+  /** The email the provider reported at link time, for display. */
+  email: string | null;
+  createdAt: number;
+}
+
+/** A WebAuthn credential. */
+export interface PasskeyRecord {
+  id: string;
+  userId: string;
+  /** base64url credential id. */
+  credentialId: string;
+  /** Public key as a JWK (converted from the COSE key at registration). */
+  publicKey: JsonWebKey;
+  /** COSE algorithm: -7 (ES256) or -257 (RS256). */
+  algorithm: number;
+  signCount: number;
+  transports: string[];
+  name: string | null;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
+export type ChallengePurpose = "passkey-register" | "passkey-login";
+
+/** A single-use WebAuthn challenge. */
+export interface ChallengeRecord {
+  /** base64url challenge (random, so it doubles as the key). */
+  challenge: string;
+  purpose: ChallengePurpose;
+  /** The user registering a passkey; null for sign-in. */
+  userId: string | null;
+  createdAt: number;
+  expiresAt: number;
 }
 
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
@@ -83,6 +148,9 @@ export function memoryUserStore(): UserStore {
   const byEmail = new Map<string, string>();
   const tokens = new Map<string, ApiTokenRecord>();
   const oneTime = new Map<string, OneTimeTokenRecord>();
+  const oauth = new Map<string, OAuthAccountRecord>();
+  const passkeys = new Map<string, PasskeyRecord>();
+  const challenges = new Map<string, ChallengeRecord>();
   const clone = <T>(v: T | undefined): T | null => (v === undefined ? null : structuredClone(v));
   return {
     kind: "memory",
@@ -118,6 +186,11 @@ export function memoryUserStore(): UserStore {
       tokens.delete(id);
       return true;
     },
+    async deleteUserTokens(userId) {
+      let n = 0;
+      for (const [k, t] of tokens) if (t.userId === userId) (tokens.delete(k), n++);
+      return n;
+    },
     async markEmailVerified(id, at) {
       const u = users.get(id);
       if (u && u.emailVerifiedAt === null) u.emailVerifiedAt = at;
@@ -140,6 +213,56 @@ export function memoryUserStore(): UserStore {
     async deleteOneTimeTokens(userId, purpose) {
       for (const [k, t] of oneTime) if (t.userId === userId && t.purpose === purpose) oneTime.delete(k);
     },
+    async findOAuthAccount(provider, subject) {
+      return clone(oauth.get(`${provider}\u0000${subject}`));
+    },
+    async createOAuthAccount(a) {
+      const key = `${a.provider}\u0000${a.subject}`;
+      if (oauth.has(key)) return false;
+      oauth.set(key, structuredClone(a));
+      return true;
+    },
+    async createPasskey(p) {
+      if (passkeys.has(p.credentialId)) return false;
+      passkeys.set(p.credentialId, structuredClone(p));
+      return true;
+    },
+    async findPasskeyByCredentialId(credentialId) {
+      return clone(passkeys.get(credentialId));
+    },
+    async listPasskeys(userId) {
+      return [...passkeys.values()].filter((p) => p.userId === userId).map((p) => structuredClone(p));
+    },
+    async deletePasskey(id, userId) {
+      for (const [k, p] of passkeys) {
+        if (p.id === id && p.userId === userId) return passkeys.delete(k);
+      }
+      return false;
+    },
+    async deleteUserPasskeys(userId) {
+      for (const [k, p] of passkeys) if (p.userId === userId) passkeys.delete(k);
+    },
+    async updatePasskeyUsage(id, expected, signCount, at) {
+      for (const p of passkeys.values()) {
+        if (p.id !== id) continue;
+        if (p.signCount !== expected) return false;
+        p.signCount = signCount;
+        p.lastUsedAt = at;
+        return true;
+      }
+      return false;
+    },
+    async createChallenge(c) {
+      const now = Date.now();
+      for (const [k, v] of challenges) if (v.expiresAt <= now) challenges.delete(k);
+      challenges.set(c.challenge, structuredClone(c));
+    },
+    async consumeChallenge(challenge, purpose) {
+      const c = challenges.get(challenge);
+      if (!c || c.purpose !== purpose) return null;
+      challenges.delete(challenge);
+      return c;
+    },
     inspect: () => ({ store: "memory" }),
   };
 }
@@ -161,7 +284,75 @@ ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0;
 CREATE TABLE auth_one_time_tokens (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, purpose TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
 CREATE INDEX auth_one_time_tokens_user ON auth_one_time_tokens (user_id, purpose);`,
   },
+  {
+    id: "miu_auth_003_oauth_passkeys",
+    sql: `CREATE TABLE oauth_accounts (id TEXT PRIMARY KEY, provider TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, email TEXT, created_at INTEGER NOT NULL, UNIQUE (provider, subject));
+CREATE INDEX oauth_accounts_user ON oauth_accounts (user_id);
+CREATE TABLE passkeys (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, credential_id TEXT NOT NULL UNIQUE, public_key TEXT NOT NULL, algorithm INTEGER NOT NULL, sign_count INTEGER NOT NULL DEFAULT 0, transports TEXT NOT NULL DEFAULT '[]', name TEXT, created_at INTEGER NOT NULL, last_used_at INTEGER);
+CREATE INDEX passkeys_user ON passkeys (user_id);
+CREATE TABLE auth_challenges (challenge TEXT PRIMARY KEY, purpose TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+CREATE INDEX auth_challenges_expires ON auth_challenges (expires_at);`,
+  },
 ];
+
+interface OAuthRow {
+  id: string;
+  provider: string;
+  subject: string;
+  user_id: string;
+  email: string | null;
+  created_at: number;
+}
+interface PasskeyRow {
+  id: string;
+  user_id: string;
+  credential_id: string;
+  public_key: string;
+  algorithm: number;
+  sign_count: number;
+  transports: string;
+  name: string | null;
+  created_at: number;
+  last_used_at: number | null;
+}
+interface ChallengeRow {
+  challenge: string;
+  purpose: string;
+  user_id: string | null;
+  created_at: number;
+  expires_at: number;
+}
+
+function toOAuth(r: OAuthRow | null): OAuthAccountRecord | null {
+  if (!r) return null;
+  return { id: r.id, provider: r.provider, subject: r.subject, userId: r.user_id, email: r.email, createdAt: r.created_at };
+}
+
+function toPasskey(r: PasskeyRow | null): PasskeyRecord | null {
+  if (!r) return null;
+  let transports: string[] = [];
+  try {
+    const t = JSON.parse(r.transports);
+    if (Array.isArray(t)) transports = t.filter((x) => typeof x === "string");
+  } catch {}
+  return {
+    id: r.id,
+    userId: r.user_id,
+    credentialId: r.credential_id,
+    publicKey: JSON.parse(r.public_key),
+    algorithm: Number(r.algorithm),
+    signCount: Number(r.sign_count),
+    transports,
+    name: r.name,
+    createdAt: r.created_at,
+    lastUsedAt: r.last_used_at ?? null,
+  };
+}
+
+function toChallenge(r: ChallengeRow | null): ChallengeRecord | null {
+  if (!r) return null;
+  return { challenge: r.challenge, purpose: r.purpose as ChallengePurpose, userId: r.user_id, createdAt: r.created_at, expiresAt: r.expires_at };
+}
 
 interface UserRow {
   id: string;
@@ -233,6 +424,9 @@ export function dbUserStore(database: DatabaseSource, opts: DbUserStoreOptions =
   };
   const USER_COLS = "id, email, name, roles, password_hash, created_at, email_verified_at, session_version";
   const ONE_TIME_COLS = "token_hash, user_id, purpose, created_at, expires_at";
+  const OAUTH_COLS = "id, provider, subject, user_id, email, created_at";
+  const PASSKEY_COLS = "id, user_id, credential_id, public_key, algorithm, sign_count, transports, name, created_at, last_used_at";
+  const CHALLENGE_COLS = "challenge, purpose, user_id, created_at, expires_at";
   return {
     kind: "db",
     async findUserByEmail(email, env) {
@@ -281,6 +475,11 @@ export function dbUserStore(database: DatabaseSource, opts: DbUserStoreOptions =
       const r = await d.prepare("DELETE FROM api_tokens WHERE id = ? AND user_id = ?").bind(id, userId).run();
       return r.meta.changes > 0;
     },
+    async deleteUserTokens(userId, env) {
+      const d = await get(env);
+      const r = await d.prepare("DELETE FROM api_tokens WHERE user_id = ?").bind(userId).run();
+      return r.meta.changes;
+    },
     async markEmailVerified(id, at, env) {
       const d = await get(env);
       await d.prepare("UPDATE users SET email_verified_at = ? WHERE id = ? AND email_verified_at IS NULL").bind(at, id).run();
@@ -305,6 +504,58 @@ export function dbUserStore(database: DatabaseSource, opts: DbUserStoreOptions =
     async deleteOneTimeTokens(userId, purpose, env) {
       const d = await get(env);
       await d.prepare("DELETE FROM auth_one_time_tokens WHERE user_id = ? AND purpose = ?").bind(userId, purpose).run();
+    },
+    async findOAuthAccount(provider, subject, env) {
+      const d = await get(env);
+      return toOAuth(await d.prepare(`SELECT ${OAUTH_COLS} FROM oauth_accounts WHERE provider = ? AND subject = ?`).bind(provider, subject).first<OAuthRow>());
+    },
+    async createOAuthAccount(a, env) {
+      const d = await get(env);
+      const r = await d
+        .prepare(`INSERT INTO oauth_accounts (${OAUTH_COLS}) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(provider, subject) DO NOTHING`)
+        .bind(a.id, a.provider, a.subject, a.userId, a.email, a.createdAt)
+        .run();
+      return r.meta.changes === 1;
+    },
+    async createPasskey(p, env) {
+      const d = await get(env);
+      const r = await d
+        .prepare(`INSERT INTO passkeys (${PASSKEY_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(credential_id) DO NOTHING`)
+        .bind(p.id, p.userId, p.credentialId, JSON.stringify(p.publicKey), p.algorithm, p.signCount, JSON.stringify(p.transports), p.name, p.createdAt, p.lastUsedAt)
+        .run();
+      return r.meta.changes === 1;
+    },
+    async findPasskeyByCredentialId(credentialId, env) {
+      const d = await get(env);
+      return toPasskey(await d.prepare(`SELECT ${PASSKEY_COLS} FROM passkeys WHERE credential_id = ?`).bind(credentialId).first<PasskeyRow>());
+    },
+    async listPasskeys(userId, env) {
+      const d = await get(env);
+      const { results } = await d.prepare(`SELECT ${PASSKEY_COLS} FROM passkeys WHERE user_id = ? ORDER BY created_at`).bind(userId).all<PasskeyRow>();
+      return results.map((r) => toPasskey(r)!);
+    },
+    async deletePasskey(id, userId, env) {
+      const d = await get(env);
+      const r = await d.prepare("DELETE FROM passkeys WHERE id = ? AND user_id = ?").bind(id, userId).run();
+      return r.meta.changes > 0;
+    },
+    async deleteUserPasskeys(userId, env) {
+      const d = await get(env);
+      await d.prepare("DELETE FROM passkeys WHERE user_id = ?").bind(userId).run();
+    },
+    async updatePasskeyUsage(id, expected, signCount, at, env) {
+      const d = await get(env);
+      const r = await d.prepare("UPDATE passkeys SET sign_count = ?, last_used_at = ? WHERE id = ? AND sign_count = ?").bind(signCount, at, id, expected).run();
+      return r.meta.changes === 1;
+    },
+    async createChallenge(c, env) {
+      const d = await get(env);
+      await d.prepare("DELETE FROM auth_challenges WHERE expires_at <= ?").bind(Date.now()).run();
+      await d.prepare(`INSERT INTO auth_challenges (${CHALLENGE_COLS}) VALUES (?, ?, ?, ?, ?)`).bind(c.challenge, c.purpose, c.userId, c.createdAt, c.expiresAt).run();
+    },
+    async consumeChallenge(challenge, purpose, env) {
+      const d = await get(env);
+      return toChallenge(await d.prepare(`DELETE FROM auth_challenges WHERE challenge = ? AND purpose = ? RETURNING ${CHALLENGE_COLS}`).bind(challenge, purpose).first<ChallengeRow>());
     },
     inspect: () => ({ store: "db", database: describeDatabase(database) }),
     cloudflare: () => {
