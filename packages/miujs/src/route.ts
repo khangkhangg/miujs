@@ -36,6 +36,15 @@ export interface RouteConfig<P, Q, B, R, A> {
   auth?: A;
   /** Expose this route as an MCP tool when the app has `mcp` on. Default true. */
   mcp?: boolean;
+  /**
+   * Permission checked before validation via `ctx.authorize(permission)`, which an access plugin
+   * such as @miujs/access provides. Shown in OpenAPI (`x-permission`) and the MCP tool description.
+   */
+  permission?: string;
+  /** Largest request body in bytes for this route. Default: the app's `maxBodySize`. */
+  maxBodySize?: number;
+  /** Served, but hidden from inspect, OpenAPI and MCP (dev tools, plugin plumbing). */
+  internal?: boolean;
   handler: (ctx: HandlerContext<P, Q, B, A>) => MaybePromise<InferOr<R, unknown> | Response | void | null>;
 }
 

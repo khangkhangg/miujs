@@ -26,6 +26,8 @@ export interface MiuOptions {
   logLevel?: LogLevel | "silent";
   /** One log line per request. Default: on in dev. */
   logRequests?: boolean;
+  /** Largest request body in bytes (JSON, form, text, binary). Default 10 MiB. Routes can override. */
+  maxBodySize?: number;
 }
 
 export interface CallInput {
@@ -65,6 +67,11 @@ type WorkersHandler = (...args: any[]) => unknown;
 
 const METHOD_ORDER = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 
+/** Whether an app is in dev mode when `dev` isn't set: off on Workers or when MIU_ENV/NODE_ENV is "production". */
+export function isDevDefault(runtime: Runtime = detectRuntime()): boolean {
+  return defaultDev(runtime);
+}
+
 function defaultDev(runtime: Runtime): boolean {
   if (runtime === "workerd") return false;
   const env = processEnv();
@@ -93,10 +100,34 @@ function check<T>(schema: Schema<T>, value: unknown, where: string, coerce: bool
   return out;
 }
 
-async function readBody(req: Request): Promise<{ value: unknown; form: boolean }> {
+const tooLarge = (limit: number) =>
+  errors.custom({
+    code: "MIU_E_BODY_TOO_LARGE",
+    status: 413,
+    message: `Request body is larger than ${limit} bytes`,
+    fix: "Send a smaller body, or raise the limit with `maxBodySize` on the route or in miu({ maxBodySize }).",
+  });
+
+/**
+ * The raw body bytes, never more than `limit`. A Content-Length over the limit is refused before
+ * reading. Without one (chunked uploads) the body is read and then checked: memory stays bounded
+ * by the server's own cap (Bun's maxRequestBodySize, set by listen(); the Node adapter's counter;
+ * Workers' platform limit). Reading through a stream reader would cost ~25x more per request on Bun.
+ */
+async function readLimited(req: Request, limit: number): Promise<Uint8Array> {
+  const declared = req.headers.get("content-length");
+  if (declared !== null && Number(declared) > limit) throw tooLarge(limit);
+  const buf = new Uint8Array(await req.arrayBuffer());
+  if (buf.byteLength > limit) throw tooLarge(limit);
+  return buf;
+}
+
+const utf8 = new TextDecoder();
+
+async function readBody(req: Request, limit: number): Promise<{ value: unknown; form: boolean }> {
   const type = (req.headers.get("content-type") ?? "").toLowerCase();
   if (type.includes("application/json") || type.includes("+json")) {
-    const text = await req.text();
+    const text = utf8.decode(await readLimited(req, limit));
     if (text === "") return { value: undefined, form: false };
     try {
       return { value: JSON.parse(text), form: false };
@@ -110,7 +141,8 @@ async function readBody(req: Request): Promise<{ value: unknown; form: boolean }
     }
   }
   if (type.includes("application/x-www-form-urlencoded") || type.includes("multipart/form-data")) {
-    const fd = await req.formData();
+    const bytes = await readLimited(req, limit);
+    const fd = await new Response(bytes, { headers: { "content-type": req.headers.get("content-type") ?? type } }).formData();
     const out: Record<string, unknown> = {};
     for (const [k, v] of fd as unknown as Iterable<[string, unknown]>) {
       const prev = out[k];
@@ -120,9 +152,9 @@ async function readBody(req: Request): Promise<{ value: unknown; form: boolean }
     }
     return { value: out, form: true };
   }
-  if (type.startsWith("text/")) return { value: await req.text(), form: false };
+  if (type.startsWith("text/")) return { value: utf8.decode(await readLimited(req, limit)), form: false };
   if (!req.body) return { value: undefined, form: false };
-  const buf = new Uint8Array(await req.arrayBuffer());
+  const buf = await readLimited(req, limit);
   return { value: buf.length ? buf : undefined, form: false };
 }
 
@@ -171,6 +203,9 @@ export class App {
   private readyPromise: Promise<void> | null = null;
   private requestHooks: NonNullable<Plugin["onRequest"]>[] = [];
   private responseHooks: NonNullable<Plugin["onResponse"]>[] = [];
+  private errorHooks: NonNullable<Plugin["onError"]>[] = [];
+  private background = new Set<Promise<unknown>>();
+  private maxBodySize: number;
   private workers: { queue: WorkersHandler[]; scheduled: WorkersHandler[] } = { queue: [], scheduled: [] };
   private staticEnv: Record<string, unknown>;
   private logRequests: boolean;
@@ -186,9 +221,10 @@ export class App {
     this.dev = options.dev ?? defaultDev(this.runtime);
     this.log = createLogger(options.logLevel ?? (this.dev ? "info" : "warn"), { app: this.name });
     this.logRequests = options.logRequests ?? false;
+    this.maxBodySize = options.maxBodySize ?? 10 * 1024 * 1024;
     this.plugins = options.plugins ?? [];
     this.staticEnv = this.runtime === "workerd" ? {} : processEnv();
-    this.basePlatform = { runtime: this.runtime };
+    this.basePlatform = { runtime: this.runtime, pending: this.background };
     for (const src of options.routes ?? []) this.collect(src, undefined);
     for (const p of this.plugins) for (const r of p.routes ?? []) this.collect(r, undefined);
   }
@@ -238,6 +274,7 @@ export class App {
       if (p.setup) await p.setup(this);
       if (p.onRequest) this.requestHooks.push(p.onRequest.bind(p));
       if (p.onResponse) this.responseHooks.push(p.onResponse.bind(p));
+      if (p.onError) this.errorHooks.push(p.onError.bind(p));
     }
     const names = new Set<string>();
     for (const def of this.pending) {
@@ -269,7 +306,7 @@ export class App {
     let r = this.routers.get(c.method);
     if (!r) this.routers.set(c.method, (r = new Router()));
     r.add(c.path, c);
-    if (c.def) this.compiled.push(c);
+    if (c.def && !c.def.config.internal) this.compiled.push(c);
   }
 
   private compile(def: RouteDef): Compiled {
@@ -316,6 +353,19 @@ export class App {
       }
       return this.toResponse(result, ctx, status, R);
     };
+    const permission = cfg.permission;
+    const bodyLimit = cfg.maxBodySize ?? this.maxBodySize;
+    const validated = (ctx: RequestContext): Response | Promise<Response> => {
+      if (P) ctx.params = check(P, ctx.params, "params", true);
+      if (Q) ctx.query = check(Q, ctx.query, "query", true);
+      if (B) {
+        return readBody(ctx.req, bodyLimit).then(({ value, form }) => {
+          ctx.body = check(B, value, "body", form);
+          return callHandler(ctx);
+        });
+      }
+      return callHandler(ctx);
+    };
     const run = (ctx: RequestContext): Response | Promise<Response> => {
       if (needsUser) {
         const user = ctx.user as { roles?: string[] } | undefined;
@@ -324,15 +374,20 @@ export class App {
           throw errors.forbidden(`Requires role: ${roles.join(" or ")}`, "Sign in as a user with the required role.");
         }
       }
-      if (P) ctx.params = check(P, ctx.params, "params", true);
-      if (Q) ctx.query = check(Q, ctx.query, "query", true);
-      if (B) {
-        return readBody(ctx.req).then(({ value, form }) => {
-          ctx.body = check(B, value, "body", form);
-          return callHandler(ctx);
-        });
+      if (permission !== undefined) {
+        const authorize = (ctx as unknown as { authorize?: (p: string) => unknown }).authorize;
+        if (typeof authorize !== "function") {
+          // Never allow silently: a permission nobody checks is a hole.
+          throw errors.config(
+            "MIU_E_PERMISSION_UNCHECKED",
+            `Route ${def.method} ${path} requires permission "${permission}", but no plugin provides ctx.authorize`,
+            "Add an access plugin such as access({ roles }) from @miujs/access, or remove `permission` from the route.",
+          );
+        }
+        const r = authorize.call(ctx, permission) as { then?: unknown } | undefined;
+        if (r && typeof r.then === "function") return (r as Promise<unknown>).then(() => validated(ctx));
       }
-      return callHandler(ctx);
+      return validated(ctx);
     };
 
     const info: RouteInfo = { name, method: def.method, path, auth, tags: cfg.tags ?? [] };
@@ -421,8 +476,11 @@ export class App {
     let platform = this.basePlatform;
     if (envOrServer && typeof envOrServer.upgrade === "function") {
       let sp = this.serverPlatform;
-      if (sp === null || sp.bunServer !== envOrServer) this.serverPlatform = sp = { runtime: this.runtime, bunServer: envOrServer };
+      if (sp === null || sp.bunServer !== envOrServer) this.serverPlatform = sp = { runtime: this.runtime, bunServer: envOrServer, pending: this.background };
       platform = sp;
+    } else if (envOrServer && envOrServer.remoteAddr && typeof envOrServer.remoteAddr.hostname === "string") {
+      // Deno.serve info, or the Node adapter: the client address for ctx.ip.
+      platform = { runtime: this.runtime, pending: this.background, remoteAddr: envOrServer.remoteAddr };
     }
     return this.dispatch(req, this.staticEnv, platform);
   };
@@ -517,6 +575,15 @@ export class App {
   }
 
   private errorResponse(err: unknown, ctx: RequestContext): Response {
+    for (const hook of this.errorHooks) {
+      // Observers only: a failing or slow hook never changes or delays the response.
+      try {
+        const r = hook(ctx as unknown as Context, err) as Promise<void> | void;
+        if (r && typeof r.catch === "function") r.catch((e) => ctx.log.error("onError hook failed", { err: e }));
+      } catch (e) {
+        ctx.log.error("onError hook failed", { err: e });
+      }
+    }
     if (isMiuError(err)) {
       if (err.status >= 500) ctx.log.error(err.message, { code: err.code, err });
       return err.toResponse();
@@ -578,7 +645,7 @@ export class App {
     const g = globalThis as any;
     let server: { port: number; url: string; stop(): Promise<void> };
     if (this.runtime === "bun") {
-      const s = g.Bun.serve({ port, hostname, fetch: this.fetch, websocket: bunWebSocket });
+      const s = g.Bun.serve({ port, hostname, fetch: this.fetch, websocket: bunWebSocket, maxRequestBodySize: this.maxRequestBodySize });
       server = { port: s.port, url: String(s.url), stop: async () => void s.stop(true) };
     } else if (this.runtime === "deno") {
       const s = g.Deno.serve({ port, hostname, onListen() {} }, (r: Request) => this.fetch(r));
@@ -595,10 +662,28 @@ export class App {
     return server;
   }
 
+  /**
+   * The largest body any route accepts. Bun reads this from the default export (and listen()
+   * passes it), so the server refuses bigger bodies before the app reads them.
+   */
+  get maxRequestBodySize(): number {
+    let max = this.maxBodySize;
+    for (const d of this.pending) if (d.config.maxBodySize !== undefined && d.config.maxBodySize > max) max = d.config.maxBodySize;
+    return max;
+  }
+
+  /**
+   * Wait for background work started with ctx.waitUntil (off Workers), e.g. before shutdown or
+   * at the end of a test. Work started while draining is waited for too.
+   */
+  async drain(): Promise<void> {
+    while (this.background.size) await Promise.allSettled([...this.background]);
+  }
+
   /** Send a request through the app without a network. */
   request = async (input: string | Request, init?: RequestInit): Promise<Response> => {
     const r = typeof input === "string" ? new Request(new URL(input, "http://localhost"), init) : input;
-    return this.dispatch(r, this.staticEnv, { runtime: this.runtime });
+    return this.dispatch(r, this.staticEnv, this.basePlatform);
   };
 
   /** Call a route by its definition. Fills the path, query and JSON body for you. */
@@ -665,6 +750,7 @@ export class App {
           path: c.path,
           summary: cfg.summary,
           auth: cfg.auth ?? false,
+          permission: cfg.permission,
           tags: cfg.tags ?? [],
           params: cfg.params?.json,
           query: cfg.query?.json,

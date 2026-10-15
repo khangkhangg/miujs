@@ -82,6 +82,10 @@ export interface PlatformInfo {
   bunServer?: { upgrade(req: Request, opts: { data: unknown }): boolean; requestIP?(req: Request): { address: string } | null };
   /** Workers' ExecutionContext. */
   executionContext?: { waitUntil(p: Promise<unknown>): void; passThroughOnException?(): void };
+  /** Client address on Deno (from `Deno.serve` info) and Node (from the socket). */
+  remoteAddr?: { hostname: string };
+  /** Background work off Workers, so `app.drain()` can wait for it. */
+  pending?: Set<Promise<unknown>>;
 }
 
 /** Fast path extraction without building a URL object. */
@@ -171,7 +175,7 @@ export class RequestContext {
   get ip(): string | undefined {
     const p = this._platform;
     if (p.runtime === "workerd") return this.req.headers.get("cf-connecting-ip") ?? undefined;
-    return p.bunServer?.requestIP?.(this.req)?.address;
+    return p.bunServer?.requestIP?.(this.req)?.address ?? p.remoteAddr?.hostname;
   }
   get query(): any {
     return (this._query ??= parseQuery(this.req.url));
@@ -220,7 +224,15 @@ export class RequestContext {
   waitUntil(promise: Promise<unknown>): void {
     const ec = this._platform.executionContext;
     const guarded = promise.catch((err) => this.log.error("waitUntil task failed", { err }));
-    if (ec) ec.waitUntil(guarded);
+    if (ec) {
+      ec.waitUntil(guarded);
+      return;
+    }
+    const pending = this._platform.pending;
+    if (pending) {
+      pending.add(guarded);
+      guarded.finally(() => pending.delete(guarded));
+    }
   }
 
   upgrade(handlers: WebSocketHandlers): Response {

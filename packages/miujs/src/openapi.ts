@@ -76,6 +76,7 @@ export function generateOpenApi(routes: DescribedRoute[], info: OpenApiInfo): Re
         : { description: "Success" },
       default: { $ref: "#/components/responses/Error" },
     };
+    if (cfg.permission) op["x-permission"] = cfg.permission;
     if (cfg.auth && cfg.auth !== "optional") op.security = [{ bearer: [] }, { cookie: [] }];
     const key = toOpenApiPath(r.path);
     (paths[key] ??= {})[r.method.toLowerCase()] = op;

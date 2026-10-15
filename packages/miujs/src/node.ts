@@ -3,8 +3,26 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import type { App } from "./app.ts";
+import { errors } from "./errors.ts";
 
-function toRequest(req: IncomingMessage, origin: string): Request {
+/** Counts streamed body bytes and fails the read past `limit` (Node has no server-level cap). */
+function capped(stream: ReadableStream<Uint8Array>, limit: number): ReadableStream<Uint8Array> {
+  let seen = 0;
+  return stream.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        seen += chunk.byteLength;
+        if (seen > limit) {
+          controller.error(errors.custom({ code: "MIU_E_BODY_TOO_LARGE", status: 413, message: `Request body is larger than ${limit} bytes`, fix: "Send a smaller body, or raise maxBodySize." }));
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+    }),
+  );
+}
+
+function toRequest(req: IncomingMessage, origin: string, limit: number): Request {
   const headers = new Headers();
   for (const [k, v] of Object.entries(req.headers)) {
     if (Array.isArray(v)) for (const item of v) headers.append(k, item);
@@ -14,7 +32,7 @@ function toRequest(req: IncomingMessage, origin: string): Request {
   return new Request(origin + (req.url ?? "/"), {
     method: req.method,
     headers,
-    body: hasBody ? (Readable.toWeb(req) as unknown as ReadableStream) : undefined,
+    body: hasBody ? capped(Readable.toWeb(req) as unknown as ReadableStream<Uint8Array>, limit) : undefined,
     // Required by Node's fetch when streaming a request body.
     duplex: hasBody ? "half" : undefined,
   } as RequestInit);
@@ -46,7 +64,7 @@ export async function serveNode(app: App, opts: { port: number; hostname?: strin
   const server = createServer(async (req, res) => {
     const host = req.headers.host ?? `localhost:${opts.port}`;
     try {
-      const response = await app.fetch(toRequest(req, `http://${host}`));
+      const response = await app.fetch(toRequest(req, `http://${host}`, app.maxRequestBodySize), { remoteAddr: { hostname: req.socket.remoteAddress ?? "" } });
       await send(res, response);
     } catch (err) {
       app.log.error("node adapter failed", { err });

@@ -81,7 +81,7 @@ export function buildRouteTool(r: DescribedRoute): RouteTool {
   if (required.length) inputSchema.required = required;
   const tool: RouteTool["tool"] = {
     name: toolName(r.name),
-    description: desc + authNote,
+    description: desc + authNote + (cfg.permission ? `\n\nRequires permission: ${cfg.permission}.` : ""),
     inputSchema,
     annotations: {
       readOnlyHint: r.method === "GET" || r.method === "HEAD",

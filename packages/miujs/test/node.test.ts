@@ -47,3 +47,21 @@ test("keeps multiple Set-Cookie headers separate", async () => {
 test("reports the real port when asked for port 0", () => {
   expect(server.port).toBeGreaterThan(0);
 });
+
+test("the Node adapter refuses an oversized chunked body with 413", async () => {
+  const small = miu({ logLevel: "silent", maxBodySize: 64, routes: [route.post("/echo", { body: t.object({ text: t.string() }), handler: ({ body }) => ({ text: body.text }) })] });
+  const s = await serveNode(small, { port: 0, hostname: "127.0.0.1" });
+  try {
+    const big = JSON.stringify({ text: "x".repeat(500) });
+    const stream = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(big)); c.close(); } });
+    const res = await fetch(`http://127.0.0.1:${s.port}/echo`, { method: "POST", headers: { "content-type": "application/json" }, body: stream, duplex: "half" } as RequestInit);
+    expect(res.status).toBe(413);
+  } finally {
+    await s.stop();
+  }
+});
+
+test("listen() caps Bun request bodies at the app limit", () => {
+  const capApp = miu({ maxBodySize: 1000, routes: [route.post("/big", { maxBodySize: 5000, handler: () => "ok" })] });
+  expect(capApp.maxRequestBodySize).toBe(5000);
+});

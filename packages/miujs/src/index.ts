@@ -1,4 +1,4 @@
-export { App, miu, type CallFn, type CallInput, type MiuOptions, type RouteSource, type RouteTest, type TestResponse } from "./app.ts";
+export { App, isDevDefault, miu, type CallFn, type CallInput, type MiuOptions, type RouteSource, type RouteTest, type TestResponse } from "./app.ts";
 export type { AuthUser, Context, Env, PlatformInfo, RouteInfo } from "./context.ts";
 export type { CookieOptions, Cookies } from "./cookies.ts";
 export { DOCS_BASE, MiuError, errors, isMiuError, type MiuErrorInit } from "./errors.ts";
