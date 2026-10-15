@@ -3,7 +3,7 @@ import { MiuError, errors, isMiuError } from "./errors.ts";
 import { createLogger, type LogLevel, type Logger } from "./logger.ts";
 import { createMcpHandler, buildRouteTool, type McpOptions } from "./mcp.ts";
 import { generateOpenApi, type DescribedRoute, type OpenApiInfo } from "./openapi.ts";
-import type { McpTool, Plugin } from "./plugin.ts";
+import type { CloudflareNeeds, McpTool, Plugin } from "./plugin.ts";
 import { isRoute, type AuthRequirement, type RouteDef } from "./route.ts";
 import { Router, normalizePath, pathParams } from "./router.ts";
 import { detectRuntime, processEnv, type Runtime } from "./runtime.ts";
@@ -684,7 +684,24 @@ export class App {
     const all = this.plugins.map((p) => p.cloudflare?.() ?? {});
     const dos = new Map<string, { binding: string; className: string }>();
     for (const n of all) for (const d of n.durableObjects ?? []) dos.set(d.binding, d);
+    const byBinding = <T extends { binding: string }>(xs: T[]) => [...new Map(xs.map((x) => [x.binding, x])).values()];
+    let assets: (NonNullable<CloudflareNeeds["assets"]> & { binding: string }) | undefined;
+    for (const n of all) {
+      if (!n.assets) continue;
+      const next = { binding: "ASSETS", ...n.assets };
+      if (assets && assets.directory !== next.directory) {
+        throw errors.config(
+          "MIU_E_CLOUDFLARE_ASSETS_CONFLICT",
+          `Two plugins serve static assets from different folders: ${assets.directory} and ${next.directory}`,
+          "Workers has one static assets folder per app. Build everything into one folder, or serve only one plugin's assets.",
+        );
+      }
+      assets ??= next;
+    }
     return {
+      assets,
+      workflows: byBinding(all.flatMap((n) => n.workflows ?? [])),
+      ratelimits: byBinding(all.flatMap((n) => n.ratelimits ?? [])),
       kv: uniq(all.flatMap((n) => n.kv ?? [])),
       d1: uniq(all.flatMap((n) => n.d1 ?? [])),
       r2: uniq(all.flatMap((n) => n.r2 ?? [])),

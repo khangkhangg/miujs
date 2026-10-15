@@ -22,6 +22,19 @@ export interface CloudflareNeeds {
   queues?: { producers?: string[]; consumers?: string[] };
   durableObjects?: { binding: string; className: string }[];
   crons?: string[];
+  /** Workers Static Assets. One folder per app; `binding` defaults to "ASSETS". */
+  assets?: {
+    directory: string;
+    binding?: string;
+    notFoundHandling?: "none" | "404-page" | "single-page-application";
+    htmlHandling?: "auto-trailing-slash" | "force-trailing-slash" | "drop-trailing-slash" | "none";
+    /** Run the Worker before serving assets (true, or route patterns), so routes and headers apply. */
+    runWorkerFirst?: boolean | string[];
+  };
+  /** Cloudflare Workflows classes the app exports. */
+  workflows?: { binding: string; name: string; className: string }[];
+  /** Rate Limiting bindings (`[[ratelimits]]`): `limit` requests per `period` seconds (10 or 60). */
+  ratelimits?: { binding: string; limit: number; period: 10 | 60 | number; namespaceId?: string }[];
 }
 
 /**

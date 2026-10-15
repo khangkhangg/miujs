@@ -260,6 +260,22 @@ export function wranglerToml(info: any, main: string, date = new Date().toISOStr
     parts.push(`\n[[migrations]]\ntag = "v1"\nnew_sqlite_classes = [${dos.map((d: { className: string }) => `"${d.className}"`).join(", ")}]`);
   }
   if (cf.crons?.length) parts.push(`\n[triggers]\ncrons = [${cf.crons.map((c: string) => `"${c}"`).join(", ")}]`);
+  if (cf.assets) {
+    const a = cf.assets;
+    let block = `\n[assets]\ndirectory = "${a.directory}"\nbinding = "${a.binding ?? "ASSETS"}"`;
+    if (a.notFoundHandling) block += `\nnot_found_handling = "${a.notFoundHandling}"`;
+    if (a.htmlHandling) block += `\nhtml_handling = "${a.htmlHandling}"`;
+    if (a.runWorkerFirst !== undefined) {
+      block += `\nrun_worker_first = ${Array.isArray(a.runWorkerFirst) ? `[${a.runWorkerFirst.map((p: string) => `"${p}"`).join(", ")}]` : a.runWorkerFirst}`;
+    }
+    parts.push(block);
+  }
+  for (const w of cf.workflows ?? []) parts.push(`\n[[workflows]]\nname = "${w.name}"\nbinding = "${w.binding}"\nclass_name = "${w.className}"`);
+  for (const r of cf.ratelimits ?? []) {
+    // namespace_id must be a positive integer unique within the account; derive a stable one from the binding name.
+    const ns = r.namespaceId ?? String(1000 + [...String(r.binding)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 9000, 7));
+    parts.push(`\n[[ratelimits]]\nname = "${r.binding}"\nnamespace_id = "${ns}"\n\n  [ratelimits.simple]\n  limit = ${r.limit}\n  period = ${r.period}`);
+  }
   return parts.join("\n") + "\n";
 }
 

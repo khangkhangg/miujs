@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { runCli } from "../src/index.ts";
+import { runCli, wranglerToml } from "../src/index.ts";
 
 const fixture = (name: string) => join(import.meta.dir, "fixtures", name);
 
@@ -201,5 +201,25 @@ describe("deploy target", () => {
     expect(r.code).toBe(0);
     expect(readFileSync(out, "utf8")).toContain('binding = "TARGETED"');
     expect(process.env.MIU_TARGET).toBeUndefined();
+  });
+});
+
+describe("wrangler.toml for assets, workflows and rate limits", () => {
+  test("renders [assets], [[workflows]] and [[ratelimits]]", () => {
+    const toml = wranglerToml(
+      {
+        name: "app",
+        cloudflare: {
+          assets: { directory: "./dist", binding: "ASSETS", notFoundHandling: "single-page-application", runWorkerFirst: true },
+          workflows: [{ binding: "FOLLOW_UP", name: "contact-follow-up", className: "FollowUpWorkflow" }],
+          ratelimits: [{ binding: "LOGIN_LIMIT", limit: 10, period: 60 }],
+        },
+      },
+      "app.ts",
+      "2026-10-15",
+    );
+    expect(toml).toContain('[assets]\ndirectory = "./dist"\nbinding = "ASSETS"\nnot_found_handling = "single-page-application"\nrun_worker_first = true');
+    expect(toml).toContain('[[workflows]]\nname = "contact-follow-up"\nbinding = "FOLLOW_UP"\nclass_name = "FollowUpWorkflow"');
+    expect(toml).toMatch(/\[\[ratelimits\]\]\nname = "LOGIN_LIMIT"\nnamespace_id = "\d+"\n\n?  \[ratelimits\.simple\]\n  limit = 10\n  period = 60/);
   });
 });
