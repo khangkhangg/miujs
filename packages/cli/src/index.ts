@@ -58,7 +58,9 @@ Usage:
   miu loadtest <ws-url> --players N --duration 10s [--action '{"type":"inc","data":{}}']
                [--rate 5] [--json]
                                   Simulate N room clients and print p50/p95/p99 patch latency
-                                  (--action also accepts a protocol frame {"t":"msg","type":...})
+                                  (--action also accepts a protocol frame {"t":"msg","type":...});
+                                  without --action: join-only, reports join/welcome latency
+                                  and join failures by code
   miu logs [--last N] [--json] [--file app.log | --worker name]
                                   Pretty-print the app's JSON-lines log: a local file (--file),
                                   or \`wrangler tail --format json\` for Cloudflare

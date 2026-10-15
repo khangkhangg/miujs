@@ -87,13 +87,13 @@ describe("renderPage", () => {
     expect(hx.headers.get("content-type")).toBe("text/html; charset=utf-8");
     expect(hx.headers.get("vary")).toBe("HX-Request");
     const full = await withCtx({}, (ctx) => renderPage(ctx, partial, layout));
-    expect(await full.text()).toBe("<html><body><p>&lt;x&gt;</p></body></html>");
+    expect(await full.text()).toBe("<!doctype html><html><body><p>&lt;x&gt;</p></body></html>");
     expect(full.headers.get("vary")).toBe("HX-Request");
   });
 
   test("boosted navigations get the full page", async () => {
     const res = await withCtx({ "hx-request": "true", "hx-boosted": "true" }, (ctx) => renderPage(ctx, html`<p>x</p>`, layout));
-    expect(await res.text()).toBe("<html><body><p>x</p></body></html>");
+    expect(await res.text()).toBe("<!doctype html><html><body><p>x</p></body></html>");
   });
 
   test("passes status and headers through", async () => {

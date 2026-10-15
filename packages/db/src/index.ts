@@ -119,11 +119,23 @@ interface BunStmt {
   readonly columnNames: string[];
   get(...p: unknown[]): any;
   run(...p: unknown[]): { changes: number; lastInsertRowid: number | bigint };
+  finalize(): void;
 }
 interface BunDb {
   prepare(sql: string): BunStmt;
   run(sql: string): unknown;
   transaction<F extends (...a: any[]) => any>(fn: F): F;
+  close(): void;
+}
+
+/** A `sqlite()` database: the D1 interface plus `close()`. */
+export interface SqliteDatabase extends Database {
+  /**
+   * Closes the file (statements are finalized after each use, so nothing keeps it open). Idempotent;
+   * using the database afterwards throws `MIU_E_DB_CLOSED`. Only needed for short-lived handles
+   * (CLIs, tests, deleting the file on Windows).
+   */
+  close(): Promise<void>;
 }
 
 function normalize(values: unknown[]): unknown[] {
@@ -228,11 +240,17 @@ export interface SqliteOptions {
  * Local SQLite via `bun:sqlite`, with the D1 interface. Bun only; on Workers use `d1()`.
  * The file is opened on first use.
  */
-export function sqlite(path: string = ":memory:", opts: SqliteOptions = {}): Database {
+export function sqlite(path: string = ":memory:", opts: SqliteOptions = {}): SqliteDatabase {
   const runtime = opts.runtime ?? detectRuntime();
   let opened: Promise<BunDb> | null = null;
-  const open = (): Promise<BunDb> =>
-    (opened ??= (async () => {
+  let closed = false;
+  const open = (): Promise<BunDb> => {
+    if (closed) {
+      return Promise.reject(
+        errors.config("MIU_E_DB_CLOSED", `sqlite("${path}") was closed`, "Call close() only when you are done with the database, or open a new one with sqlite(path)."),
+      );
+    }
+    return (opened ??= (async () => {
       if (runtime !== "bun") {
         throw errors.config(
           "MIU_E_DB_UNSUPPORTED",
@@ -246,15 +264,25 @@ export function sqlite(path: string = ":memory:", opts: SqliteOptions = {}): Dat
       handle.run("PRAGMA foreign_keys = ON");
       return handle;
     })());
+  };
+
+  // Each statement is finalized right after use: an unfinalized one keeps the file open after close().
+  const use = <T>(handle: BunDb, sql: string, fn: (stmt: BunStmt) => T): T => {
+    const stmt = handle.prepare(sql);
+    try {
+      return fn(stmt);
+    } finally {
+      stmt.finalize();
+    }
+  };
 
   const runOne = (handle: BunDb, sql: string, values: unknown[], mode: "all" | "run"): D1Result<any> => {
     const start = performance.now();
-    const stmt = handle.prepare(sql);
     if (mode === "all") {
-      const results = stmt.all(...values);
+      const results = use(handle, sql, (stmt) => stmt.all(...values));
       return { results, success: true, meta: { changes: 0, last_row_id: 0, duration: performance.now() - start } };
     }
-    const r = stmt.run(...values);
+    const r = use(handle, sql, (stmt) => stmt.run(...values));
     return { results: [], success: true, meta: { changes: r.changes, last_row_id: Number(r.lastInsertRowid), duration: performance.now() - start } };
   };
 
@@ -270,7 +298,8 @@ export function sqlite(path: string = ":memory:", opts: SqliteOptions = {}): Dat
     }
     async first<T>(column?: string): Promise<T | null> {
       const handle = await open();
-      const row = handle.prepare(this.sql).get(...normalize(this.values));
+      const values = normalize(this.values);
+      const row = use(handle, this.sql, (stmt) => stmt.get(...values));
       if (row === null || row === undefined) return null;
       return (column === undefined ? row : row[column]) as T;
     }
@@ -281,13 +310,15 @@ export function sqlite(path: string = ":memory:", opts: SqliteOptions = {}): Dat
       return runOne(await open(), this.sql, normalize(this.values), "run");
     }
     async raw<T>(options?: { columnNames?: boolean }): Promise<T[]> {
-      const stmt = (await open()).prepare(this.sql);
-      const rows = stmt.values(...normalize(this.values));
-      return (options?.columnNames ? [stmt.columnNames, ...rows] : rows) as T[];
+      const values = normalize(this.values);
+      return use(await open(), this.sql, (stmt) => {
+        const rows = stmt.values(...values);
+        return (options?.columnNames ? [stmt.columnNames, ...rows] : rows) as T[];
+      });
     }
   }
 
-  const database: Database = {
+  const database: SqliteDatabase = {
     prepare: (sql) => new SqliteStatement(sql, []),
     async batch(statements) {
       const handle = await open();
@@ -310,6 +341,18 @@ export function sqlite(path: string = ":memory:", opts: SqliteOptions = {}): Dat
       const parts = splitSql(sql);
       for (const p of parts) handle.run(p);
       return { count: parts.length, duration: performance.now() - start };
+    },
+    async close() {
+      if (closed) return;
+      closed = true;
+      const pending = opened;
+      opened = null;
+      if (!pending) return;
+      try {
+        (await pending).close();
+      } catch {
+        // Opening failed (e.g. not Bun): nothing to close.
+      }
     },
   };
   Object.defineProperty(database, INFO, { value: { adapter: "sqlite", path } });

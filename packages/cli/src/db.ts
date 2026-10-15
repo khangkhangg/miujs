@@ -111,82 +111,6 @@ export function wranglerD1(name: string, run: Runner, cwd: string, opts: { local
 }
 
 // ---------------------------------------------------------------------------------------------
-// local SQLite that can be closed (@miujs/db's sqlite() keeps its handle open for the process,
-// which locks the file on Windows while `runCli` runs inside a longer-lived process)
-
-interface BunStmt {
-  all(...p: unknown[]): any[];
-  values(...p: unknown[]): unknown[][];
-  get(...p: unknown[]): any;
-  run(...p: unknown[]): { changes: number; lastInsertRowid: number | bigint };
-  readonly columnNames: string[];
-  finalize(): void;
-}
-interface BunDb {
-  prepare(sql: string): BunStmt;
-  run(sql: string): unknown;
-  transaction<F extends (...a: any[]) => any>(fn: F): F;
-  close(): void;
-}
-
-const bind = (values: unknown[]) => values.map((v) => (typeof v === "boolean" ? (v ? 1 : 0) : v instanceof ArrayBuffer ? new Uint8Array(v) : v));
-const isQuery = (sql: string) => /^\s*(select|with|pragma|values)\b/i.test(sql) || /\breturning\b/i.test(sql);
-
-export async function localSqlite(file: string): Promise<Database & { close(): void }> {
-  const mod = "bun:sqlite";
-  const { Database: BunDatabase } = (await import(/* @vite-ignore */ mod)) as { Database: new (p: string, o?: unknown) => BunDb };
-  const handle = new BunDatabase(file, { create: true });
-  handle.run("PRAGMA foreign_keys = ON");
-  // Statements are finalized right away: an unfinalized one keeps the file open after close().
-  const use = <T>(sql: string, fn: (s: BunStmt) => T): T => {
-    const stmt = handle.prepare(sql);
-    try {
-      return fn(stmt);
-    } finally {
-      stmt.finalize();
-    }
-  };
-  const one = (sql: string, values: unknown[], mode: "all" | "run"): D1Result<any> => {
-    const start = performance.now();
-    if (mode === "all") return { results: use(sql, (s) => s.all(...bind(values))), success: true, meta: { changes: 0, last_row_id: 0, duration: performance.now() - start } };
-    const r = use(sql, (s) => s.run(...bind(values)));
-    return { results: [], success: true, meta: { changes: r.changes, last_row_id: Number(r.lastInsertRowid), duration: performance.now() - start } };
-  };
-  const statement = (sql: string, values: unknown[]): Statement & { sql: string; values: unknown[] } => ({
-    sql,
-    values,
-    bind: (...v: unknown[]) => statement(sql, v),
-    async first(column?: string): Promise<any> {
-      const row = use(sql, (s) => s.get(...bind(values)));
-      if (row === null || row === undefined) return null;
-      return column === undefined ? row : row[column];
-    },
-    all: async (): Promise<any> => one(sql, values, "all"),
-    run: async (): Promise<any> => one(sql, values, "run"),
-    async raw(o?: { columnNames?: boolean }): Promise<any[]> {
-      return use(sql, (stmt) => {
-        const rows = stmt.values(...bind(values));
-        return o?.columnNames ? [stmt.columnNames, ...rows] : rows;
-      });
-    },
-  });
-  return {
-    prepare: (sql) => statement(sql, []),
-    async batch(statements) {
-      const list = statements as unknown as { sql: string; values: unknown[] }[];
-      return handle.transaction(() => list.map((s) => one(s.sql, s.values, isQuery(s.sql) ? "all" : "run")))() as any;
-    },
-    async exec(sql) {
-      const start = performance.now();
-      const parts = splitSql(sql);
-      for (const p of parts) handle.run(p);
-      return { count: parts.length, duration: performance.now() - start };
-    },
-    close: () => handle.close(),
-  };
-}
-
-// ---------------------------------------------------------------------------------------------
 // choosing a database
 
 function localFile(io: CliIO, given: string | undefined, mustExist: boolean): string {
@@ -209,14 +133,14 @@ function localFile(io: CliIO, given: string | undefined, mustExist: boolean): st
 interface Opened {
   database: Database;
   label: string;
-  close(): void;
+  close(): void | Promise<void>;
 }
 
 async function openDatabase(io: CliIO, flags: Flags, run: Runner, mustExist: boolean): Promise<Opened> {
   const d1Name = str(flags, "d1");
   if (d1Name) return { database: wranglerD1(d1Name, run, io.cwd), label: `D1 ${d1Name} (remote)`, close() {} };
   const file = localFile(io, str(flags, "db"), mustExist);
-  const database = await localSqlite(file);
+  const database = sqlite(file);
   return { database, label: relative(io.cwd, file) || file, close: () => database.close() };
 }
 
@@ -225,7 +149,7 @@ async function withDatabase<T>(io: CliIO, flags: Flags, run: Runner, mustExist: 
   try {
     return await fn(opened);
   } finally {
-    opened.close();
+    await opened.close();
   }
 }
 
@@ -285,8 +209,12 @@ async function generate(io: CliIO, flags: Flags, run: Runner, dir: string) {
   } else {
     const scratch = sqlite(":memory:");
     const existing = existsSync(dir) ? await loadMigrations(dir) : [];
-    await migrate(scratch, existing);
-    current = await introspect(scratch);
+    try {
+      await migrate(scratch, existing);
+      current = await introspect(scratch);
+    } finally {
+      await scratch.close();
+    }
     against = `${existing.length} migration(s) in ${relative(io.cwd, dir) || "."}`;
   }
 

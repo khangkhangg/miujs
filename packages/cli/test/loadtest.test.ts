@@ -60,6 +60,25 @@ describe("miu loadtest", () => {
     expect(JSON.parse(r.out).errors).toBe(0);
   });
 
+  test("without --action it is a join-only run that reports join and welcome latency", async () => {
+    const r = await run(["loadtest", base + "j1", "--players", "3", "--duration", "100ms"], tempDir());
+    expect(r.err).toBe("");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("3/3 players joined");
+    expect(r.out).toMatch(/join\s+p50 \d+(\.\d+)? ms/);
+    expect(r.out).toMatch(/welcome\s+p50 \d+(\.\d+)? ms/);
+    const json = JSON.parse((await run(["loadtest", base + "j2", "--players", "2", "--duration", "50ms", "--json"], tempDir())).out);
+    expect(json.joinLatency.count).toBe(2);
+    expect(json.sent).toBe(0);
+  });
+
+  test("join failures are listed by reason and fail the run", async () => {
+    const r = await run(["loadtest", server.url.replace("http", "ws") + "rooms/nope/x", "--players", "2", "--duration", "50ms"], tempDir());
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("0/2 players joined");
+    expect(r.out).toMatch(/join failures:\n\s+\S+ × 2/);
+  });
+
   test("bad input is a MIU_E_CLI_ error with a fix", async () => {
     const noUrl = await run(["loadtest", "--players", "2"], tempDir());
     expect(noUrl.code).toBe(1);

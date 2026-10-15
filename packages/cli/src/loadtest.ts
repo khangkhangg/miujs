@@ -38,15 +38,13 @@ export async function cmdLoadtest(io: CliIO, positional: string[], flags: Flags)
     );
   }
   const actionText = str(flags, "action");
-  if (!actionText) {
-    throw new CliError("MIU_E_CLI_LOADTEST_USAGE", "miu loadtest needs --action", `Pass the room message each bot sends, e.g. --action '{"type":"inc","data":{"by":1}}' (a JSON array cycles through several).`);
-  }
-  const actions = parseActions(actionText);
+  // Without --action: a join-only run (players join and stay connected for --duration).
+  const actions = actionText ? parseActions(actionText) : [];
   const players = int(flags, "players", 10, 1);
   const durationMs = parseDuration(str(flags, "duration") ?? "10s", "duration");
   const ratePerSecond = int(flags, "rate", 5, 1);
 
-  if (!flags.json) io.out(`Load testing ${url}: ${players} players, ${durationMs} ms, ${ratePerSecond} actions/s each...`);
+  if (!flags.json) io.out(`Load testing ${url}: ${players} players, ${durationMs} ms, ${actions.length ? `${ratePerSecond} actions/s each` : "join only"}...`);
   const report = await loadtest({ url, players, durationMs, ratePerSecond, actions });
   const failed = report.joined < report.players || report.errors > 0;
   if (flags.json) {
@@ -54,14 +52,25 @@ export async function cmdLoadtest(io: CliIO, positional: string[], flags: Flags)
     return failed ? 1 : 0;
   }
   const l = report.latency;
-  io.out(`${report.joined}/${report.players} players joined, ${report.sent} actions sent, ${report.samples} answered by a state patch`);
-  io.out(`latency (action → next patch):`);
-  io.out(`  p50  ${ms(l.p50)}`);
-  io.out(`  p95  ${ms(l.p95)}`);
-  io.out(`  p99  ${ms(l.p99)}`);
-  io.out(`  min ${ms(l.min)}, max ${ms(l.max)}, mean ${ms(l.mean)}`);
+  io.out(`${report.joined}/${report.players} players joined${actions.length ? `, ${report.sent} actions sent, ${report.samples} answered by a state patch` : ""}`);
+  const line = (label: string, x: typeof l) => `  ${label.padEnd(8)} p50 ${ms(x.p50)}, p95 ${ms(x.p95)}, p99 ${ms(x.p99)}`;
+  io.out(`connect →`);
+  io.out(line("welcome", report.welcomeLatency));
+  io.out(line("join", report.joinLatency));
+  if (actions.length) {
+    io.out(`latency (action → next patch):`);
+    io.out(`  p50  ${ms(l.p50)}`);
+    io.out(`  p95  ${ms(l.p95)}`);
+    io.out(`  p99  ${ms(l.p99)}`);
+    io.out(`  min ${ms(l.min)}, max ${ms(l.max)}, mean ${ms(l.mean)}`);
+  }
+  const failures = Object.entries(report.joinFailures);
+  if (failures.length) {
+    io.out(`join failures:`);
+    for (const [reason, n] of failures) io.out(`  ${reason} × ${n}`);
+  }
   io.out(`errors ${report.errors}`);
   for (const [code, n] of Object.entries(report.errorCodes)) io.out(`  ${code} × ${n}`);
-  if (report.joined < report.players) io.out(`${report.players - report.joined} player(s) did not join in time: check the URL and the room's player limit.`);
+  if (report.joined < report.players) io.out(`${report.players - report.joined} player(s) did not join: check the URL, the room type and its player limit.`);
   return failed ? 1 : 0;
 }

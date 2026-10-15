@@ -23,8 +23,12 @@ export interface LoadtestOptions {
   url: string;
   players: number;
   durationMs: number;
-  /** Actions to cycle through, or a function picking one per send (`n` counts that player's sends). */
-  actions: LoadAction[] | ((ctx: { player: number; n: number }) => LoadAction);
+  /**
+   * Actions to cycle through, or a function picking one per send (`n` counts that player's sends).
+   * Leave out (or pass `[]`) for a join-only run: players join, stay connected for `durationMs`,
+   * and the report's `joinLatency` / `welcomeLatency` are the numbers to read.
+   */
+  actions?: LoadAction[] | ((ctx: { player: number; n: number }) => LoadAction);
   /** Sends per second per player. Default 5. */
   ratePerSecond?: number;
   /** Give up on players that have not joined after this long. Default 5000 ms. */
@@ -61,6 +65,15 @@ export interface LoadtestReport {
   errorCodes: Record<string, number>;
   /** Milliseconds from action to the next state patch. */
   latency: LatencySummary;
+  /** Milliseconds from opening the socket to the `welcome` frame, for players that got one. */
+  welcomeLatency: LatencySummary;
+  /** Milliseconds from opening the socket to the first full `state` (joined), for players that joined. */
+  joinLatency: LatencySummary;
+  /**
+   * Players that did not join, by reason: the error code the server sent (e.g. `MIU_E_ROOM_FULL`),
+   * else `close_<code>` for a socket closed before joining, else `timeout`.
+   */
+  joinFailures: Record<string, number>;
 }
 
 /** Nearest-rank percentile of ascending-sorted samples (0 for none). */
@@ -83,12 +96,19 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Simulate `players` clients against one room and report patch latency percentiles. */
 export async function loadtest(opts: LoadtestOptions): Promise<LoadtestReport> {
   const rate = opts.ratePerSecond ?? 5;
-  const pick = typeof opts.actions === "function" ? opts.actions : (ctx: { n: number }) => (opts.actions as LoadAction[])[ctx.n % (opts.actions as LoadAction[]).length];
+  const list = Array.isArray(opts.actions) ? opts.actions : [];
+  const joinOnly = typeof opts.actions !== "function" && list.length === 0;
+  const pick = typeof opts.actions === "function" ? opts.actions : (ctx: { n: number }) => list[ctx.n % list.length];
   const samples: number[] = [];
+  const welcomeTimes: number[] = [];
+  const joinTimes: number[] = [];
+  const joinFailures: Record<string, number> = {};
   const errorCodes: Record<string, number> = {};
   let sent = 0;
 
   const bots = Array.from({ length: opts.players }, (_, i) => {
+    const started = now();
+    const bot = { failure: null as string | null, joined: false };
     const client: RoomClient = connect(opts.url, {
       name: opts.name?.(i) ?? `bot${i + 1}`,
       reconnect: false,
@@ -101,19 +121,42 @@ export async function loadtest(opts: LoadtestOptions): Promise<LoadtestReport> {
     });
     client.on("error", (e: { code: string }) => {
       errorCodes[e.code] = (errorCodes[e.code] ?? 0) + 1;
+      if (!bot.joined && !bot.failure) bot.failure = e.code;
     });
-    return { i, client, pending, n: 0 };
+    client.on("welcome", () => welcomeTimes.push(now() - started));
+    client.on("close", (e: { code: number }) => {
+      if (!bot.joined && !bot.failure) bot.failure = `close_${e.code}`;
+    });
+    client.ready.then(
+      () => {
+        bot.joined = true;
+        joinTimes.push(now() - started);
+      },
+      () => {},
+    );
+    return { i, client, pending, n: 0, bot };
   });
 
   const timeout = opts.joinTimeoutMs ?? 5_000;
   const joined = await Promise.all(bots.map((b) => Promise.race([b.client.ready.then(() => true, () => false), sleep(timeout).then(() => false)])));
   const live = bots.filter((_, k) => joined[k]);
+  // Give close/error events for failed joins a moment to arrive, then count reasons.
+  if (live.length < bots.length) await sleep(10);
+  for (const [k, b] of bots.entries()) {
+    if (joined[k]) continue;
+    const reason = b.bot.failure ?? "timeout";
+    joinFailures[reason] = (joinFailures[reason] ?? 0) + 1;
+  }
 
   const start = now();
   const interval = 1000 / rate;
   await Promise.all(
     live.map(async (b) => {
       // Spread the bots over one interval so they do not all fire in lockstep.
+      if (joinOnly) {
+        await sleep(Math.max(0, opts.durationMs - (now() - start)));
+        return;
+      }
       await sleep((interval * b.i) / Math.max(1, live.length));
       while (now() - start < opts.durationMs) {
         const a = pick({ player: b.i, n: b.n++ });
@@ -129,5 +172,5 @@ export async function loadtest(opts: LoadtestOptions): Promise<LoadtestReport> {
   for (const b of bots) b.client.close();
 
   const errors = Object.values(errorCodes).reduce((a, b) => a + b, 0);
-  return { players: opts.players, joined: live.length, durationMs: opts.durationMs, sent, samples: samples.length, errors, errorCodes, latency: summarize(samples) };
+  return { players: opts.players, joined: live.length, durationMs: opts.durationMs, sent, samples: samples.length, errors, errorCodes, latency: summarize(samples), welcomeLatency: summarize(welcomeTimes), joinLatency: summarize(joinTimes), joinFailures };
 }

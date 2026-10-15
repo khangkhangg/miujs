@@ -44,6 +44,7 @@ export const tests = {
   "home renders the page with htmx": async (call: CallFn) => {
     const res = (await call(home)).expectStatus(200);
     if (!res.headers.get("content-type")?.includes("text/html")) throw new Error("expected HTML");
+    if (!res.text.startsWith("<!doctype html><html")) throw new Error("expected a full document with a doctype");
     if (!res.text.includes("htmx.org") || !res.text.includes('hx-post="/clicks"')) throw new Error("expected the htmx counter");
   },
   "clicking returns just the counter fragment": async (call: CallFn) => {

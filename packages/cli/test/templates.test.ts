@@ -146,6 +146,10 @@ describe("generated apps end to end", () => {
     }
     expect(runs.status).toBe(200);
     expect(JSON.stringify(runs.json)).toContain("completed");
+    // The welcome email really went out through the mail plugin.
+    const runId = JSON.stringify(runs.json).match(/"id":"([0-9a-f-]{36})"/)![1];
+    const one = await call("GET", `/workflows/runs/${runId}`, undefined, { "x-org-id": orgId });
+    expect(JSON.stringify(one.json)).toContain('"sent":true');
     // Another org's id is refused: tenant isolation comes from access, not the request body.
     expect((await call("GET", "/projects", undefined, { "x-org-id": "someone-else" })).status).toBe(403);
   }, 30_000);

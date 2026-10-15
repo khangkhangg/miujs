@@ -72,6 +72,11 @@ export function raw(value: string): HtmlString {
 export interface RenderOptions {
   status?: number;
   headers?: HeadersInit;
+  /**
+   * Prepend `<!doctype html>`. Default: only when the content starts with `<html` (a full
+   * document) and has no doctype yet. `false` never adds one; `true` always does (unless present).
+   */
+  doctype?: boolean;
 }
 
 export const HTML_TYPE = "text/html; charset=utf-8";
@@ -80,5 +85,10 @@ export const HTML_TYPE = "text/html; charset=utf-8";
 export function render(body: HtmlString, opts: RenderOptions = {}): Response {
   const headers = new Headers(opts.headers);
   headers.set("content-type", HTML_TYPE);
-  return new Response(appendValue("", body), { status: opts.status ?? 200, headers });
+  let text = appendValue("", body);
+  const head = text.trimStart();
+  const hasDoctype = /^<!doctype\s/i.test(head);
+  const wantDoctype = opts.doctype ?? /^<html[\s>]/i.test(head);
+  if (wantDoctype && !hasDoctype) text = "<!doctype html>" + text;
+  return new Response(text, { status: opts.status ?? 200, headers });
 }

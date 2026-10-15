@@ -21,7 +21,7 @@ import { access, defineRoles } from "@miujs/access";
 import { audit, dbAuditStore } from "@miujs/audit";
 import { auth, dbUserStore } from "@miujs/auth";
 import { db } from "@miujs/db";
-import { consoleTransport, createMailer, mail, resendTransport, type MailMessage } from "@miujs/mail";
+import { consoleTransport, mail, resendTransport } from "@miujs/mail";
 import { session } from "@miujs/session";
 import { dbRunStore, workflows } from "@miujs/workflows";
 import { database, migrations } from "./database.ts";
@@ -40,8 +40,6 @@ export const roles = defineRoles({
 
 const FROM = "__APP_NAME__ <noreply@example.com>"; // TODO: a verified sender domain
 const transport = production ? resendTransport() : consoleTransport(); // RESEND_API_KEY in production
-// Workflows send through the same transport (their step mailer takes a plain message object).
-const mailer = createMailer({ from: FROM, transport });
 
 const health = {
   health: route.get("/health", { summary: "Check that the app is up", handler: () => ({ ok: true }) }),
@@ -62,7 +60,8 @@ const app = miu({
     access({ roles }),
     mail({ from: FROM, transport }),
     audit({ store: dbAuditStore(database), auth: true }),
-    workflows({ workflows: allWorkflows, store: dbRunStore(database), mailer: { send: (msg) => mailer.send(msg as unknown as MailMessage) } }),
+    // Workflow steps get `mailer` from mail()'s "mail" service: no wiring needed.
+    workflows({ workflows: allWorkflows, store: dbRunStore(database) }),
   ],
   mcp: true,
 });
