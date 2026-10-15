@@ -1,5 +1,5 @@
 import type { Middleware, Route } from "../core/app.ts";
-import type { AppLike, Context } from "../core/context.ts";
+import { setClientIp, type AppLike, type Context } from "../core/context.ts";
 import { toJSONSchema, type JSONSchema } from "../core/schema.ts";
 import { objectParts, operationId, pathParamNames } from "./shared.ts";
 
@@ -254,16 +254,17 @@ async function callTool(c: Context<any, any>, b: ToolBinding, args: Record<strin
     if (v) headers.set(h, v);
   }
   if (body !== undefined && sendBody) headers.set("content-type", "application/json");
+  // Trace tool calls under the agent's /mcp request (requestId() reuses an incoming id).
+  const rid = (c.get("requestId") as string | undefined) ?? c.req.headers.get("x-request-id");
+  if (rid) headers.set("x-request-id", rid);
 
-  const res = await c.app.fetch(
-    new Request(url, {
-      method: route.method,
-      headers,
-      body: body !== undefined && sendBody ? JSON.stringify(body) : undefined,
-    }),
-    c.env,
-    c.executionCtx,
-  );
+  const inner = new Request(url, {
+    method: route.method,
+    headers,
+    body: body !== undefined && sendBody ? JSON.stringify(body) : undefined,
+  });
+  setClientIp(inner, c.ip); // rate limits and logs see the agent, not "unknown"
+  const res = await c.app.fetch(inner, c.env, c.executionCtx);
 
   const text = res.status === 204 ? "" : await res.text();
   let structured: unknown;

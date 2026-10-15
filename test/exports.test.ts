@@ -11,7 +11,7 @@ test("root entry exports the portable batteries", () => {
     "createQueue", "memoryQueueDriver", "llms", "generateLlmsTxt",
     "timing", "getTiming", "devErrors", "inspector", "devLogger", "isDev", "isProduction",
     "mcpAuth", "redisStore", "redisQueueDriver", "createRemoteJwks",
-    "memoryRepository", "memoryBlobStore",
+    "memoryRepository", "memoryBlobStore", "csrf",
   ]) {
     expect(typeof (root as Record<string, unknown>)[name]).toBe("function");
   }

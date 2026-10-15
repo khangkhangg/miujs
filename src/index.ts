@@ -18,6 +18,7 @@ export type { MemoryStoreOptions } from "./batteries/store/memory.ts";
 export * from "./batteries/session.ts";
 export * from "./batteries/auth/index.ts";
 export * from "./batteries/http.ts";
+export { csrf, type CsrfOptions } from "./batteries/csrf.ts";
 export type * from "./batteries/queue/types.ts";
 export * from "./batteries/queue/queue.ts";
 export { memoryQueueDriver } from "./batteries/queue/memory.ts";

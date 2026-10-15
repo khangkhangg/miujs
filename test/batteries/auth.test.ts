@@ -272,3 +272,22 @@ describe("auth middleware", () => {
     expect(String(error)).toMatch(/sessions\(\)/);
   });
 });
+
+describe("API key management by id", () => {
+  test("listApiKeys returns a user's keys without secrets; revokeApiKeyById revokes one", async () => {
+    const { createApiKey, listApiKeys, revokeApiKeyById, verifyApiKey } = await import("../../src/batteries/auth/index.ts");
+    const { memoryStore } = await import("../../src/batteries/store/index.ts");
+    const store = memoryStore();
+    const a = await createApiKey(store, { userId: "u1", name: "laptop" });
+    const b = await createApiKey(store, { userId: "u1", name: "ci", scopes: ["tours:write"] });
+    await createApiKey(store, { userId: "u2", name: "other" });
+    const listed = await listApiKeys(store, "u1");
+    expect(listed.map((k) => k.name).sort()).toEqual(["ci", "laptop"]);
+    expect(JSON.stringify(listed)).not.toContain("miu_");
+    expect(await revokeApiKeyById(store, b.id)).toBe(true);
+    expect(await revokeApiKeyById(store, b.id)).toBe(false);
+    expect(await verifyApiKey(store, b.key)).toBeUndefined();
+    expect(await verifyApiKey(store, a.key)).toBeDefined();
+    expect((await listApiKeys(store, "u1")).map((k) => k.id)).toEqual([a.id]);
+  });
+});

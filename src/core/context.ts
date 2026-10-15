@@ -1,3 +1,14 @@
+/** Client IPs for in-process sub-requests (e.g. MCP tool calls), keyed by Request — never by header. */
+const innerClientIps = new WeakMap<Request, string>();
+
+/**
+ * Attribute an in-process sub-request to the original client, so `c.ip` (rate limits, logs) stays the
+ * caller's address. Framework-internal: only code that builds the Request can call it.
+ */
+export function setClientIp(req: Request, ip: string | undefined): void {
+  if (ip) innerClientIps.set(req, ip);
+}
+
 export interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException?(): void;
@@ -69,7 +80,7 @@ export class Context<E extends Env = Env, I extends Input = Input> {
    * from client-controlled headers.
    */
   get ip(): string | undefined {
-    return this.peer?.requestIP?.(this.req)?.address || undefined;
+    return this.peer?.requestIP?.(this.req)?.address || innerClientIps.get(this.req) || undefined;
   }
 
   constructor(req: Request, env?: Bindings<E>, executionCtx?: ExecutionContext) {

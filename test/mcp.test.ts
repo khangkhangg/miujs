@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Miu, t, HttpError } from "../src/index.ts";
+import { Miu, t, HttpError, requestId } from "../src/index.ts";
 import { mcp, listTools } from "../src/ai/mcp.ts";
 
 const makeApp = () =>
@@ -154,5 +154,30 @@ describe("MCP CSRF protection", () => {
       body: call,
     });
     expect(((await same.json()) as any).result.structuredContent).toEqual({ by: "victim" });
+  });
+});
+
+describe("MCP tool calls keep the caller's identity for tracing and limits", () => {
+  test("inner tool requests carry the outer request id and the agent's IP", async () => {
+    const seen: { id?: string; ip?: string }[] = [];
+    const app = new Miu({ logger: false })
+      .use(requestId())
+      .post("/thing", (c) => {
+        seen.push({ id: c.get("requestId") as string, ip: c.ip });
+        return { ok: true };
+      })
+      .use(mcp());
+    const server = Bun.serve(app.serveOptions({ port: 0, hostname: "127.0.0.1" }));
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-request-id": "outer-123", authorization: "Bearer t" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "post_thing", arguments: {} } }),
+      });
+      expect(((await res.json()) as any).result.isError).toBe(false);
+      expect(seen).toEqual([{ id: "outer-123", ip: "127.0.0.1" }]);
+    } finally {
+      server.stop(true);
+    }
   });
 });

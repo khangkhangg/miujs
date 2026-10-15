@@ -426,7 +426,7 @@ export function tourKit(opts: TourKitOptions): Miu {
   app.post(p("/api/tours/:id/unpublish"), {
     operationId: "tour_unpublish", tags: TAGS, use: creator, params: TOUR_ID,
     summary: "Unpublish a tour",
-    description: "Return a tour to draft: its public page, bundle and panoramas stop being served to visitors.",
+    description: "Return a tour to draft: its public page and bundle stop being served, and panorama requests get 404. Panoramas are cached publicly (immutable) while published, so copies already in browser or CDN caches may persist.",
   }, async (c) => tours.update((await tourFor(c, c.params.id)).id, { status: "draft" }));
 
   // ---------- public API ----------
