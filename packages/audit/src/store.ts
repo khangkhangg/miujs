@@ -74,6 +74,11 @@ export interface AuditStore {
    * `key`, else `env.AUDIT_HMAC_KEY`; unkeyed (plain SHA-256) when none is set.
    */
   append(input: AuditInput, env?: Env, opts?: AppendOptions): Promise<AuditRecord>;
+  /**
+   * Appends several rows as consecutive links of the chain. Every entry is checked first; the
+   * built-in stores write them in one transaction, so a failure writes none.
+   */
+  appendMany?(inputs: AuditInput[], env?: Env, opts?: AppendOptions): Promise<AuditRecord[]>;
   query(q: AuditQuery, env?: Env): Promise<AuditPage>;
   /** Rows with `seq > afterSeq`, oldest first (for verification). */
   scan(afterSeq: number, limit: number, env?: Env): Promise<AuditRecord[]>;
@@ -103,6 +108,8 @@ interface Backend {
   head(env: Env): Promise<AuditRecord | null>;
   /** False when `rec.seq` is taken (another writer won); the caller retries. */
   insert(rec: AuditRecord, env: Env): Promise<boolean>;
+  /** All rows or none (one transaction). False when a seq is taken; the caller retries. */
+  insertMany?(recs: AuditRecord[], env: Env): Promise<boolean>;
   query(q: NormalizedQuery, env: Env): Promise<AuditRecord[]>;
   scan(afterSeq: number, limit: number, env: Env): Promise<AuditRecord[]>;
   firstSeqSince(ts: number, env: Env): Promise<number | null>;
@@ -230,6 +237,14 @@ function normalizeQuery(q: AuditQuery): NormalizedQuery {
   };
 }
 
+const appendConflict = () =>
+  errors.custom({
+    code: "MIU_E_AUDIT_APPEND_CONFLICT",
+    status: 503,
+    message: "Could not append to the audit log: too many concurrent writers",
+    fix: "Retry the request. If this persists, check for a stuck writer or reduce write concurrency.",
+  });
+
 function chained(backend: Backend, storeKey?: AuditKeys): AuditStore {
   if (storeKey !== undefined) checkKeys(storeKey);
   let tail: Promise<unknown> = Promise.resolve();
@@ -246,15 +261,48 @@ function chained(backend: Backend, storeKey?: AuditKeys): AuditStore {
       if (signer) rec.keyId = signer.id;
       if (await backend.insert(rec, env)) return structuredClone(rec);
     }
-    throw errors.custom({
-      code: "MIU_E_AUDIT_APPEND_CONFLICT",
-      status: 503,
-      message: "Could not append to the audit log: too many concurrent writers",
-      fix: "Retry the request. If this persists, check for a stuck writer or reduce write concurrency.",
-    });
+    throw appendConflict();
+  };
+  const appendManyOnce = async (inputs: AuditInput[], env: Env, opts: AppendOptions): Promise<AuditRecord[]> => {
+    const bases = inputs.map(normalizeInput);
+    if (bases.length === 0) return [];
+    const keys = opts.key ?? storeKey ?? envKeys(env);
+    const signer = keys ? (await resolveKeys(keys))[0] : undefined;
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const head = await backend.head(env);
+      if (head?.keyId && !signer) throw keyMissing();
+      let seq = head?.seq ?? 0;
+      let prevHash = head?.hash ?? GENESIS_HASH;
+      const recs: AuditRecord[] = [];
+      for (const base of bases) {
+        const body: Body = { seq: ++seq, ...base };
+        const rec: AuditRecord = { ...body, prevHash, hash: await hashRow(prevHash, body, signer) };
+        if (signer) rec.keyId = signer.id;
+        recs.push(rec);
+        prevHash = rec.hash;
+      }
+      if (backend.insertMany) {
+        if (await backend.insertMany(recs, env)) return recs.map((r) => structuredClone(r));
+        continue;
+      }
+      // Backends without batches: row by row (not atomic); a lost race continues from the new head.
+      const done: AuditRecord[] = [];
+      for (const rec of recs) {
+        if (!(await backend.insert(rec, env))) break;
+        done.push(structuredClone(rec));
+      }
+      if (done.length === recs.length) return done;
+      if (done.length) return [...done, ...(await appendManyOnce(inputs.slice(done.length), env, opts))];
+    }
+    throw appendConflict();
   };
   const store: AuditStore = {
     kind: backend.kind,
+    appendMany(inputs, env = {}, opts = {}) {
+      const p = tail.then(() => appendManyOnce(inputs, env, opts));
+      tail = p.catch(() => {});
+      return p;
+    },
     append(input, env = {}, opts = {}) {
       // Serialize appends in this isolate; across isolates the unique seq makes losers retry.
       const p = tail.then(() => appendOnce(input, env, opts));
@@ -307,6 +355,11 @@ export function memoryAuditStore(opts: AuditStoreOptions = {}): AuditStore {
     async insert(rec) {
       if (rows.length && rows[rows.length - 1].seq >= rec.seq) return false;
       rows.push(clone(rec));
+      return true;
+    },
+    async insertMany(recs) {
+      if (rows.length && rows[rows.length - 1].seq >= recs[0].seq) return false;
+      for (const r of recs) rows.push(clone(r));
       return true;
     },
     async query(q) {
@@ -417,6 +470,26 @@ export function dbAuditStore(source: DatabaseSource, opts: DbAuditStoreOptions =
     return database;
   };
   const cols = "seq, ts, action, resource, resource_id, actor, org_id, ip, user_agent, request_id, changes, metadata, prev_hash, hash, key_id";
+  const insertStmt = (database: Database, rec: AuditRecord) =>
+    database
+      .prepare(`INSERT INTO ${table} (${cols}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(
+        rec.seq,
+        rec.ts,
+        rec.action,
+        rec.resource,
+        rec.resourceId,
+        rec.actor,
+        rec.org,
+        rec.ip,
+        rec.userAgent,
+        rec.requestId,
+        rec.changes === null ? null : canonicalJson(rec.changes),
+        rec.metadata === null ? null : canonicalJson(rec.metadata),
+        rec.prevHash,
+        rec.hash,
+        rec.keyId ?? null,
+      );
 
   return chained({
     kind: "db",
@@ -427,26 +500,18 @@ export function dbAuditStore(source: DatabaseSource, opts: DbAuditStoreOptions =
     async insert(rec, env) {
       const database = await get(env);
       try {
-        await database
-          .prepare(`INSERT INTO ${table} (${cols}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .bind(
-            rec.seq,
-            rec.ts,
-            rec.action,
-            rec.resource,
-            rec.resourceId,
-            rec.actor,
-            rec.org,
-            rec.ip,
-            rec.userAgent,
-            rec.requestId,
-            rec.changes === null ? null : canonicalJson(rec.changes),
-            rec.metadata === null ? null : canonicalJson(rec.metadata),
-            rec.prevHash,
-            rec.hash,
-            rec.keyId ?? null,
-          )
-          .run();
+        await insertStmt(database, rec).run();
+        return true;
+      } catch (err) {
+        if (isConflict(err)) return false;
+        throw err;
+      }
+    },
+    async insertMany(recs, env) {
+      const database = await get(env);
+      try {
+        // batch() is one transaction on bun:sqlite and D1: every row or none.
+        await database.batch(recs.map((rec) => insertStmt(database, rec)));
         return true;
       } catch (err) {
         if (isConflict(err)) return false;

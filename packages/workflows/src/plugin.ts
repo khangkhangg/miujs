@@ -1,4 +1,4 @@
-import { createLogger, definePlugin, processEnv, t, targetRuntime, type App, type CloudflareNeeds, type Context, type Env, type Logger } from "miujs";
+import { createLogger, definePlugin, errors, processEnv, t, targetRuntime, type App, type CloudflareNeeds, type Context, type Env, type Logger } from "miujs";
 import { CF_MAX_DELAY, cloudflareQueue, defineJob, memoryQueue, queue, realClock, schedule, type Clock, type QueueAdapter } from "@miujs/queue";
 import { describeTrigger, isWorkflow, type Mailer, type WorkflowDef } from "./define.ts";
 import { Engine, type EmitResult, type RunView } from "./engine.ts";
@@ -17,6 +17,10 @@ declare module "miujs" {
   interface Context {
     /** Workflow events from `@miujs/workflows`. */
     events: WorkflowEvents;
+  }
+  interface Services {
+    /** Durable workflows from `@miujs/workflows`: start, emit, getRun, listRuns, cancel, retry, decide. */
+    workflows: WorkflowsService;
   }
 }
 
@@ -104,6 +108,12 @@ export function workflows(opts: WorkflowsOptions) {
     log: () => log,
     fetch: () => opts.fetch ?? globalThis.fetch,
     mailer: () => opts.mailer ?? appMailer ?? (appRef?.hasService("mail") ? appRef.service<Mailer>("mail") : undefined),
+    service: (name) => {
+      if (!appRef) {
+        throw errors.config("MIU_E_SERVICE_MISSING", `No app to look up the "${name}" service in`, "Add workflows() to miu({ plugins }) and start runs after `await app.ready()`.");
+      }
+      return appRef.service(name);
+    },
   });
 
   const api = {
@@ -149,6 +159,7 @@ export function workflows(opts: WorkflowsOptions) {
     async setup(app: App) {
       log = app.log.child({ plugin: "workflows" });
       appRef = app;
+      if (!app.hasService("workflows")) app.provide("workflows", api);
       await q.setup(app);
     },
     onRequest(ctx: Context) {
@@ -187,3 +198,6 @@ export function workflows(opts: WorkflowsOptions) {
 }
 
 export type WorkflowsPlugin = ReturnType<typeof workflows>;
+
+/** `app.service("workflows")`: start runs and emit events from code outside requests. */
+export type WorkflowsService = Pick<WorkflowsPlugin, "start" | "emit" | "getRun" | "listRuns" | "cancel" | "retry" | "decide">;

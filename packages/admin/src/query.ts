@@ -5,7 +5,7 @@ import { quoteIdent } from "@miujs/db";
 import { validate } from "miujs";
 import { adminErrors } from "./errors.ts";
 import { isValidDate, operatorsFor, toDb, valueSchema, type FieldDef, type FieldType } from "./fields.ts";
-import { FILTER_OPS, sortableKeys, type Filter, type Resource } from "./resource.ts";
+import { FILTER_OPS, QUERY_KEYS, sortableKeys, type Filter, type Resource } from "./resource.ts";
 import { ftsTable, searchColumns } from "./tables.ts";
 
 export interface Clause {
@@ -164,10 +164,11 @@ export function filterClauses(r: Resource, filter: Filter, now: number = Date.no
   return out;
 }
 
-/** Query-string filters: `?stage=lead` (eq) and `?value[gte]=1000`. */
-export function queryFilter(r: Resource, params: URLSearchParams): Filter {
+/** Query-string filters from the validated query: `?stage=lead` (eq) and `?value[gte]=1000`. */
+export function queryFilter(r: Resource, query: Record<string, unknown>): Filter {
   const out: Record<string, Record<string, unknown>> = Object.create(null);
-  for (const [k, v] of params) {
+  for (const [k, v] of Object.entries(query)) {
+    if (v === undefined || QUERY_KEYS.includes(k)) continue;
     const m = /^([A-Za-z][A-Za-z0-9]*)\[([A-Za-z]+)\]$/.exec(k);
     if (m) {
       if (!columnOf(r, m[1])) throw adminErrors.filterInvalid(`unknown field "${m[1]}"`, { field: m[1] });

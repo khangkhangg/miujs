@@ -10,6 +10,8 @@ export interface ActionContext {
   log: Logger;
   fetch: typeof fetch;
   mailer?: Mailer;
+  /** A service another plugin provided (`app.provide`). Throws MIU_E_SERVICE_MISSING. */
+  service<T = unknown>(name: string): T;
   run: { id: string; workflow: string };
   /** The workflow input (trigger payload). */
   input: unknown;

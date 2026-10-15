@@ -28,7 +28,7 @@ export {
   type WorkflowEvent,
 } from "./define.ts";
 export { APPROVAL_EVENT, type EmitResult, type RunView, type StepView } from "./engine.ts";
-export { workflows, type WorkflowEvents, type WorkflowsOptions, type WorkflowsPlugin } from "./plugin.ts";
+export { workflows, type WorkflowEvents, type WorkflowsOptions, type WorkflowsPlugin, type WorkflowsService } from "./plugin.ts";
 export { BUILTIN_ACTIONS, defineAction, describeActions, httpAction, logAction, sendEmailAction, type ActionContext, type ActionDef } from "./actions.ts";
 export { fromJson, validateSpec, type JsonOptions, type SpecStep, type SpecTrigger, type WorkflowSpec } from "./json.ts";
 export { cfEventType, createCloudflareWorkflow, WorkflowEntrypointShape, type CfStepConfig, type CfWorkflowEvent, type CfWorkflowStep, type CloudflareWorkflowOptions } from "./cloudflare.ts";

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { t } from "miujs";
+import { memoryAuditStore, verifyChain, type AuditStore } from "@miujs/audit";
 import { parseCsv } from "../src/csv.ts";
 import { field, resource, type HookArgs } from "../src/index.ts";
 import { setup, type Harness } from "./helpers.ts";
@@ -232,6 +233,62 @@ describe("import", () => {
     const big = await h2.req("POST", "/api/contacts/import", { body: { csv: "name\na\nb\nc\n" } });
     expect([big.status, big.body.error.code]).toEqual([413, "MIU_E_ADMIN_IMPORT_TOO_LARGE"]);
     expect((await h.req("POST", "/api/contacts/import", { user: "bob", body: { csv: "name\na\n" } })).status).toBe(403);
+  });
+});
+
+describe("audit batching and system actors", () => {
+  /** The real memory store, counting how entries arrive. */
+  function countingStore() {
+    const real = memoryAuditStore();
+    const calls = { append: 0, appendMany: [] as number[] };
+    const store: AuditStore = {
+      ...real,
+      append: (input, env, o) => {
+        calls.append++;
+        return real.append(input, env, o);
+      },
+      appendMany: (inputs, env, o) => {
+        calls.appendMany.push(inputs.length);
+        return real.appendMany!(inputs, env, o);
+      },
+    };
+    return { store, calls };
+  }
+
+  test("bulk, import and actions write their audit entries with one logMany each", async () => {
+    const { store, calls } = countingStore();
+    const h2 = await setup([companies, contacts], { auditStore: store });
+    const ids: string[] = [];
+    for (const n of ["A", "B", "C"]) ids.push((await h2.req("POST", "/api/contacts", { body: { name: n } })).body.id);
+    calls.appendMany.length = 0;
+    calls.append = 0;
+    expect((await h2.req("POST", "/api/contacts/bulk", { body: { action: "update", ids, changes: { stage: "customer" } } })).status).toBe(200);
+    expect((await h2.req("POST", "/api/contacts/import", { body: { csv: "name\nX\nY\n" } })).status).toBe(200);
+    expect((await h2.req("POST", "/api/contacts/actions/tag", { body: { ids: ids.slice(0, 2), input: { tag: "t" } } })).status).toBe(200);
+    // bulk: 3 updates; import: 2 creates; action: its two inner updates (one each), then 2 action rows.
+    expect(calls.appendMany).toEqual([3, 2, 1, 1, 2]);
+    expect(calls.append).toBe(0);
+    const page = await store.query({ resource: "contacts", limit: 100 });
+    expect(page.items.filter((e) => e.action === "update" && e.actor === "ann")).toHaveLength(5);
+    expect((await verifyChain(store)).ok).toBe(true);
+  });
+
+  test("writes outside requests are audited as the given user, or as system", async () => {
+    const data = h.adminPlugin.data({ orgId: h.orgA, userId: "job-1" });
+    const rec = await data("contacts").create({ name: "Job made" });
+    await h.adminPlugin.data({ orgId: h.orgA })("contacts").update(rec.id, { stage: "customer" });
+    const page = await h.auditStore.query({ resource: "contacts", resourceId: rec.id });
+    expect(page.items.map((e) => [e.action, e.actor, e.org, e.requestId])).toEqual([
+      ["update", "system", h.orgA, null],
+      ["create", "job-1", h.orgA, null],
+    ]);
+  });
+
+  test("events outside requests go through app.service('workflows'), whatever the plugin is named", async () => {
+    const h2 = await setup([companies, contacts], { workflowsName: "automation" });
+    const rec = await h2.adminPlugin.data({ orgId: h2.orgA })("contacts").create({ name: "Evented" });
+    await h2.settle();
+    expect(h2.events.find((e) => e.event === "contacts.created" && e.data.id === rec.id)).toBeDefined();
   });
 });
 

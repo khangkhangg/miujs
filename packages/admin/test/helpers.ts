@@ -66,6 +66,9 @@ export interface SetupOptions {
   mcp?: boolean;
   /** Use this admin plugin (e.g. crm()) instead of admin({ resources }). It gets ctx.db from db(). */
   crm?: AdminPlugin;
+  auditStore?: AuditStore;
+  /** Register the workflows plugin under another name (it must still be found through app.service). */
+  workflowsName?: string;
 }
 
 export interface Harness {
@@ -88,7 +91,7 @@ export interface Harness {
  */
 export async function setup(resources: Resource[], o: SetupOptions = {}): Promise<Harness> {
   const db = sqlite();
-  const auditStore = memoryAuditStore();
+  const auditStore = o.auditStore ?? memoryAuditStore();
   const clock = testClock();
   const events: { event: string; data: any }[] = [];
   const recorder = defineWorkflow("recorder", {
@@ -117,7 +120,7 @@ export async function setup(resources: Resource[], o: SetupOptions = {}): Promis
       }),
       access({ roles: ROLES, policies: o.policies, database: db, routes: false }),
       audit({ store: auditStore, routes: false }),
-      wf,
+      o.workflowsName ? { ...wf, name: o.workflowsName } : wf,
       ...(o.plugins ?? []),
       adminPlugin,
     ],

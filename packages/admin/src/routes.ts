@@ -138,7 +138,7 @@ function resolveList(r: Resource, ctx: Context, q: ListQuery) {
     }
     if (typeof json !== "object" || json === null || Array.isArray(json)) throw adminErrors.filterInvalid("filter must be a JSON object");
   }
-  const filter = mergeFilters(view?.filter, json, queryFilter(r, ctx.url.searchParams));
+  const filter = mergeFilters(view?.filter, json, queryFilter(r, q as Record<string, unknown>));
   const fields = parseList(q.fields, "fields") ?? view?.fields;
   checkFields(r, fields);
   return { filter, sort: q.sort ?? view?.sort, fields, q: q.q };
@@ -162,6 +162,8 @@ export function resourceRoutes(r: Resource, env: RouteEnv): RouteDef[] {
   for (const f of Object.values(r.fields)) {
     if (operatorsFor(f).includes("eq")) fieldQuery[f.name] = t.optional(t.string({ maxLength: 1000, description: `Only records whose ${f.name} equals this` }));
   }
+  // Operator filters arrive as extra query keys: ?value[gte]=1000, ?stage[in]=a,b.
+  const filterKey = t.string({ maxLength: 1000, description: "Filter as field[op]=value, e.g. value[gte]=1000; ops eq ne gt gte lt lte in contains isNull" });
   const listQuery = t.object({
     filter: t.optional(t.string({ maxLength: 20_000, description: 'JSON: {"field": {"op": value}}; ops eq ne gt gte lt lte in contains isNull' })),
     sort: t.optional(t.string({ maxLength: 100, description: `One of ${sortableKeys(r).join(", ")}; - prefix for descending` })),
@@ -172,9 +174,9 @@ export function resourceRoutes(r: Resource, env: RouteEnv): RouteDef[] {
     view: Object.keys(r.views).length ? t.optional(t.string({ maxLength: 100, description: `Saved view: ${Object.keys(r.views).join(", ")}` })) : t.optional(t.string({ maxLength: 100 })),
     include: t.optional(t.string({ maxLength: 500, description: "Comma-separated relation fields to embed" })),
     ...fieldQuery,
-  });
+  }, { rest: filterKey });
   const { cursor: _cursor, limit: _limit, ...exportShape } = listQuery.shape;
-  const exportQuery = t.object(exportShape);
+  const exportQuery = t.object(exportShape, { rest: filterKey });
   const idParams = t.object({ id: t.string({ minLength: 1, maxLength: 200 }) });
   const one = t.object({ fields: t.optional(t.string({ maxLength: 2000 })), include: t.optional(t.string({ maxLength: 500 })) });
   const withPerm = (p: string | undefined) => (p ? { permission: p } : {});
@@ -268,6 +270,7 @@ export function resourceRoutes(r: Resource, env: RouteEnv): RouteDef[] {
     }),
     route.post(`${base}/bulk`, {
       name: `${r.name}_bulk`,
+      annotations: { destructiveHint: true },
       summary: `Update or delete many ${r.label.toLowerCase()} at once (all or nothing)`,
       description: `action "update" applies \`changes\` to every id; action "delete" deletes them. Up to 500 ids. If any id is missing, nothing is written.`,
       tags,
@@ -301,6 +304,7 @@ export function resourceRoutes(r: Resource, env: RouteEnv): RouteDef[] {
     }),
     route.get(`${base}/export.csv`, {
       name: `${r.name}_export`,
+      responseType: "text/csv",
       summary: `Export ${r.label.toLowerCase()} as CSV (same filters as list)`,
       description: `Streams text/csv with a header row. Accepts filter, sort, q, view and fields like the list route. Money is in major units (12.50). Cells starting with = + - @ are prefixed with ' so spreadsheets do not run them.`,
       tags,
@@ -353,6 +357,7 @@ export function resourceRoutes(r: Resource, env: RouteEnv): RouteDef[] {
     }),
     route.post(`${base}/import`, {
       name: `${r.name}_import`,
+      annotations: { destructiveHint: true },
       summary: `Import ${r.label.toLowerCase()} from CSV (validate every row; dryRun to preview)`,
       description: `Send { csv, mapping?, dryRun? } as JSON, or a multipart upload with a \`file\`. The header row is matched to fields by name or label; \`mapping\` maps other headers ({"Full name": "name"}, null to skip). dryRun returns per-row errors without writing; otherwise all rows are inserted in one batch, or none if any row is invalid. Relations accept an id or the target's title. Max ${env.importMaxRows} rows.\nFields:\n${describeFields(r)}`,
       tags,
@@ -428,7 +433,7 @@ export function resourceRoutes(r: Resource, env: RouteEnv): RouteDef[] {
           const records = ids.map((id) => byId.get(id)!);
           if (action.permission && authorize) for (const rec of records) authorize(action.permission, rec);
           const result = await action.run({ records, input, ctx: c, data: repo.data() });
-          for (const rec of records) await repo.audit(`action.${action.name}`, rec.id, undefined, undefined, input === undefined ? undefined : { input });
+          await repo.auditMany(records.map((rec) => ({ action: `action.${action.name}`, resource: r.name, resourceId: rec.id, ...(input === undefined ? {} : { metadata: { input } }) })));
           return { action: action.name, count: records.length, result: result ?? null };
         },
       }),

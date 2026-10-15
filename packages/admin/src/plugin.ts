@@ -5,7 +5,9 @@ import { definePlugin, processEnv, type App, type CloudflareNeeds, type Context,
 import { describeDatabase, migrateOnce, resolveDatabase, type Database, type DatabaseSource } from "@miujs/db";
 import { adminErrors } from "./errors.ts";
 import { adminSchema, type AdminSchema, type SchemaOptions } from "./meta.ts";
-import { Repo, type Runtime, type Scope } from "./repo.ts";
+import type { AuditService } from "@miujs/audit";
+import type { WorkflowsService } from "@miujs/workflows";
+import { Repo, type AuditEntryIn, type Runtime, type Scope } from "./repo.ts";
 import type { DataAccess, Resource } from "./resource.ts";
 import { resourceRoutes, schemaRoute, type RouteEnv } from "./routes.ts";
 import { adminMigrations, checkResources } from "./tables.ts";
@@ -48,11 +50,6 @@ export interface AdminService {
   schema(o?: SchemaOptions): AdminSchema;
 }
 
-interface EmitterPlugin {
-  name: string;
-  emit?(event: string, data?: unknown, o?: { env?: Env }): Promise<unknown>;
-}
-
 /**
  * Admin + CRM backend from resource definitions:
  *
@@ -69,9 +66,14 @@ export function admin(opts: AdminOptions) {
   let autoMigrate = opts.autoMigrate ?? true;
   let lastDb: Database | null = null;
 
+  // Outside requests, events and audit rows go through the services @miujs/workflows and
+  // @miujs/audit provide (whatever their plugins are named); without them, they are skipped.
   const emitOutside = async (event: string, data: Record<string, unknown>, env: Env) => {
-    const wf = app?.plugins.find((p) => p.name === "workflows") as EmitterPlugin | undefined;
-    if (wf && typeof wf.emit === "function") await wf.emit(event, data, { env });
+    if (app?.hasService("workflows")) await app.service<WorkflowsService>("workflows").emit(event, data, { env });
+  };
+  const auditOutside = async (entries: AuditEntryIn[], scope: Scope) => {
+    if (!app?.hasService("audit")) return;
+    await app.service<AuditService>("audit").logMany(entries, { actor: scope.userId ?? "system", org: scope.orgId, env: scope.env });
   };
 
   const makeRuntime = async (database: Database): Promise<Runtime> => {
@@ -82,6 +84,7 @@ export function admin(opts: AdminOptions) {
       byName,
       now: () => Date.now(),
       log: (message, data) => app?.log.error(message, data),
+      auditOutside,
       emit: async (event, data, scope) => {
         try {
           const events = (scope.ctx as { events?: { emit(e: string, d: unknown): Promise<unknown> } } | undefined)?.events;

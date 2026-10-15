@@ -3,7 +3,7 @@
 import { definePlugin, errors, processEnv, route, t, type CloudflareNeeds, type Context, type Env } from "miujs";
 import { diff, redact, redactor, type RedactRule } from "./diff.ts";
 import { checkKeys, ENV_KEY, envKeys, hashAuditEmail, MIN_KEY_LENGTH, type AuditKeys } from "./keys.ts";
-import { storeKeys, type AuditPage, type AuditQuery, type AuditRecord, type AuditStore } from "./store.ts";
+import { storeKeys, type AuditInput, type AuditPage, type AuditQuery, type AuditRecord, type AuditStore } from "./store.ts";
 
 export interface AuditEntry {
   /** What happened, e.g. `"update"`, `"export"`, `"view"`. */
@@ -20,6 +20,8 @@ export interface AuditEntry {
 export interface AuditClient {
   /** Appends an entry with the actor, org, ip, user agent, request id and time of this request. */
   log(entry: AuditEntry): Promise<AuditRecord>;
+  /** Appends several entries as consecutive rows (one transaction on the built-in stores). */
+  logMany(entries: AuditEntry[]): Promise<AuditRecord[]>;
   /** Reads the log. No permission check: guard your own routes (GET /audit does). */
   query(q?: AuditQuery): Promise<AuditPage>;
 }
@@ -57,6 +59,34 @@ declare module "miujs" {
     /** Tamper-evident audit log from `@miujs/audit`. */
     audit: AuditClient;
   }
+  interface Services {
+    /** Audit logging outside requests, from `@miujs/audit`. */
+    audit: AuditService;
+  }
+}
+
+/** Who an entry is attributed to outside a request. */
+export interface SystemActor {
+  /** Default "system". */
+  actor?: string;
+  org?: string | null;
+  /** Env for the store (Workers bindings, AUDIT_HMAC_KEY). Default: the process env. */
+  env?: Env;
+}
+
+/** `app.service("audit")`: audit logging for code outside a request (jobs, workflows, scripts). */
+export interface AuditService {
+  log(entry: AuditEntry, who?: SystemActor): Promise<AuditRecord>;
+  logMany(entries: AuditEntry[], who?: SystemActor): Promise<AuditRecord[]>;
+  query(q?: AuditQuery, env?: Env): Promise<AuditPage>;
+}
+
+interface Origin {
+  actor: string | null;
+  org: string | null;
+  ip: string | null;
+  userAgent: string | null;
+  requestId: string | null;
 }
 
 const AUTH_ROUTES: Record<string, string> = { auth_login: "auth.login", auth_logout: "auth.logout", auth_register: "auth.register" };
@@ -98,29 +128,45 @@ export function audit(opts: AuditOptions) {
   const permission = opts.permission ?? "audit:read";
   const path = opts.path ?? "/audit";
 
-  function write(ctx: Context, entry: AuditEntry): Promise<AuditRecord> {
+  function toInput(entry: AuditEntry, origin: Origin): AuditInput {
     if (!entry || typeof entry !== "object") {
       throw errors.custom({ code: "MIU_E_AUDIT_INVALID", status: 500, message: "Invalid audit entry: expected an object", fix: 'Call ctx.audit.log({ action: "update", resource: "contacts", ... }).' });
     }
     const hasDiff = entry.before !== undefined || entry.after !== undefined;
-    return store.append(
-      {
-        ts: Date.now(),
-        action: entry.action,
-        resource: entry.resource,
-        resourceId: entry.resourceId ?? null,
-        actor: ctx.user?.id ?? null,
-        org: orgOf(ctx),
-        ip: ctx.ip ?? null,
-        userAgent: ctx.headers.get("user-agent"),
-        requestId: ctx.requestId,
-        changes: hasDiff ? (redact(diff(entry.before, entry.after), isSecret) as AuditRecord["changes"]) : null,
-        metadata: entry.metadata ? (redact(entry.metadata, isSecret) as Record<string, unknown>) : null,
-      },
-      ctx.env,
-      appendOpts,
-    );
+    return {
+      ts: Date.now(),
+      action: entry.action,
+      resource: entry.resource,
+      resourceId: entry.resourceId ?? null,
+      ...origin,
+      changes: hasDiff ? (redact(diff(entry.before, entry.after), isSecret) as AuditRecord["changes"]) : null,
+      metadata: entry.metadata ? (redact(entry.metadata, isSecret) as Record<string, unknown>) : null,
+    };
   }
+  const requestOrigin = (ctx: Context): Origin => ({ actor: ctx.user?.id ?? null, org: orgOf(ctx), ip: ctx.ip ?? null, userAgent: ctx.headers.get("user-agent"), requestId: ctx.requestId });
+  const systemOrigin = (who: SystemActor = {}): Origin => ({ actor: who.actor ?? "system", org: who.org ?? null, ip: null, userAgent: null, requestId: null });
+
+  function write(ctx: Context, entry: AuditEntry): Promise<AuditRecord> {
+    return store.append(toInput(entry, requestOrigin(ctx)), ctx.env, appendOpts);
+  }
+
+  async function writeMany(entries: AuditEntry[], origin: Origin, env: Env): Promise<AuditRecord[]> {
+    if (!Array.isArray(entries)) {
+      throw errors.custom({ code: "MIU_E_AUDIT_INVALID", status: 500, message: "Invalid audit entries: expected an array", fix: "Call logMany([{ action, resource, ... }, ...])." });
+    }
+    const inputs = entries.map((e) => toInput(e, origin));
+    if (store.appendMany) return store.appendMany(inputs, env, appendOpts);
+    // Stores without appendMany: one append per entry, in order (not atomic).
+    const out: AuditRecord[] = [];
+    for (const input of inputs) out.push(await store.append(input, env, appendOpts));
+    return out;
+  }
+
+  const service: AuditService = {
+    log: (entry, who) => store.append(toInput(entry, systemOrigin(who)), who?.env ?? processEnv(), appendOpts),
+    logMany: (entries, who) => writeMany(entries, systemOrigin(who), who?.env ?? processEnv()),
+    query: (q = {}, env) => store.query(q, env ?? processEnv()),
+  };
 
   const queryRoute = route.get(path, {
     name: "audit_query",
@@ -169,6 +215,7 @@ export function audit(opts: AuditOptions) {
     name: "audit",
     routes: opts.routes === false ? [] : [queryRoute],
     setup(app) {
+      if (!app.hasService("audit")) app.provide("audit", service);
       if (!app.dev && store.kind === "memory") app.log.warn("audit() is using memoryAuditStore() in production; entries are lost on restart. Use dbAuditStore().");
       // On Workers the env only exists per request, so that check waits for the first request.
       if (!app.dev && app.runtime !== "workerd" && !keyed(processEnv())) {
@@ -184,6 +231,7 @@ export function audit(opts: AuditOptions) {
       }
       (ctx as { audit: AuditClient }).audit = {
         log: (entry) => write(ctx, entry),
+        logMany: (entries) => writeMany(entries, requestOrigin(ctx), ctx.env),
         query: (q = {}) => store.query(q, ctx.env),
       };
     },

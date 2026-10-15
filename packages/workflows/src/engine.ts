@@ -38,6 +38,8 @@ export interface EngineOptions {
   log(): Logger;
   fetch(): typeof fetch;
   mailer(): Mailer | undefined;
+  /** Looks up an app service (`app.service`). */
+  service(name: string): unknown;
 }
 
 export interface StartOptions {
@@ -546,6 +548,7 @@ export class Engine {
       run: { id: run.id, workflow: def.name, trigger: run.trigger },
       fetch: this.opts.fetch(),
       mailer: this.opts.mailer(),
+      service: <T,>(name: string) => this.opts.service(name) as T,
     };
     Promise.resolve()
       .then(() => def.run(ctx))

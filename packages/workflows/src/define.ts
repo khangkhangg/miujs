@@ -142,6 +142,8 @@ export interface WorkflowContext<I> {
   fetch: typeof fetch;
   /** The configured mailer, if any. */
   mailer?: Mailer;
+  /** A service another plugin provided (`app.provide`), e.g. `service("admin")`. Throws MIU_E_SERVICE_MISSING. */
+  service<T = unknown>(name: string): T;
 }
 
 export interface WorkflowConfig<S extends Schema<any>> {

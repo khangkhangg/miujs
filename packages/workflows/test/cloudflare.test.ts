@@ -135,3 +135,13 @@ describe("queue engine on Workers (no Workflows binding)", () => {
     expect(plugin.cloudflare()).toMatchObject({ queues: { producers: ["WORKFLOWS_QUEUE"], consumers: ["WORKFLOWS_QUEUE"] } });
   });
 });
+
+describe("createCloudflareWorkflow services", () => {
+  test("ctx.service reads the services option, and is MIU_E_SERVICE_MISSING otherwise", async () => {
+    const wf = defineWorkflow("svc", { run: ({ service }) => service<{ hi(): string }>("greeter").hi() });
+    const Cls = createCloudflareWorkflow(wf, { base: FakeEntrypoint, services: { greeter: { hi: () => "hello" } } });
+    expect(await new Cls({}, {}).run({ payload: {}, timestamp: new Date(0), instanceId: "i" }, fakeStep())).toBe("hello");
+    const Bare = createCloudflareWorkflow(wf, { base: FakeEntrypoint });
+    await expect(new Bare({}, {}).run({ payload: {}, timestamp: new Date(0), instanceId: "i" }, fakeStep())).rejects.toMatchObject({ code: "MIU_E_SERVICE_MISSING" });
+  });
+});

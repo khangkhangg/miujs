@@ -129,10 +129,20 @@ describe("MCP tools", () => {
     expect((found.body as { items: { name: string }[] }).items.map((x) => x.name)).toEqual(["Via MCP"]);
     expect((await list.call({}, { headers: { "x-user": "eve", "x-org-id": h.orgB } })).body).toEqual({ items: [], nextCursor: null });
     expect((await list.call({})).status).toBe(401);
+    // Bulk and import are destructive; export is read-only CSV.
+    expect(tools.find((x) => x.name === "contacts_bulk")!.annotations.destructiveHint).toBe(true);
+    expect(tools.find((x) => x.name === "contacts_import")!.annotations.destructiveHint).toBe(true);
+    expect(tools.find((x) => x.name === "contacts_export")!.annotations.readOnlyHint).toBe(true);
+    // field[op] filter keys are declared as extra string query keys.
+    const listRoute = h.app.inspect().routes.find((r) => r.name === "contacts_list")!;
+    expect((listRoute.query as { additionalProperties: unknown }).additionalProperties).toEqual(expect.objectContaining({ type: "string" }));
+    const exportRoute = h.app.inspect().routes.find((r) => r.name === "contacts_export")!;
+    expect((exportRoute.query as { additionalProperties: unknown }).additionalProperties).toEqual(expect.objectContaining({ type: "string" }));
     // The same routes describe themselves in OpenAPI.
     const oa = h.app.openapi() as { paths: Record<string, Record<string, Record<string, unknown>>> };
     expect(oa.paths["/api/contacts"].get["x-permission"]).toBe("contacts:read");
     expect(Object.keys(oa.paths)).toContain("/api/contacts/export.csv");
+    expect(Object.keys((oa.paths["/api/contacts/export.csv"].get.responses as Record<string, { content: object }>)["200"].content)).toEqual(["text/csv"]);
   });
 
   test("mcp: false on a resource hides its tools but keeps the routes", async () => {

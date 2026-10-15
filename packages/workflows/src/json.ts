@@ -335,7 +335,7 @@ export function fromJson(spec: unknown, opts: JsonOptions = {}): WorkflowDef<Rec
             async () => {
               const params = validate(action.params, interpolate(st.params ?? {}, scope));
               if (!params.ok) throw paramsError(action.name, params.issues);
-              return action.run(params.value, { env: ctx.env, log: ctx.log, fetch: ctx.fetch, mailer: ctx.mailer, run: { id: ctx.run.id, workflow: ctx.run.workflow }, input: ctx.input });
+              return action.run(params.value, { env: ctx.env, log: ctx.log, fetch: ctx.fetch, mailer: ctx.mailer, service: ctx.service, run: { id: ctx.run.id, workflow: ctx.run.workflow }, input: ctx.input });
             },
             { retries: st.retries ?? action.retries },
           );

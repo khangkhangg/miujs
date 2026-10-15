@@ -1,7 +1,7 @@
 // Run a code-defined workflow on Cloudflare Workflows (durable execution by the platform)
 // instead of the queue-based engine. Steps map 1:1 onto Cloudflare's WorkflowStep.
 
-import { createLogger, validate, type Env } from "miujs";
+import { createLogger, errors, validate, type Env } from "miujs";
 import { normalizeApprovers, type Mailer, type Step, type StepRunOptions, type WorkflowDef, type WorkflowEvent } from "./define.ts";
 import { parseDuration } from "./duration.ts";
 import { workflowErrors } from "./errors.ts";
@@ -45,6 +45,8 @@ export interface CloudflareWorkflowOptions<B extends EntrypointBase> {
   base?: B;
   mailer?: Mailer;
   fetch?: typeof fetch;
+  /** Services for `ctx.service(name)` (there is no app inside a Cloudflare Workflow instance). */
+  services?: Record<string, unknown>;
   /** Most non-matching events skipped per waitForEvent before giving up with null. Default 100. */
   maxEventSkips?: number;
 }
@@ -147,6 +149,12 @@ export function createCloudflareWorkflow<B extends EntrypointBase = typeof Workf
         run: { id: event.instanceId, workflow: def.name, trigger: { type: "manual" } },
         fetch: opts.fetch ?? globalThis.fetch,
         mailer: opts.mailer,
+        service: <T,>(name: string): T => {
+          if (!opts.services || !Object.prototype.hasOwnProperty.call(opts.services, name)) {
+            throw errors.config("MIU_E_SERVICE_MISSING", `No "${name}" service in this Cloudflare Workflow`, `Pass createCloudflareWorkflow(def, { services: { ${name}: ... } }).`);
+          }
+          return opts.services[name] as T;
+        },
       });
     }
   }

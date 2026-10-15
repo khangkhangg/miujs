@@ -185,6 +185,9 @@ describe("read", () => {
     expect(await names("stage[in]=lead,lost")).toEqual(["Ann Lee", "Eli Wu"]);
     expect(await names("value[isNull]=true")).toEqual(["Eli Wu"]);
     expect(await names("tags[contains]=b2b")).toEqual(["Ann Lee", "Ben Ode"]);
+    // Extra keys are validated as single strings: a repeated key is a 400, not a silent pick.
+    const twice = await h.req("GET", "/api/contacts?value[gte]=1&value[gte]=2");
+    expect([twice.status, twice.body.error.code]).toEqual([400, "MIU_E_VALIDATION"]);
   });
 
   test("bad filters, sorts, cursors and fields are 400 with a fix", async () => {

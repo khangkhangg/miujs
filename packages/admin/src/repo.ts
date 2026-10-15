@@ -25,6 +25,17 @@ export interface Runtime {
   emit(event: string, data: Record<string, unknown>, scope: Scope): Promise<void>;
   log(message: string, data: Record<string, unknown>): void;
   now(): number;
+  /** Audit sink for writes made outside a request (the audit service, as a system actor). */
+  auditOutside?(entries: AuditEntryIn[], scope: Scope): Promise<void>;
+}
+
+export interface AuditEntryIn {
+  action: string;
+  resource: string;
+  resourceId: string | null;
+  before?: unknown;
+  after?: unknown;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ListOptions {
@@ -83,6 +94,8 @@ export class Repo {
   readonly r: Resource;
   private rt: Runtime;
   private scope: Scope;
+  /** While run() commits a batch, audit entries collect here and go out with one logMany. */
+  private auditBuffer: AuditEntryIn[] | null = null;
 
   constructor(rt: Runtime, r: Resource, scope: Scope) {
     this.rt = rt;
@@ -361,7 +374,14 @@ export class Repo {
       }
     }
     const out: (AdminRecord | null)[] = [];
-    for (const p of prepared) out.push(await p.commit());
+    this.auditBuffer = [];
+    try {
+      for (const p of prepared) out.push(await p.commit());
+    } finally {
+      const entries = this.auditBuffer;
+      this.auditBuffer = null;
+      await this.auditMany(entries);
+    }
     return out;
   }
 
@@ -382,12 +402,25 @@ export class Repo {
   }
 
   async audit(action: string, id: string | null, before: unknown, after: unknown, metadata?: Record<string, unknown>): Promise<void> {
-    const client = (this.scope.ctx as { audit?: { log(e: unknown): Promise<unknown> } } | undefined)?.audit;
-    if (!client || typeof client.log !== "function") return;
+    const entry: AuditEntryIn = { action, resource: this.r.name, resourceId: id, ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}), ...(metadata ? { metadata } : {}) };
+    if (this.auditBuffer) this.auditBuffer.push(entry);
+    else await this.auditMany([entry]);
+  }
+
+  /** Writes entries as consecutive audit rows: ctx.audit in a request, the audit service outside one. */
+  async auditMany(entries: AuditEntryIn[]): Promise<void> {
+    if (entries.length === 0) return;
     try {
-      await client.log({ action, resource: this.r.name, resourceId: id, ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}), ...(metadata ? { metadata } : {}) });
+      if (this.scope.ctx) {
+        const client = (this.scope.ctx as { audit?: { log(e: unknown): Promise<unknown>; logMany?(e: unknown[]): Promise<unknown> } }).audit;
+        if (!client || typeof client.log !== "function") return;
+        if (typeof client.logMany === "function") await client.logMany(entries);
+        else for (const e of entries) await client.log(e);
+        return;
+      }
+      await this.rt.auditOutside?.(entries, this.scope);
     } catch (err) {
-      this.rt.log("admin: audit log failed", { err, resource: this.r.name, id, action });
+      this.rt.log("admin: audit log failed", { err, resource: this.r.name, count: entries.length });
     }
   }
 
