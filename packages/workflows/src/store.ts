@@ -118,8 +118,11 @@ export interface RunStore {
   /** Insert or replace by (runId, name). */
   saveStep(step: StepRecord): Promise<void>;
   addWaiter(waiter: WaiterRecord): Promise<void>;
-  /** Unresolved waiters for `event`, oldest first. */
-  openWaiters(event: string): Promise<WaiterRecord[]>;
+  /**
+   * Unresolved waiters for `event`, oldest first. A store may use `accept` to skip waiters
+   * early (before copying them); callers still check each result.
+   */
+  openWaiters(event: string, accept?: (w: WaiterRecord) => boolean): Promise<WaiterRecord[]>;
   getWaiter(runId: string, step: string): Promise<WaiterRecord | null>;
   /** Set the resolution if none is set yet. True for the caller that won. */
   resolveWaiter(id: string, resolution: { value: unknown }): Promise<boolean>;
@@ -144,24 +147,83 @@ function matchesFilter(r: RunRecord, f: RunFilter): boolean {
   return true;
 }
 
+export interface MemoryRunStoreOptions {
+  /**
+   * Finished (completed, failed, cancelled) runs to keep. The oldest-finished are dropped with
+   * their step journal, so a long-lived process does not grow without bound. Active runs are
+   * always kept. Default 1000.
+   */
+  maxFinishedRuns?: number;
+  /** Idempotency keys remembered for event dedup; the oldest are forgotten first. Default 10 000. */
+  maxIdempotencyKeys?: number;
+  /** How long an idempotency key dedupes, by event time (ms). Default 24 hours. */
+  idempotencyTtlMs?: number;
+}
+
 /**
  * In-process store: the default. Runs are lost when the process exits; use `dbRunStore` for
  * anything that must survive restarts. Values are copied in and out, like a database.
+ *
+ * Memory is bounded: only the newest `maxFinishedRuns` finished runs are kept, and idempotency
+ * keys expire after `idempotencyTtlMs` or beyond `maxIdempotencyKeys`. Event payloads are not kept.
  */
-export function memoryRunStore(): RunStore {
+export function memoryRunStore(opts: MemoryRunStoreOptions = {}): RunStore {
+  const maxFinished = Math.max(0, opts.maxFinishedRuns ?? 1000);
+  const maxKeys = Math.max(0, opts.maxIdempotencyKeys ?? 10_000);
+  const keyTtl = opts.idempotencyTtlMs ?? 24 * 60 * 60_000;
   const runs = new Map<string, RunRecord>();
   const steps = new Map<string, Map<string, StepRecord>>();
   const waiters = new Map<string, WaiterRecord>();
-  const events = new Map<string, EventRecord>();
-  const byKey = new Map<string, EventRecord>();
+  const waitersByRun = new Map<string, Map<string, WaiterRecord>>();
+  const waitersByEvent = new Map<string, Set<WaiterRecord>>(); // open event waiters only
+  const byKey = new Map<string, EventRecord>(); // insertion order = event order
+  const finished = new Set<string>(); // in finishing order; the oldest are evicted
   let order = 0;
   const seqOf = new Map<string, number>();
+
+  const unindexEvent = (w: WaiterRecord) => {
+    const set = waitersByEvent.get(w.event);
+    if (!set?.delete(w)) return;
+    if (set.size === 0) waitersByEvent.delete(w.event);
+  };
+  const dropWaiter = (w: WaiterRecord) => {
+    waiters.delete(w.id);
+    unindexEvent(w);
+    const m = waitersByRun.get(w.runId);
+    if (m?.get(w.step) === w) m.delete(w.step);
+    if (m && m.size === 0) waitersByRun.delete(w.runId);
+  };
+  const dropRun = (id: string) => {
+    runs.delete(id);
+    steps.delete(id);
+    seqOf.delete(id);
+    finished.delete(id);
+    const m = waitersByRun.get(id);
+    if (m) for (const w of [...m.values()]) dropWaiter(w);
+  };
+  const track = (r: RunRecord) => {
+    if (!TERMINAL.has(r.status)) {
+      finished.delete(r.id); // retried
+      return;
+    }
+    if (finished.has(r.id)) return;
+    finished.add(r.id);
+    while (finished.size > maxFinished) dropRun(finished.values().next().value!);
+  };
+  const pruneKeys = (now: number) => {
+    for (const [k, e] of byKey) {
+      if (byKey.size <= maxKeys && e.createdAt > now - keyTtl) break;
+      byKey.delete(k);
+    }
+  };
 
   return {
     kind: "memory",
     async createRun(run) {
-      runs.set(run.id, clone(run));
+      const r = clone(run);
+      runs.set(run.id, r);
       seqOf.set(run.id, order++);
+      track(r);
     },
     async getRun(id) {
       const r = runs.get(id);
@@ -169,13 +231,16 @@ export function memoryRunStore(): RunStore {
     },
     async updateRun(id, patch) {
       const r = runs.get(id);
-      if (r) Object.assign(r, clone(patch));
+      if (!r) return;
+      Object.assign(r, clone(patch));
+      track(r);
     },
     async casRun(id, expect, patch) {
       const r = runs.get(id);
       if (!r || r.token !== expect.token) return false;
       if (expect.leaseFreeAt !== undefined && r.leaseUntil !== null && r.leaseUntil > expect.leaseFreeAt) return false;
       Object.assign(r, clone(patch));
+      track(r);
       return true;
     },
     async listRuns(f) {
@@ -194,33 +259,47 @@ export function memoryRunStore(): RunStore {
       m.set(step.name, clone(step));
     },
     async addWaiter(w) {
-      waiters.set(w.id, clone(w));
+      const c = clone(w);
+      waiters.set(c.id, c);
+      let m = waitersByRun.get(c.runId);
+      if (!m) waitersByRun.set(c.runId, (m = new Map()));
+      m.set(c.step, c);
+      if (c.kind === "event" && !c.resolution) {
+        let set = waitersByEvent.get(c.event);
+        if (!set) waitersByEvent.set(c.event, (set = new Set()));
+        set.add(c);
+      }
     },
-    async openWaiters(event) {
-      return clone([...waiters.values()].filter((w) => w.event === event && w.kind === "event" && !w.resolution).sort((a, b) => a.createdAt - b.createdAt));
+    async openWaiters(event, accept) {
+      const open = [...(waitersByEvent.get(event) ?? [])];
+      return clone((accept ? open.filter(accept) : open).sort((a, b) => a.createdAt - b.createdAt));
     },
     async getWaiter(runId, step) {
-      for (const w of waiters.values()) if (w.runId === runId && w.step === step) return clone(w);
-      return null;
+      const w = waitersByRun.get(runId)?.get(step);
+      return w ? clone(w) : null;
     },
     async resolveWaiter(id, resolution) {
       const w = waiters.get(id);
       if (!w || w.resolution) return false;
       w.resolution = clone(resolution);
+      unindexEvent(w);
       return true;
     },
     async deleteWaiters(runId, step) {
-      for (const [id, w] of waiters) if (w.runId === runId && (step === undefined || w.step === step)) waiters.delete(id);
+      const m = waitersByRun.get(runId);
+      if (!m) return;
+      for (const w of [...m.values()]) if (step === undefined || w.step === step) dropWaiter(w);
     },
     async recordEvent(e) {
       if (e.idempotencyKey !== null) {
+        pruneKeys(e.createdAt);
         const prev = byKey.get(e.idempotencyKey);
         if (prev) return { duplicate: true, event: clone(prev) };
         byKey.set(e.idempotencyKey, clone(e));
+        pruneKeys(e.createdAt);
       }
-      events.set(e.id, clone(e));
       return { duplicate: false, event: clone(e) };
     },
-    describe: () => ({ adapter: "memory", runs: runs.size, waiters: waiters.size }),
+    describe: () => ({ adapter: "memory", runs: runs.size, waiters: waiters.size, idempotencyKeys: byKey.size, maxFinishedRuns: maxFinished }),
   };
 }

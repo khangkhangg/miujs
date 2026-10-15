@@ -170,6 +170,8 @@ export const plugin = workflows({
 
 `memoryRunStore()` (the default) loses runs on restart. Use `dbRunStore(sqlite(path))` on a server or `dbRunStore(d1("DB"))` on Workers.
 
+The memory store is bounded so a long-running process does not grow: it keeps the newest 1000 finished (completed, failed, cancelled) runs with their step journals, and remembers event idempotency keys for 24 hours, up to 10 000 keys. Active runs are always kept. To change the limits, pass `memoryRunStore({ maxFinishedRuns: 5000, idempotencyTtlMs: 3_600_000, maxIdempotencyKeys: 50_000 })`. A finished run that has been dropped can no longer be read or retried.
+
 ## Options
 
 `workflows(options)`:

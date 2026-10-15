@@ -45,6 +45,53 @@ export class CliError extends Error {
 /** `bunx` as an argv prefix. Uses the running Bun binary so it works when bunx is not on PATH. */
 export const BUNX = (): string[] => [process.execPath, "x"];
 
+/** Process ids below `pid` (POSIX, through pgrep), deepest first. Empty when pgrep is missing. */
+function descendants(pid: number): number[] {
+  const out: number[] = [];
+  const visit = (p: number, depth: number) => {
+    if (depth > 8) return;
+    let r;
+    try {
+      r = Bun.spawnSync(["pgrep", "-P", String(p)], { stdout: "pipe", stderr: "ignore" });
+    } catch {
+      return;
+    }
+    for (const line of r.stdout.toString().split(/\s+/)) {
+      const c = Number(line.trim());
+      if (!Number.isInteger(c) || c <= 0) continue;
+      visit(c, depth + 1);
+      out.push(c);
+    }
+  };
+  visit(pid, 0);
+  return out;
+}
+
+/**
+ * Stops a command and everything it started (`bun x wrangler` runs wrangler as a child of its
+ * own, which a plain kill would leave running).
+ */
+export function killTree(proc: { pid: number; kill(signal?: number | NodeJS.Signals): void; killed?: boolean; exitCode: number | null }): void {
+  if (proc.exitCode !== null) return;
+  if (process.platform === "win32") {
+    try {
+      Bun.spawnSync(["taskkill", "/pid", String(proc.pid), "/T", "/F"], { stdout: "ignore", stderr: "ignore" });
+    } catch {}
+  } else {
+    for (const pid of descendants(proc.pid)) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {}
+    }
+  }
+  try {
+    proc.kill("SIGTERM");
+  } catch {}
+}
+
+const STOP_SIGNALS: NodeJS.Signals[] = process.platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP"];
+const SIGNAL_CODE: Record<string, number> = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };
+
 export const defaultRunner: Runner = async (cmd, opts) => {
   const proc = Bun.spawn(cmd, {
     cwd: opts.cwd,
@@ -53,8 +100,21 @@ export const defaultRunner: Runner = async (cmd, opts) => {
     stdin: "inherit",
     env: { ...process.env, ...opts.env },
   });
-  const onAbort = () => proc.kill();
+  const onAbort = () => killTree(proc);
   opts.signal?.addEventListener("abort", onAbort, { once: true });
+  // Ctrl+C / SIGTERM to the CLI: stop the command's whole tree, then return as interrupted. A
+  // terminal sends SIGINT to the child too, but a supervisor or `kill <pid>` only reaches us.
+  let interrupted: string | null = null;
+  const handlers = STOP_SIGNALS.map((sig) => {
+    const fn = () => {
+      interrupted ??= sig;
+      killTree(proc);
+    };
+    process.on(sig, fn);
+    return [sig, fn] as const;
+  });
+  const onExit = () => killTree(proc);
+  process.on("exit", onExit);
   const read = async (stream: ReadableStream<Uint8Array> | number | undefined, onChunk?: (s: string) => void) => {
     if (!stream || typeof stream === "number") return "";
     let text = "";
@@ -66,10 +126,15 @@ export const defaultRunner: Runner = async (cmd, opts) => {
     }
     return text;
   };
-  const [stdout, stderr] = await Promise.all([read(proc.stdout as never, opts.onStdout), read(proc.stderr as never)]);
-  const code = await proc.exited;
-  opts.signal?.removeEventListener("abort", onAbort);
-  return { code: opts.signal?.aborted ? 0 : code, stdout, stderr };
+  try {
+    const [stdout, stderr] = await Promise.all([read(proc.stdout as never, opts.onStdout), read(proc.stderr as never)]);
+    const code = await proc.exited;
+    return { code: interrupted ? SIGNAL_CODE[interrupted] : opts.signal?.aborted ? 0 : code, stdout, stderr };
+  } finally {
+    opts.signal?.removeEventListener("abort", onAbort);
+    for (const [sig, fn] of handlers) process.off(sig, fn);
+    process.off("exit", onExit);
+  }
 };
 
 /** How a command's flags are read: `"bool"` (`--json`) or `"value"` (`--out file`, `--out=file`). */

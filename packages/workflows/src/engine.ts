@@ -72,7 +72,10 @@ export interface RunView extends RunRecord {
   steps: StepView[];
 }
 
-const HANG = new Promise<never>(() => {});
+// A fresh never-settling promise per suspension. A shared module-level one would collect a reaction
+// (the suspended workflow function with its ctx, journal and closures) for every parked or
+// finished invocation and never release them; a fresh one is garbage once the run is dropped.
+const hang = (): Promise<never> => new Promise<never>(() => {});
 
 function roundTrip<T>(v: T): T {
   return v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T);
@@ -259,7 +262,7 @@ export class Engine {
       }
     }
 
-    for (const w of await store.openWaiters(name)) {
+    for (const w of await store.openWaiters(name, (x) => matches(x.match, evt))) {
       if (!matches(w.match, evt)) continue;
       if (await store.resolveWaiter(w.id, { value: evt })) {
         result.resumed.push(w.runId);
@@ -434,7 +437,7 @@ export class Engine {
         done = true;
         resolveOutcome(o);
       }
-      return HANG;
+      return hang();
     };
     const blocked = () => done || executing;
     const now = () => this.now();
@@ -477,20 +480,20 @@ export class Engine {
     };
 
     const journaledValue = async <T>(name: string, kind: StepKind, make: () => T): Promise<T> => {
-      if (!claim(name)) return HANG;
+      if (!claim(name)) return hang();
       const rec = journal.get(name);
       if (rec?.status === "completed") return rec.output as T;
-      if (blocked()) return HANG;
+      if (blocked()) return hang();
       const value = make();
       await save(record(name, kind, { output: value }));
       return value;
     };
 
     const wait = async (name: string, kind: "wait" | "approval", event: string, match: Record<string, unknown> | null, approvers: Approvers | null, timeout: unknown): Promise<unknown> => {
-      if (!claim(name)) return HANG;
+      if (!claim(name)) return hang();
       const rec = journal.get(name);
       if (rec?.status === "completed") return rec.output;
-      if (blocked()) return HANG;
+      if (blocked()) return hang();
       const waiter = { runId: run.id, step: name, kind: kind === "approval" ? ("approval" as const) : ("event" as const), event, match, approvers, expiresAt: null as number | null };
       if (!rec) {
         const until = timeout === undefined ? null : now() + parseDuration(timeout as string);
@@ -510,10 +513,10 @@ export class Engine {
     };
 
     const sleepUntil = async (name: string, until: number): Promise<void> => {
-      if (!claim(name)) return HANG;
+      if (!claim(name)) return hang();
       const rec = journal.get(name);
       if (rec?.status === "completed") return;
-      if (blocked()) return HANG;
+      if (blocked()) return hang();
       if (!rec) {
         await save(record(name, "sleep", { status: "sleeping", wakeAt: until }));
         return finish({ type: "sleep", until });
@@ -524,11 +527,11 @@ export class Engine {
 
     const step: Step = {
       run: async (name, fn, opts) => {
-        if (!claim(name)) return HANG;
+        if (!claim(name)) return hang();
         const rec = journal.get(name);
         if (rec?.status === "completed") return rec.output as any;
         if (rec?.status === "failed") throw new StepFailedError(name, rec.error?.message ?? "step failed", rec.error?.code);
-        if (blocked()) return HANG;
+        if (blocked()) return hang();
         if (rec?.status === "retrying" && rec.wakeAt !== null && rec.wakeAt > now()) return finish({ type: "retry", until: rec.wakeAt });
         executing = true;
         const attempts = (rec?.attempts ?? 0) + 1;

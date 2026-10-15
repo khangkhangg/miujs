@@ -58,6 +58,19 @@ describe("kanban: move → PATCH with optimistic update and rollback", () => {
   });
 });
 
+describe("kanban: concurrent moves", () => {
+  test("a failed move puts only its card back; a move made meanwhile stays", () => {
+    const first = lib.planMove(board(), "a", "lost")!; // shown optimistically, PATCH in flight
+    const second = lib.planMove(first.optimistic, "c", "lead")!; // made before the first settles
+    const shown = second.optimistic;
+    const after = lib.settle(first, false, shown);
+    expect(after.order).toEqual({ lead: ["a", "b", "c"], customer: [], lost: [], "": [] });
+    // The old behaviour restored the snapshot from before the first move, undoing the second.
+    expect(lib.settle(first, false).order.customer).toEqual(["c"]);
+    expect(lib.settle(first, true, shown)).toBe(shown);
+  });
+});
+
 describe("kanban: keyboard", () => {
   test("arrow keys pick the neighbouring column; other keys do nothing", () => {
     const b = board();

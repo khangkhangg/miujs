@@ -200,10 +200,11 @@ export function adminApp(L: ClientLibs) {
       return L.kanban.board(field, path, keys, values, ids);
     };
     const render = (b: any) => {
+      const byId = new Map($$("[data-id]", boardEl).map((x) => [x.getAttribute("data-id")!, x]));
       for (const c of cols) {
         const key = c.getAttribute("data-col")!;
         for (const id of b.order[key]) {
-          const card = $$("[data-id]", boardEl).find((x) => x.getAttribute("data-id") === id);
+          const card = byId.get(id);
           if (card) c.appendChild(card);
         }
         const count = boardEl.querySelector(`[data-count="${CSS.escape(key)}"]`);
@@ -222,7 +223,8 @@ export function adminApp(L: ClientLibs) {
       api(plan.request.method, plan.request.url, plan.request.body)
         .then((r) => r, () => ({ ok: false, status: 0, data: null }))
         .then((r) => {
-          render(L.kanban.settle(plan, r.ok));
+          // Against the board as it is now: other cards may have moved meanwhile.
+          if (!r.ok) render(L.kanban.settle(plan, false, read()));
           card.classList.remove("pending");
           card.removeAttribute("aria-busy");
           card.focus();

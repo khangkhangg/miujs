@@ -1,7 +1,7 @@
 export { NonRetryableError, StepFailedError, workflowErrors, type SpecIssue } from "./errors.ts";
 export { parseDuration, type Duration } from "./duration.ts";
 export { compileExpression, evaluate, interpolate, type CompiledExpression, type CompileOptions, type Scope } from "./expr.ts";
-export { memoryRunStore, RUN_STATUSES, type Approvers, type EventRecord, type RunError, type RunFilter, type RunRecord, type RunStatus, type RunStore, type StepKind, type StepRecord, type StepStatus, type TriggerInfo, type WaiterRecord } from "./store.ts";
+export { memoryRunStore, RUN_STATUSES, type MemoryRunStoreOptions, type Approvers, type EventRecord, type RunError, type RunFilter, type RunRecord, type RunStatus, type RunStore, type StepKind, type StepRecord, type StepStatus, type TriggerInfo, type WaiterRecord } from "./store.ts";
 export { dbRunStore, workflowMigrations } from "./db-store.ts";
 export {
   cron,

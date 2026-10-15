@@ -68,9 +68,15 @@ export function kanbanLib() {
     };
   }
 
-  /** The board to show once the PATCH finished. */
-  function settle(plan: MovePlan, ok: boolean): Board {
-    return ok ? plan.optimistic : plan.rollback;
+  /**
+   * The board to show once the PATCH finished. With `current` (the board as shown now, which may
+   * include other moves made while this one was in flight), a failure only puts this card back
+   * where it was; without it, the board from before the move is restored.
+   */
+  function settle(plan: MovePlan, ok: boolean, current?: Board): Board {
+    if (!current) return ok ? plan.optimistic : plan.rollback;
+    if (ok || !own(current.order, plan.from)) return current;
+    return apply(current, plan.id, plan.from, plan.rollback.order[plan.from].indexOf(plan.id));
   }
 
   /** ArrowLeft / ArrowRight move a focused card to the neighbouring column. */

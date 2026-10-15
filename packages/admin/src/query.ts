@@ -198,6 +198,8 @@ export interface Sort {
   key: string;
   column: string;
   desc: boolean;
+  /** The column is NOT NULL in every table (createdAt, updatedAt), so plain index-friendly SQL works. */
+  notNull?: boolean;
 }
 
 export function parseSort(r: Resource, sort: string | undefined): Sort {
@@ -207,7 +209,7 @@ export function parseSort(r: Resource, sort: string | undefined): Sort {
   const allowed = sortableKeys(r);
   const c = allowed.includes(key) ? columnOf(r, key) : null;
   if (!c) throw adminErrors.sortInvalid(s, allowed);
-  return { key, column: c.column, desc };
+  return { key, column: c.column, desc, notNull: key === "createdAt" || key === "updatedAt" };
 }
 
 interface Cursor {
@@ -252,6 +254,15 @@ export function sortSql(sort: Sort, cursor: string | undefined): { orderBy: stri
   if (sort.column === "id") {
     const after = cursor ? { sql: `"id" ${cmp} ?`, binds: [decodeCursor(sort, cursor).id] } : null;
     return { orderBy: `"id" ${dir}`, after };
+  }
+  if (sort.notNull) {
+    // No NULLs to place: ORDER BY and the keyset range can use the (org_id, created_at) index,
+    // so each page is a range read instead of a sort of every matching row.
+    const orderBy = `${col} ${dir}, "id" ${dir}`;
+    if (!cursor) return { orderBy, after: null };
+    const c = decodeCursor(sort, cursor);
+    if (c.v === null) return { orderBy, after: { sql: `"id" ${cmp} ?`, binds: [c.id] } };
+    return { orderBy, after: { sql: `(${col} ${cmp}= ? AND (${col} ${cmp} ? OR "id" ${cmp} ?))`, binds: [c.v, c.v, c.id] } };
   }
   const orderBy = `(${col} IS NULL) ASC, ${col} ${dir}, "id" ${dir}`;
   if (!cursor) return { orderBy, after: null };
