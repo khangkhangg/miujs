@@ -59,7 +59,7 @@ interface BunSocketData {
   onError: (err: unknown) => void;
 }
 
-interface BunWs {
+export interface BunWs {
   data: BunSocketData;
   send(m: unknown): void;
   close(code?: number, reason?: string): void;

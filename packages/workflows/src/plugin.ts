@@ -73,6 +73,7 @@ export function workflows(opts: WorkflowsOptions) {
   const defaultEnv = (): Env => opts.env ?? processEnv();
   let log: Logger = createLogger("info", { plugin: "workflows" });
   let appMailer: Mailer | undefined;
+  let appRef: App | undefined;
 
   const resumeJob = defineJob(RESUME_JOB, {
     input: t.object({ runId: t.string(), token: t.string() }),
@@ -102,7 +103,7 @@ export function workflows(opts: WorkflowsOptions) {
     },
     log: () => log,
     fetch: () => opts.fetch ?? globalThis.fetch,
-    mailer: () => opts.mailer ?? appMailer,
+    mailer: () => opts.mailer ?? appMailer ?? (appRef?.hasService("mail") ? appRef.service<Mailer>("mail") : undefined),
   });
 
   const api = {
@@ -147,8 +148,7 @@ export function workflows(opts: WorkflowsOptions) {
     ...api,
     async setup(app: App) {
       log = app.log.child({ plugin: "workflows" });
-      const mail = app.plugins.find((p) => p.name === "mail") as unknown as Partial<Mailer> | undefined;
-      if (mail && typeof mail.send === "function") appMailer = mail as Mailer;
+      appRef = app;
       await q.setup(app);
     },
     onRequest(ctx: Context) {

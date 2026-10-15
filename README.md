@@ -26,7 +26,7 @@ deno serve app.ts   # Deno
 wrangler deploy     # Cloudflare Workers (or: miu deploy cloudflare)
 ```
 
-> Status: **0.1 MVP**. APIs may still change. See [the spec](https://claude.ai/code/artifact/cea50b68-c0e3-4821-a540-fb6b0f4903fc) for the full plan.
+> Status: **0.2 preview**: core, 18 packages and the CLI are built and tested; the admin/CRM, game and tour kits are in progress. APIs may still change. See [the spec](https://claude.ai/code/artifact/cea50b68-c0e3-4821-a540-fb6b0f4903fc) for the full plan.
 
 ## Why MiuJS
 
@@ -35,7 +35,7 @@ wrangler deploy     # Cloudflare Workers (or: miu deploy cloudflare)
 | **One schema per route** | `t.object(...)` gives types, validation, OpenAPI, the MCP tool schema and test helpers. |
 | **Agent-native** | `mcp: true` serves every route as an MCP tool at `/mcp`. `miu inspect --json` describes the whole app. Errors carry a stable `MIU_E_*` code and a `fix`. |
 | **No build** | Erasable TypeScript, run as written. Validators are composed at startup without `eval`, so they work on Workers. |
-| **Batteries** | Auth, sessions, cache, queues, SQL and realtime rooms as official `@miujs/*` packages with swappable adapters (memory/SQLite locally, Cloudflare bindings in production). |
+| **Batteries** | Auth (passwords, OAuth, passkeys), sessions, SQL + Drizzle, cache, queues, files, mail, permissions, audit log, rate limits, workflows, AI and realtime rooms as official `@miujs/*` packages with swappable adapters (memory/SQLite/Redis/S3 locally, Cloudflare bindings in production). |
 | **Games** | `@miujs/realtime` rooms run on Durable Objects or in-process — enough for a Kahoot-style quiz. See [examples/quiz](examples/quiz). |
 
 ## Packages
@@ -49,7 +49,19 @@ wrangler deploy     # Cloudflare Workers (or: miu deploy cloudflare)
 | [`@miujs/db`](packages/db) | D1-compatible SQL on SQLite (Bun) and Cloudflare D1, migrations |
 | [`@miujs/cache`](packages/cache) | `remember()`, tags, memory LRU or Cloudflare KV |
 | [`@miujs/queue`](packages/queue) | Typed jobs, retries with backoff, cron schedules, Cloudflare Queues |
-| [`@miujs/realtime`](packages/realtime) | Authoritative rooms over WebSockets, Durable Objects, client SDK |
+| [`@miujs/realtime`](packages/realtime) | Authoritative rooms over WebSockets, Durable Objects, join codes, sharding, React/Vue/Svelte bindings |
+| [`@miujs/files`](packages/files) | Uploads, signed URLs, resumable uploads; memory, disk, R2 and S3 stores |
+| [`@miujs/web`](packages/web) | Static files, HTML templates and JSX without a build, htmx, Vite, security headers |
+| [`@miujs/mail`](packages/mail) | Email templates and transports (Resend, HTTP), dev preview |
+| [`@miujs/access`](packages/access) | Roles, permissions, per-record policies, organizations and invites |
+| [`@miujs/audit`](packages/audit) | Tamper-evident audit log (HMAC hash chain, external anchors) |
+| [`@miujs/workflows`](packages/workflows) | Durable automation: events, cron, webhooks, sleeps, approvals, JSON workflows |
+| [`@miujs/ratelimit`](packages/ratelimit) | Rate limits by route, path or tag; memory, KV, Durable Object, Redis |
+| [`@miujs/ai`](packages/ai) | Claude, OpenAI-compatible and Workers AI; structured output, tool loops, RAG |
+| [`@miujs/migrate`](packages/migrate) | Port Laravel, Django or FastAPI apps route by route (proxy, shared sessions, contract tests) |
+| `@miujs/admin`, `@miujs/game`, `@miujs/tour` | In progress: CRM/back-office, game and 3D tour kits |
+
+Full guide: [docs/guide.md](docs/guide.md). Every error code: [docs/errors.md](docs/errors.md).
 
 ## Core concepts
 
@@ -76,7 +88,7 @@ checked against `response`.
 ```json
 { "error": { "code": "MIU_E_VALIDATION", "message": "Invalid body: body.qty must be >= 1",
   "fix": "Send body that matches the route schema (see /_miu/openapi.json or the MCP tool input schema).",
-  "docs": "https://miujs.dev/errors/MIU_E_VALIDATION", "details": { "issues": [...] } } }
+  "docs": "https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#miu_e_validation", "details": { "issues": [...] } } }
 ```
 
 Configuration mistakes fail at startup with the same shape, e.g. `MIU_E_PARAM_MISSING` when a
@@ -167,12 +179,18 @@ Bun. See [bench/README.md](bench/README.md) for the latest numbers and method.
 - **Brute force:** login is limited to 10 attempts per IP+account, 50 per account and 100 per IP per
   15 minutes. Register is limited to 10 per IP per hour. Over the limit gives 429 with `Retry-After`.
   - The client IP is `ctx.ip`: Cloudflare's address on Workers, the socket address on Bun. Behind
-    your own proxy, set `auth({ rateLimit: { trustProxyHeader: "x-real-ip" } })`.
+    your own proxy, set `miu({ trustProxy: { header: "x-forwarded-for" } })` (it reads the entry your
+    proxy appended, never the client-supplied one).
   - The default limiter keeps counts in memory, which is exact on one server. On Workers each
     isolate counts separately, so use `cloudflareRateLimiter("BINDING")` and/or Turnstile.
 - **Account enumeration:** login gives the same error and timing for unknown emails and wrong
-  passwords. Register still returns 409 for a taken email. Fully hiding that needs email
-  verification, which MiuJS doesn't have yet. Until then the register limit keeps probing slow.
+  passwords. With `auth({ emailVerification: "required" })`, register and password reset answer
+  the same way whether or not the email exists. With verification off, register still returns 409
+  for a taken email, and the register limit keeps probing slow.
+- **OAuth and passkeys:** provider sign-in links only to accounts whose email is verified, never
+  taking over an existing account; signed-in users link and unlink providers explicitly. Passkeys
+  use single-use server-side challenges and sign-counter clone detection.
+- **Password reset** signs out other sessions and revokes API tokens.
 - **API tokens:** shown once and stored as SHA-256 hashes. Passwords use argon2id on Bun, otherwise
   PBKDF2 (600k iterations). Legacy bcrypt and Django hashes are upgraded on the next login.
 
@@ -184,10 +202,10 @@ that runs end to end. The full plan is in the
 
 | Phase | Status | What it adds |
 | --- | --- | --- |
-| **1. Foundations** | In progress | `@miujs/files` (uploads, signed URLs, resumable uploads, R2), `@miujs/web` (static files, HTML/JSX without a build, htmx, Vite, security headers), `@miujs/access` (roles, per-record policies, organizations, invites), `@miujs/audit` (tamper-evident audit log), `@miujs/mail` (+ email verification and password reset), `@miujs/workflows` (durable automation) |
-| **2. Admin + CRM kit** | Planned | Define a resource once and get tables, API, MCP tools, lifecycle events and an admin UI. Pipelines, tasks, search, CSV import/export, and a visual workflow builder |
-| **3. Game kit** | Planned | Room timers on Durable Object alarms, matchmaking and lobbies, join codes, leaderboards, achievements, Unity/Godot clients |
-| **4. 3D tour kit** | Planned | 360° tiling and 3D model compression jobs, hotspots and floor plans, live guided tours, viewing analytics. Healthcare building blocks: field encryption, consent, retention |
+| **1. Foundations** | Done | `@miujs/files` (uploads, signed URLs, resumable uploads, R2), `@miujs/web` (static files, HTML/JSX without a build, htmx, Vite, security headers), `@miujs/access` (roles, per-record policies, organizations, invites), `@miujs/audit` (tamper-evident audit log), `@miujs/mail` (+ email verification and password reset), `@miujs/workflows` (durable automation) |
+| **2. Admin + CRM kit** | In progress | Define a resource once and get tables, API, MCP tools, lifecycle events and an admin UI. Pipelines, tasks, search, CSV import/export, and a visual workflow builder |
+| **3. Game kit** | In progress | Room timers on Durable Object alarms, matchmaking and lobbies, join codes, leaderboards, achievements, Unity/Godot clients |
+| **4. 3D tour kit** | In progress | 360° tiling and 3D model compression jobs, hotspots and floor plans, live guided tours, viewing analytics. Healthcare building blocks: field encryption, consent, retention |
 
 ### Automation workflows
 
@@ -223,9 +241,12 @@ export const followUp = defineWorkflow("contact-follow-up", {
   `node_modules`.
 - **Speed:** level with Elysia on validated bodies, 20–30% behind on trivial routes
   ([bench](bench/README.md)).
-- Not built yet: JSX responses, Drizzle integration, a SQLite queue adapter, deploy targets
-  other than Cloudflare, email verification, and server-side revocation for cookie-only sessions
-  (use a server session store if logout must invalidate copied cookies).
+- **Verified only against fakes:** Redis and S3 adapters (fake servers, AWS signature test vectors),
+  Laravel/Django session crypto (independent reference ports, no real PHP/Python app yet), OAuth
+  providers and the Anthropic/Workers AI APIs (recorded shapes, no live calls).
+- **Not built yet:** the admin UI and visual workflow builder (phase 2), parts of the game and tour
+  kits, and an npm release (`scripts/build-packages.ts` builds it; the `@miujs` npm scope isn't
+  registered yet).
 
 ## Developing MiuJS
 

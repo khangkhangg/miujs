@@ -115,9 +115,21 @@ export interface Step {
   uuid(name?: string): Promise<string>;
 }
 
+/** An email to send. Same shape as @miujs/mail messages. */
+export interface WorkflowMail {
+  to: string | string[];
+  subject?: string;
+  html?: string;
+  text?: string;
+  template?: string;
+  data?: unknown;
+  replyTo?: string;
+  headers?: Record<string, string>;
+}
+
 /** Something with `send(msg)`, e.g. the @miujs/mail client. */
 export interface Mailer {
-  send(msg: Record<string, unknown>): MaybePromise<unknown>;
+  send(msg: WorkflowMail): MaybePromise<unknown>;
 }
 
 export interface WorkflowContext<I> {

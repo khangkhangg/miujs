@@ -15,6 +15,7 @@ export {
   type CronTrigger,
   type EventTrigger,
   type Mailer,
+  type WorkflowMail,
   type ManualTrigger,
   type Step,
   type StepRunOptions,

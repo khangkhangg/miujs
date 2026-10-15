@@ -80,6 +80,8 @@ export function mail(opts: MailOptions) {
       if (!opts.transport && !app.dev) throw transportMissing();
       checkAddress(opts.from, "from");
       mailer = createMailer({ ...opts, transport: opts.transport ?? consoleTransport(), dev: app.dev });
+      // Jobs and workflows run outside requests: they reach the mailer through app.service("mail").
+      app.provide("mail", mailer);
       if (app.dev && mailer.transport.outbox) app.add(previewRoutes(mailer.transport));
     },
     onRequest(ctx: Context) {

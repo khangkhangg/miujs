@@ -3591,18 +3591,22 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 
 - **Package:** `@miujs/game`
 - **HTTP status:** 500
-- **Source:** [`game/src/errors.ts`](../packages/game/src/errors.ts), [`game/src/lobbies.ts`](../packages/game/src/lobbies.ts), [`game/src/room.ts`](../packages/game/src/room.ts)
+- **Source:** [`game/src/errors.ts`](../packages/game/src/errors.ts), [`game/src/lobbies.ts`](../packages/game/src/lobbies.ts), [`game/src/loop.ts`](../packages/game/src/loop.ts), [`game/src/room.ts`](../packages/game/src/room.ts)
 
 **What it means:**
 
 - lobbies() uses room type "{opts.room}", which the rooms plugin does not host
 - lobbies(): need 1 &lt;= minPlayers &lt;= maxPlayers and teams &gt;= 1
+- fixedStep: hz must be between 0 and 120 (got {hz})
+- fixedStep.define: bad timer name "{name}"
 - gameRoom("{type}") declares a client message named "ticket"
 
 **How to fix:**
 
 - Add it: rooms({ rooms: [{opts.room}] }), and pass that plugin as lobbies({ rooms }).
 - e.g. lobbies({ minPlayers: 2, maxPlayers: 8, teams: 2 }).
+- Use e.g. hz: 20 for a server simulation; render smoothly on clients with snapshotInterpolation().
+- Use letters, digits, _ . or -, e.g. fixedStep.define("physics", ...).
 - Rename it: `ticket` is how players present their match ticket.
 
 ## MIU_E_GAME_SCORE_INVALID

@@ -83,8 +83,19 @@ function internal(path: string, params: Record<string, string>, body?: unknown):
   return body === undefined ? new Request(u) : new Request(u, { method: "POST", body: JSON.stringify(body) });
 }
 
+/** The public shape of the Durable Object class `createRoomDurableObject` returns. */
+export interface RoomDurableObject {
+  fetch(req: Request): Promise<Response>;
+  webSocketMessage(ws: CfWebSocket, message: string | ArrayBuffer): Promise<void>;
+  webSocketClose(ws: CfWebSocket, code: number, reason: string, wasClean: boolean): Promise<void>;
+  webSocketError(ws: CfWebSocket, err: unknown): Promise<void>;
+  alarm(): Promise<void>;
+}
+
+export type RoomDurableObjectClass = new (state: DurableObjectStateLike, env: unknown) => RoomDurableObject;
+
 /** Build the Durable Object class that hosts these room types. Export it from your Worker. */
-export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, any>[], opts: RoomDurableObjectOptions = {}) {
+export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, any>[], opts: RoomDurableObjectOptions = {}): RoomDurableObjectClass {
   const types = new Map(roomTypes.map((r) => [r.type, r] as const));
   const known = [...types.keys()];
   const clock = opts.clock ?? systemClock;
