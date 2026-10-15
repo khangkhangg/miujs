@@ -223,3 +223,9 @@ describe("wrangler.toml for assets, workflows and rate limits", () => {
     expect(toml).toMatch(/\[\[ratelimits\]\]\nname = "LOGIN_LIMIT"\nnamespace_id = "\d+"\n\n?  \[ratelimits\.simple\]\n  limit = 10\n  period = 60/);
   });
 });
+
+test("wrangler.toml renders [ai] and [[vectorize]]", () => {
+  const toml = wranglerToml({ name: "app", cloudflare: { ai: { binding: "AI" }, vectorize: [{ binding: "DOCS", indexName: "docs-index" }] } }, "app.ts", "2026-10-15");
+  expect(toml).toContain('[ai]\nbinding = "AI"');
+  expect(toml).toContain('[[vectorize]]\nbinding = "DOCS"\nindex_name = "docs-index"');
+});

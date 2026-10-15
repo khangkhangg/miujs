@@ -270,6 +270,8 @@ export function wranglerToml(info: any, main: string, date = new Date().toISOStr
     }
     parts.push(block);
   }
+  if (cf.ai) parts.push(`\n[ai]\nbinding = "${cf.ai.binding}"`);
+  for (const v of cf.vectorize ?? []) parts.push(`\n[[vectorize]]\nbinding = "${v.binding}"\nindex_name = "${v.indexName}"`);
   for (const w of cf.workflows ?? []) parts.push(`\n[[workflows]]\nname = "${w.name}"\nbinding = "${w.binding}"\nclass_name = "${w.className}"`);
   for (const r of cf.ratelimits ?? []) {
     // namespace_id must be a positive integer unique within the account; derive a stable one from the binding name.

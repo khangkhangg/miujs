@@ -35,6 +35,10 @@ export interface CloudflareNeeds {
   workflows?: { binding: string; name: string; className: string }[];
   /** Rate Limiting bindings (`[[ratelimits]]`): `limit` requests per `period` seconds (10 or 60). */
   ratelimits?: { binding: string; limit: number; period: 10 | 60 | number; namespaceId?: string }[];
+  /** Workers AI (`[ai]`). One binding per app. */
+  ai?: { binding: string };
+  /** Vectorize indexes (`[[vectorize]]`). */
+  vectorize?: { binding: string; indexName: string }[];
 }
 
 /**

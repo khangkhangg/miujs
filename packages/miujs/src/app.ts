@@ -1,7 +1,7 @@
 import { RequestContext, pathOf, type Context, type PlatformInfo, type RouteInfo } from "./context.ts";
 import { MiuError, errors, isMiuError } from "./errors.ts";
 import { createLogger, type LogLevel, type Logger } from "./logger.ts";
-import { createMcpHandler, buildRouteTool, type McpOptions } from "./mcp.ts";
+import { createMcpHandler, buildRouteTool, routeToolRequest, type McpOptions } from "./mcp.ts";
 import { generateOpenApi, type DescribedRoute, type OpenApiInfo } from "./openapi.ts";
 import type { CloudflareNeeds, McpTool, Plugin } from "./plugin.ts";
 import { isRoute, type AuthRequirement, type RouteDef } from "./route.ts";
@@ -48,6 +48,19 @@ export interface TestResponse {
 }
 
 export type CallFn = (route: RouteDef, input?: CallInput) => Promise<TestResponse>;
+
+/** A route as a callable tool. See `app.tools()`. */
+export interface AppTool {
+  name: string;
+  title?: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  annotations: Record<string, boolean>;
+  /** The route name the tool calls. */
+  route: string;
+  call(args?: Record<string, unknown>, opts?: { headers?: HeadersInit; env?: unknown; origin?: string }): Promise<{ ok: boolean; status: number; body: unknown; text: string }>;
+}
 
 export interface RouteTest {
   name: string;
@@ -663,6 +676,31 @@ export class App {
   }
 
   /**
+   * The app's routes as tools, the same ones MCP serves, for model tool-use (`@miujs/ai`), agents
+   * and scripts. Works without `mcp` on. `call` dispatches a real request, so auth, permissions
+   * and validation apply; pass the caller's headers to act as them. Call after `ready()`.
+   */
+  tools(): AppTool[] {
+    if (!this.isReady) throw errors.config("MIU_E_APP_NOT_READY", "app.tools() was called before the app was ready", "Call `await app.ready()` first.");
+    return this.described()
+      .filter((r) => r.def.config.mcp !== false)
+      .map((r) => {
+        const rt = buildRouteTool(r);
+        const call = async (args: Record<string, unknown> = {}, opts: { headers?: HeadersInit; env?: unknown; origin?: string } = {}) => {
+          const req = routeToolRequest(rt, args, opts.origin ?? "http://localhost", new Headers(opts.headers));
+          const res = await this.dispatch(req, opts.env ?? this.staticEnv, this.basePlatform);
+          const text = await res.text();
+          let body: unknown = text;
+          try {
+            body = text ? JSON.parse(text) : undefined;
+          } catch {}
+          return { ok: res.ok, status: res.status, body, text };
+        };
+        return { name: rt.tool.name, title: rt.tool.title, description: rt.tool.description, inputSchema: rt.tool.inputSchema, outputSchema: rt.tool.outputSchema, annotations: rt.tool.annotations, route: r.name, call };
+      });
+  }
+
+  /**
    * The largest body any route accepts. Bun reads this from the default export (and listen()
    * passes it), so the server refuses bigger bodies before the app reads them.
    */
@@ -788,6 +826,8 @@ export class App {
       assets,
       workflows: byBinding(all.flatMap((n) => n.workflows ?? [])),
       ratelimits: byBinding(all.flatMap((n) => n.ratelimits ?? [])),
+      ai: all.find((n) => n.ai)?.ai,
+      vectorize: byBinding(all.flatMap((n) => n.vectorize ?? [])),
       kv: uniq(all.flatMap((n) => n.kv ?? [])),
       d1: uniq(all.flatMap((n) => n.d1 ?? [])),
       r2: uniq(all.flatMap((n) => n.r2 ?? [])),

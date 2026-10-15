@@ -21,6 +21,8 @@ test("inspect() merges the Cloudflare bindings plugins need", async () => {
     assets: undefined,
     workflows: [],
     ratelimits: [],
+    ai: undefined,
+    vectorize: [],
   });
 });
 

@@ -25,7 +25,7 @@ export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 type Location = "params" | "query" | "body" | "bodyWhole";
 
-interface RouteTool {
+export interface RouteTool {
   tool: { name: string; title?: string; description: string; inputSchema: JsonSchema; outputSchema?: JsonSchema; annotations: Record<string, boolean> };
   route: DescribedRoute;
   where: Record<string, Location>;
@@ -115,7 +115,9 @@ function rpcError(id: unknown, code: number, message: string, status = 200): Res
   return Response.json({ jsonrpc: "2.0", id: id ?? null, error: { code, message } }, { status });
 }
 
-async function callRouteTool(t: RouteTool, args: Record<string, unknown>, ctx: Context, host: McpHost) {
+
+/** The HTTP request a tool call makes: args placed into path, query and JSON body. */
+export function routeToolRequest(t: RouteTool, args: Record<string, unknown>, origin: string, headers: Headers): Request {
   args ??= {};
   const path = t.route.path
     .split("/")
@@ -140,13 +142,7 @@ async function callRouteTool(t: RouteTool, args: Record<string, unknown>, ctx: C
       body = v;
     }
   }
-  const origin = ctx.url.origin;
   const qs = search.toString();
-  const headers = new Headers();
-  for (const h of ["authorization", "cookie", "x-request-id"]) {
-    const v = ctx.req.headers.get(h);
-    if (v) headers.set(h, v);
-  }
   // Flattened body properties: send `{}` when none were given so defaults and "required" issues apply.
   // A whole body (`bodyWhole`) is sent only when the caller passed one.
   if (body === undefined && Object.values(t.where).includes("body")) body = {};
@@ -156,6 +152,16 @@ async function callRouteTool(t: RouteTool, args: Record<string, unknown>, ctx: C
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  return req;
+}
+
+async function callRouteTool(t: RouteTool, args: Record<string, unknown>, ctx: Context, host: McpHost) {
+  const headers = new Headers();
+  for (const h of ["authorization", "cookie", "x-request-id"]) {
+    const v = ctx.req.headers.get(h);
+    if (v) headers.set(h, v);
+  }
+  const req = routeToolRequest(t, args ?? {}, ctx.url.origin, headers);
   const res = await host.dispatch(req, ctx);
   const text = await res.text();
   let parsed: unknown;

@@ -21,6 +21,8 @@ export interface Schema<T = unknown> {
   parse(value: unknown, path: string, issues: Issue[], coerce: boolean): T;
   /** Type-only marker so `Infer` can recover `T`. */
   readonly __type?: T;
+  /** The wrapped schema, for `t.optional`, `t.nullable` and `t.default`. */
+  readonly inner?: Schema;
 }
 
 export interface OptionalSchema<T> extends Schema<T> {
@@ -270,6 +272,7 @@ function optional<T>(inner: Schema<T>): OptionalSchema<T | undefined> {
     kind: inner.kind,
     json: inner.json,
     isOptional: true,
+    inner,
     parse: (v, path, issues, coerce) => (v === undefined ? undefined : inner.parse(v, path, issues, coerce)),
   };
 }
@@ -281,6 +284,7 @@ function withDefault<T>(inner: Schema<T>, value: T): OptionalSchema<T> & { reado
     json: { ...inner.json, default: value },
     isOptional: true,
     __default: true,
+    inner,
     // Clone object defaults so one request mutating its value cannot leak into the next.
     parse: (v, path, issues, coerce) =>
       v === undefined
@@ -296,8 +300,25 @@ function nullable<T>(inner: Schema<T>): Schema<T | null> {
     kind: inner.kind,
     json: { anyOf: [inner.json, { type: "null" }] },
     isOptional: inner.isOptional,
+    inner,
     parse: (v, path, issues, coerce) => (v === null ? null : inner.parse(v, path, issues, coerce)),
   };
+}
+
+/** A point in time. Accepts a Date or an ISO 8601 string (JSON bodies, query) and returns a Date. */
+function date(opts: Common = {}): Schema<Date> {
+  return schema("date", { type: "string", format: "date-time" }, (v, path, issues) => {
+    if (v instanceof Date) {
+      if (Number.isNaN(v.getTime())) issues.push({ path, message: "is an invalid date" });
+      return v;
+    }
+    if (typeof v === "string" && FORMATS["date-time"].test(v)) {
+      const d = new Date(v);
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+    issues.push({ path, message: `expected an ISO 8601 date-time, got ${typeName(v)}` });
+    return v as Date;
+  }, opts);
 }
 
 function any(opts: Common = {}): Schema<any> {
@@ -309,6 +330,7 @@ function unknown(opts: Common = {}): Schema<unknown> {
 }
 
 export const t = {
+  date,
   string,
   number,
   integer: (opts: Omit<NumberOptions, "integer"> = {}) => number({ ...opts, integer: true }),
