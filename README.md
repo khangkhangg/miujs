@@ -256,6 +256,10 @@ sustained load over real HTTP and WebSockets on Bun, Node and Deno.
 
 ## Security defaults
 
+The game and back-office stacks were audited adversarially, load-tested and soak-tested in
+October 2026. Every finding was fixed with a test that fails without the fix:
+[docs/assessment.md](docs/assessment.md).
+
 - **Sessions:** signed (HMAC-SHA256) `HttpOnly`, `SameSite=Lax` cookies; the id is rotated on login.
   Unsafe requests that carry the cookie must come from the same origin (or a `trustedOrigins` site).
 - **Login CSRF:** `/auth/login`, `/auth/register` and `/auth/logout` are tagged `csrf-always`.
