@@ -7,9 +7,12 @@ export type AuditKey = string | { id: string; secret: string };
 /** One key, or several: the first signs new rows, all of them verify. */
 export type AuditKeys = AuditKey | AuditKey[];
 
+/** The key object Web Crypto returns (`CryptoKeyLike`), named without lib "dom". */
+export type CryptoKeyLike = Awaited<ReturnType<typeof crypto.subtle.importKey>>;
+
 export interface ResolvedKey {
   id: string;
-  key: CryptoKey;
+  key: CryptoKeyLike;
 }
 
 export const MIN_KEY_LENGTH = 32;
@@ -81,7 +84,7 @@ export async function resolveKeys(keys: AuditKeys): Promise<ResolvedKey[]> {
   );
 }
 
-export async function hmacHex(key: CryptoKey, data: string): Promise<string> {
+export async function hmacHex(key: CryptoKeyLike, data: string): Promise<string> {
   return hex(await crypto.subtle.sign("HMAC", key, enc.encode(data)));
 }
 

@@ -10,7 +10,8 @@
 //   pack     npm pack every release package; check files, exports targets, manifest fields
 //   node     npm install the tarballs (Node 24); import every export; run fixtures/app.ts over HTTP
 //            through miujs/node with auth + session + db (node:sqlite) + cache + queue + realtime + bots
-//   types    tsc --noEmit, strict, skipLibCheck false, nodenext, against dist/types only (src/ deleted)
+//   types    tsc --noEmit, strict, skipLibCheck false, nodenext, no lib "dom", against dist/types only
+//            (src/ deleted); lists files that still need lib "dom"
 //   workers  esbuild bundle of fixtures/worker.ts with Wrangler's conditions; no static node:/bun:
 //            imports, no src/*.ts inputs, no eval/new Function; the bundle answers a request
 //   deno     npm install into a second project, Deno 2 runs the app via bare and npm: specifiers
@@ -178,28 +179,22 @@ async function main() {
       const specs = exportSpecifiers(packs);
       writeFileSync(join(nodeDir, "types-all.ts"), specs.map((s, i) => `import type * as m${i} from "${s}";`).join("\n") + `\nexport type All = [${specs.map((_, i) => `typeof m${i}`).join(", ")}];\n`);
       const tsc = join(nodeDir, "node_modules", "typescript", "bin", "tsc");
-      const typecheck = (lib: string[]) => {
-        writeFileSync(join(nodeDir, "tsconfig.json"), JSON.stringify({ compilerOptions: { ...STRICT_CONSUMER, lib }, files: ["app.ts", "worker.ts", "types-all.ts"] }, null, 2));
-        const r = run([node, tsc, "-p", "tsconfig.json", "--pretty", "false", "--listFiles"], nodeDir);
-        return { r, ...splitTscOutput(r.out) };
-      };
-      // Web-standard types (HeadersInit, BodyInit, CryptoKey, ...) come from lib "dom" (or
-      // @cloudflare/workers-types on Workers), as for any fetch-based framework.
-      const web = typecheck(["es2023", "dom", "dom.iterable"]);
-      const ok = web.ours.length === 0 && web.fromSrc.length === 0 && web.declarations > 0 && (web.r.code === 0 || web.thirdParty.length > 0);
-      const thirdParty = [...new Set(web.thirdParty.map((l) => /node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(l)?.[1] ?? "?"))];
+      // A Node-only consumer: lib es2023 + @types/node, no lib "dom". Headers, Request, Response and
+      // crypto exist there; DOM-only names (HeadersInit, BodyInit, CryptoKey, ...) do not.
+      writeFileSync(join(nodeDir, "tsconfig.json"), JSON.stringify({ compilerOptions: { ...STRICT_CONSUMER, lib: ["es2023"] }, files: ["app.ts", "worker.ts", "types-all.ts"] }, null, 2));
+      const r = run([node, tsc, "-p", "tsconfig.json", "--pretty", "false", "--listFiles"], nodeDir);
+      const t = splitTscOutput(r.out);
+      const dom = classifyDomErrors(t.ours);
+      const thirdParty = [...new Set(t.thirdParty.map((l) => /node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(l)?.[1] ?? "?"))];
+      const ok = dom.other.length === 0 && dom.unexpected.length === 0 && t.fromSrc.length === 0 && t.declarations > 0 && (r.code === 0 || t.thirdParty.length + dom.pending.length > 0);
       record(
-        "types tsc --noEmit (strict, skipLibCheck false, nodenext)",
+        "types tsc --noEmit (strict, skipLibCheck false, nodenext, no lib dom)",
         ok,
         ok
-          ? `${web.declarations} declaration files from ${specs.length} entry points, none from src/${web.thirdParty.length ? `; ignored ${web.thirdParty.length} errors inside third-party d.ts (${thirdParty.join(", ")})` : ""}`
-          : [...web.ours.slice(0, 30), ...web.fromSrc.slice(0, 5), web.ours.length ? "" : tail(web.r)].join("\n"),
+          ? `${t.declarations} declaration files from ${specs.length} entry points, none from src/${t.thirdParty.length ? `; ignored ${t.thirdParty.length} errors inside third-party d.ts (${thirdParty.join(", ")})` : ""}`
+          : [...dom.unexpected.map((l) => `needs lib dom: ${l}`), ...dom.other, ...t.fromSrc.slice(0, 5), dom.other.length + dom.unexpected.length ? "" : tail(r)].slice(0, 40).join("\n"),
       );
-      // The same without lib "dom": which web types a Node-only project (lib es2023 + @types/node) misses.
-      const bare = typecheck(["es2023"]);
-      const names = [...new Set(bare.ours.map((l) => /'(\w+)'/.exec(l)?.[1] ?? l))].sort();
-      const files = new Set(bare.ours.map((l) => l.split("(")[0])).size;
-      record("types without lib dom (Node-only consumer)", true, names.length ? `needs lib "dom" (or skipLibCheck) for: ${names.join(", ")} (${files} files)` : "no DOM-only types", names.length > 0);
+      if (dom.pending.length) record(`types: DOM-only names still in ${DOM_LIB_PENDING.join(", ")}`, true, dom.pending.join("\n"), true);
     }
 
     // 5. workers bundle
@@ -290,6 +285,28 @@ export function splitTscOutput(out: string) {
     fromSrc: listed.filter((l) => /node_modules\/(miujs|@miujs\/[^/]+)\/src\//.test(l)),
     declarations: listed.filter((l) => /node_modules\/(miujs|@miujs)\//.test(l)).length,
   };
+}
+
+/**
+ * Packages whose public types still use DOM-only names (reported as a warning, not a failure).
+ * Empty this list once they are fixed: then any DOM-only name in any package fails the check.
+ */
+export const DOM_LIB_PENDING: readonly string[] = ["miujs"];
+
+/**
+ * Splits our tsc errors (from splitTscOutput) into: a missing global type in one of our .d.ts files
+ * (needs lib "dom"), for a pending package or not, and every other error.
+ */
+export function classifyDomErrors(ours: string[]) {
+  const pending: string[] = [];
+  const unexpected: string[] = [];
+  const other: string[] = [];
+  for (const l of ours) {
+    const m = /node_modules\/((?:@miujs\/[^/]+)|miujs)\/(dist\/types\/[^(]+)\((\d+),\d+\): error TS(2304|2552|2749): .*?'(\w+)'/.exec(l);
+    if (!m) other.push(l);
+    else (DOM_LIB_PENDING.includes(m[1]) ? pending : unexpected).push(`${m[1]}/${m[2]}:${m[3]} ${m[5]}`);
+  }
+  return { pending, unexpected, other };
 }
 
 /** Optional peer dependencies of the packed packages, as devDependencies for the consumer. */

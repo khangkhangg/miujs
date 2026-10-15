@@ -11,7 +11,7 @@ import type { StreamEvent } from "./types.ts";
  * route.post("/chat", { handler: ({ ai, body }) => toSSE(ai.stream({ prompt: body.q })) })
  * ```
  */
-export function toSSE(stream: AsyncIterable<StreamEvent>, init: { headers?: HeadersInit } = {}): Response {
+export function toSSE(stream: AsyncIterable<StreamEvent>, init: { headers?: Headers | Record<string, string> | [string, string][] } = {}): Response {
   const enc = new TextEncoder();
   const frame = (event: string, data: unknown) => enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   let iter: AsyncIterator<StreamEvent> | undefined;

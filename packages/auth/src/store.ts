@@ -1,6 +1,7 @@
 import { migrateOnce, resolveDatabase, describeDatabase, type DatabaseSource, type Migration } from "@miujs/db";
 import { randomId } from "@miujs/session";
 import type { Env } from "miujs";
+import type { Jwk } from "./jose.ts";
 
 export interface StoredUser {
   id: string;
@@ -138,7 +139,7 @@ export interface PasskeyRecord {
   /** base64url credential id. */
   credentialId: string;
   /** Public key as a JWK (converted from the COSE key at registration). */
-  publicKey: JsonWebKey;
+  publicKey: Jwk;
   /** COSE algorithm: -7 (ES256) or -257 (RS256). */
   algorithm: number;
   signCount: number;

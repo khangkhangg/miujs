@@ -71,7 +71,7 @@ export function raw(value: string): HtmlString {
 
 export interface RenderOptions {
   status?: number;
-  headers?: HeadersInit;
+  headers?: Headers | Record<string, string> | [string, string][];
   /**
    * Prepend `<!doctype html>`. Default: only when the content starts with `<html` (a full
    * document) and has no doctype yet. `false` never adds one; `true` always does (unless present).

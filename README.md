@@ -313,8 +313,8 @@ export const followUp = defineWorkflow("contact-follow-up", {
   room timers are lost when a Durable Object hibernates.
 - **Deno and Node:** `bun run smoke` runs the same HTTP checks on Bun, Node 24 and Deno 2 (routing,
   validation, body limits, cookies, `ctx.ip`, MCP, `waitUntil`); all pass. The full test suite runs on
-  Bun only. Published packages will need prebuilt JS for Node, because Node won't strip types inside
-  `node_modules`.
+  Bun only. Node won't strip types inside `node_modules`, so the npm build ships prebuilt JS and
+  `.d.ts` for Node and Deno (Bun still loads the TypeScript source).
 - **Speed:** fastest on validated JSON bodies; 10–18% behind Elysia on a params route and
   10–16% behind on a trivial text route under `Bun.serve`. Elysia compiles one function per route
   with `new Function`, which Workers forbid ([bench](bench/README.md)).

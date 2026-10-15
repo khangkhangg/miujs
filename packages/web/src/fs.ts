@@ -4,6 +4,9 @@
  */
 import { detectRuntime } from "miujs";
 
+/** What `new Response(body)` accepts (the DOM's `BodyInit`), named without lib "dom". */
+export type ResponseBody = NonNullable<ConstructorParameters<typeof Response>[0]>;
+
 export interface FileStat {
   size: number;
   mtimeMs: number;
@@ -16,7 +19,7 @@ export interface FileSource {
   /** `null` when the path does not exist. */
   stat(path: string): Promise<FileStat | null>;
   /** Body for bytes `start..end` inclusive. */
-  body(path: string, start: number, end: number): BodyInit | Promise<BodyInit>;
+  body(path: string, start: number, end: number): ResponseBody | Promise<ResponseBody>;
   /** Resolve `dir` to an absolute path and give the platform separator. */
   root(dir: string): Promise<{ root: string; sep: string }>;
 }

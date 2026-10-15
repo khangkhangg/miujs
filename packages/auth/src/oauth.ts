@@ -3,7 +3,7 @@
 
 import { errors, route, t, type Context, type Env, type RouteDef } from "miujs";
 import { base64urlDecode, base64urlEncode, hex, randomBytes, randomId, sha256, sign, timingSafeEqual, unsign, utf8 } from "@miujs/session";
-import { importEs256PrivateKey, signJwt, verifyJws, type JwsHeader } from "./jose.ts";
+import { importEs256PrivateKey, signJwt, verifyJws, type CryptoKeyLike, type JwsHeader, type Jwk } from "./jose.ts";
 import { UNUSABLE_PASSWORD, unusablePasswordHash } from "./password.ts";
 import type { StoredUser, UserStore } from "./store.ts";
 
@@ -185,7 +185,7 @@ function clientSecretFor(id: string, given: string | undefined) {
 
 function appleSecret(o: AppleOAuthOptions) {
   let cached: { jwt: string; exp: number } | null = null;
-  let key: Promise<CryptoKey> | null = null;
+  let key: Promise<CryptoKeyLike> | null = null;
   return async (env: Env) => {
     const now = Math.floor(Date.now() / 1000);
     if (cached && cached.exp - now > 3600) return cached.jwt;
@@ -317,7 +317,7 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
   // --- discovery and JWKS (cached per process) -------------------------------------------------
 
   const discoveries = new Map<string, { at: number; doc: Promise<Discovery> }>();
-  const jwks = new Map<string, { at: number; missAt: number; keys: Promise<JsonWebKey[]> }>();
+  const jwks = new Map<string, { at: number; missAt: number; keys: Promise<Jwk[]> }>();
 
   async function getJson(url: string, init: RequestInit, fail: (why: string) => Error): Promise<Record<string, unknown>> {
     let res: Response;
@@ -361,13 +361,13 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
     return doc;
   }
 
-  function fetchKeys(uri: string, p: Provider): Promise<JsonWebKey[]> {
-    return getJson(uri, { headers: { accept: "application/json" } }, discoveryError(p)).then((b) => (Array.isArray(b.keys) ? (b.keys as JsonWebKey[]) : []));
+  function fetchKeys(uri: string, p: Provider): Promise<Jwk[]> {
+    return getJson(uri, { headers: { accept: "application/json" } }, discoveryError(p)).then((b) => (Array.isArray(b.keys) ? (b.keys as Jwk[]) : []));
   }
 
-  async function keyFor(p: Provider, uri: string, header: JwsHeader): Promise<JsonWebKey | null> {
+  async function keyFor(p: Provider, uri: string, header: JwsHeader): Promise<Jwk | null> {
     const kty = header.alg === "RS256" ? "RSA" : "EC";
-    const pick = (keys: JsonWebKey[]) => {
+    const pick = (keys: Jwk[]) => {
       const usable = keys.filter((k) => k && k.kty === kty);
       if (header.kid !== undefined) return usable.find((k) => (k as { kid?: string }).kid === header.kid) ?? null;
       return usable.length === 1 ? usable[0] : null;

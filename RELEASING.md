@@ -84,7 +84,7 @@ registry for typescript, esbuild, @types/node and the optional peers) packs ever
 |---|---|
 | pack | each tarball has README, both license files and every `exports`/`main`/`bin` target, and no tests |
 | node | `npm install` of the tarballs only (no registry copy of ours); every export imports from `dist/*.js`; an app with auth + session + db (node:sqlite) + cache + queue + realtime + bots answers real HTTP through `miujs/node` |
-| types | `tsc --noEmit` with `strict`, `skipLibCheck: false`, `nodenext`, every export, after deleting the packages' `src/` |
+| types | `tsc --noEmit` with `strict`, `skipLibCheck: false`, `nodenext` and no lib `"dom"` (lib es2023 + @types/node), every export, after deleting the packages' `src/`; DOM-only names fail, except in packages listed in `DOM_LIB_PENDING` (`miujs` for now), which are listed as a warning |
 | workers | esbuild with Wrangler's `workerd`/`worker`/`browser` conditions: no static `node:`/`bun:` imports, no `src/*.ts`, no `eval`; the bundle answers a request as `workerd` |
 | deno | Deno 2 runs the same app with bare and `npm:` specifiers, and `deno check` passes |
 | bun | `bun install` of the tarballs; Bun runs the app from the TypeScript source |

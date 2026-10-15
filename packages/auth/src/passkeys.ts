@@ -4,7 +4,7 @@
 import { errors, route, t, type AuthUser, type Context, type Env, type MiuError, type RouteDef } from "miujs";
 import { base64urlDecode, base64urlEncode, randomBytes, sha256, timingSafeEqual, utf8 } from "@miujs/session";
 import { decodeCbor, decodeCborPrefix, type CborValue } from "./cbor.ts";
-import { derToRawSignature, importVerifyKey, verifySignature, type JwsAlgorithm } from "./jose.ts";
+import { derToRawSignature, importVerifyKey, verifySignature, type JwsAlgorithm, type Jwk } from "./jose.ts";
 import type { PasskeyRecord, StoredUser, UserStore } from "./store.ts";
 
 export interface PasskeyOptions {
@@ -118,14 +118,14 @@ function authData(ad: Uint8Array): AuthData {
 }
 
 /** COSE_Key → JWK, for ES256 (EC2, P-256) and RS256 (RSA ≥ 2048 bits) only. */
-async function coseToJwk(cose: CborValue): Promise<{ jwk: JsonWebKey; alg: number }> {
+async function coseToJwk(cose: CborValue): Promise<{ jwk: Jwk; alg: number }> {
   if (!(cose instanceof Map)) throw invalid("the credential public key is not a COSE key");
   const alg = cose.get(3);
   if (typeof alg !== "number" || !(alg in ALGS)) {
     throw pkError("ALGORITHM", 400, `Passkey algorithm ${String(alg)} is not supported`, "Offer ES256 (-7) or RS256 (-257): use pubKeyCredParams from /auth/passkeys/register/options as-is.");
   }
   const b64 = (v: CborValue) => base64urlEncode(v as Uint8Array);
-  let jwk: JsonWebKey;
+  let jwk: Jwk;
   if (alg === -7) {
     const x = cose.get(-2);
     const y = cose.get(-3);

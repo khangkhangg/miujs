@@ -1,12 +1,12 @@
 // Release tooling: version bumps, publish order and preflight, tarball checks, and the workflow.
 // The full pack-install-run proof is `bun scripts/release/verify.ts` (minutes, needs the network).
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { RELEASE_PACKAGES, buildOrder, publishManifest } from "../build-packages.ts";
+import { RELEASE_PACKAGES, buildOrder, buildPackage, publishManifest } from "../build-packages.ts";
 import { ROOT, readPackageJson } from "../lib/repo.ts";
 import { distTag, preflight } from "./publish.ts";
-import { checkTarball, parseArgs, splitTscOutput } from "./verify.ts";
+import { checkTarball, classifyDomErrors, parseArgs, splitTscOutput } from "./verify.ts";
 import { addChangelogEntry, nextVersion, setVersion } from "./version.ts";
 
 describe("version.ts", () => {
@@ -95,6 +95,18 @@ describe("verify.ts", () => {
     expect(r.declarations).toBe(2);
   });
 
+  test("classifyDomErrors: missing DOM names are pending (miujs) or failures (others); the rest are failures", () => {
+    const r = classifyDomErrors([
+      "node_modules/miujs/dist/types/app.d.ts(35,15): error TS2304: Cannot find name 'HeadersInit'.",
+      "node_modules/@miujs/web/dist/types/html.d.ts(20,15): error TS2304: Cannot find name 'HeadersInit'.",
+      "node_modules/@miujs/auth/dist/types/jose.d.ts(19,32): error TS2749: 'CryptoKey' refers to a value, but is being used as a type here.",
+      "app.ts(3,1): error TS2322: Type 'string' is not assignable to type 'number'.",
+    ]);
+    expect(r.pending).toEqual(["miujs/dist/types/app.d.ts:35 HeadersInit"]);
+    expect(r.unexpected).toEqual(["@miujs/web/dist/types/html.d.ts:20 HeadersInit", "@miujs/auth/dist/types/jose.d.ts:19 CryptoKey"]);
+    expect(r.other).toHaveLength(1);
+  });
+
   test("--only/--skip choose steps; pack always runs", () => {
     expect([...parseArgs(["--only", "node"]).steps].sort()).toEqual(["node", "pack"]);
     expect(parseArgs(["--skip=deno,bun"]).steps.has("deno")).toBe(false);
@@ -129,4 +141,28 @@ describe(".github/workflows/release.yml", () => {
     expect(steps.find((s) => s.run?.includes("publish.ts --dry-run"))?.if).toContain("inputs.dry_run");
     expect(steps.find((s) => s.uses?.startsWith("actions/setup-node"))?.with).toMatchObject({ "node-version": "24", "registry-url": "https://registry.npmjs.org" });
   });
+});
+
+describe("public declarations without lib dom", () => {
+  // Node consumers (lib es2023 + @types/node) have Headers, Request, Response and crypto, but not
+  // these DOM-only names. scripts/release/verify.ts proves the same with tsc on the packed tarballs.
+  const DOM_ONLY = /\b(HeadersInit|BodyInit|CryptoKey|JsonWebKey)\b/;
+  const declarationsUsing = (folder: string) => {
+    const dir = join(ROOT, "packages", folder, "dist", "types");
+    const hits: string[] = [];
+    for (const name of readdirSync(dir, { recursive: true }) as string[]) {
+      if (!name.endsWith(".d.ts")) continue;
+      const text = readFileSync(join(dir, name), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+      text.split("\n").forEach((l, i) => {
+        const m = DOM_ONLY.exec(l);
+        if (m) hits.push(`${folder}/dist/types/${name.replaceAll("\\", "/")}:${i + 1} ${m[1]}`);
+      });
+    }
+    return hits;
+  };
+
+  test("auth, audit, web and ai use no DOM-only type names", async () => {
+    for (const folder of buildOrder(["auth", "audit", "web", "ai"])) await buildPackage(folder);
+    expect(["auth", "audit", "web", "ai"].flatMap(declarationsUsing)).toEqual([]);
+  }, 180_000);
 });

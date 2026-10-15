@@ -110,7 +110,9 @@ export function fileSink(path: string): AnchorSink & { read(): Promise<Anchor[]>
     if (detectRuntime() === "workerd") {
       throw errors.config("MIU_E_AUDIT_SINK_UNSUPPORTED", "fileSink() needs a filesystem", 'On Workers use an R2 bucket or KV binding: anchorHead(store, "AUDIT_ANCHORS").');
     }
-    return import("node:fs/promises");
+    // A variable specifier keeps bundlers (Wrangler/esbuild) from resolving node:fs at build time.
+    const mod = "node:fs/promises";
+    return (await import(/* @vite-ignore */ mod)) as typeof import("node:fs/promises");
   };
   return {
     async put(_key, value) {
@@ -135,7 +137,8 @@ export function fileSink(path: string): AnchorSink & { read(): Promise<Anchor[]>
 export interface HttpSinkOptions {
   /** Injectable fetch, e.g. for tests or a service binding. Default global `fetch`. */
   fetch?: (url: string, init: RequestInit) => Promise<Response>;
-  headers?: HeadersInit;
+  /** Extra request headers. */
+  headers?: Headers | Record<string, string> | [string, string][];
 }
 
 /** POSTs each anchor as JSON to `url` (header `x-audit-anchor-key` carries the key). Non-2xx throws. */
