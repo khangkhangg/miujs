@@ -4,6 +4,7 @@ import { definePlugin, errors, type CloudflareNeeds, type Context, type RouteDef
 import { describeDatabase, resolveDatabase, type Database, type DatabaseSource } from "@miujs/db";
 import { evaluate, type OrgInfo, type Permission, type Policy, type Roles } from "./permissions.ts";
 import { accessStore, type AccessStore } from "./store.ts";
+import { accessManage } from "./manage.ts";
 
 export type OrgSource = "header" | "path" | "session" | ((ctx: Context) => string | null | undefined | Promise<string | null | undefined>);
 
@@ -151,6 +152,9 @@ export function accessPlugin(opts: AccessOptions, routes: RouteDef[], state: { d
       if (!membership) throw notMember();
       org = Object.freeze({ id: candidate, role: membership.role });
       define(ctx, "org", org);
+    },
+    manage() {
+      return accessManage(opts);
     },
     inspect() {
       return {

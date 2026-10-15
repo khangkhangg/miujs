@@ -1,7 +1,7 @@
 // Contract capture: record request/response pairs (through the proxy or MiuJS routes) as JSONL
 // cases that verifyContracts() replays. Personal data is redacted before anything is written.
 
-import { definePlugin, detectRuntime, type Context } from "miujs";
+import { definePlugin, detectRuntime, t, type Context, type ManageSection } from "miujs";
 import { fromUtf8 } from "./bytes.ts";
 import { migrateError } from "./errors.ts";
 import { PROXIED } from "./proxy.ts";
@@ -226,11 +226,16 @@ export function captureMiddleware(opts: CaptureOptions) {
   const extra = (opts.headers ?? []).map((h) => h.toLowerCase());
   const reqNames = [...new Set([...REQUEST_HEADERS, ...extra])];
   const resNames = [...new Set([...RESPONSE_HEADERS, ...extra])];
+  // Live: an operator can change them (manage() settings). A custom sample function stays as given.
+  let sample: number | ((ctx: Context) => boolean) = opts.sample ?? 1;
+  let only: "all" | "proxied" = opts.only ?? "all";
+  // Since this instance started (plain numbers: constant memory).
+  const counters = { recorded: 0, failed: 0 };
 
   return definePlugin({
     name: "migrate-capture",
     onRequest(ctx) {
-      const s = opts.sample ?? 1;
+      const s = sample;
       const take = typeof s === "function" ? s(ctx) : s >= 1 || Math.random() < s;
       if (!take) return;
       const hasBody = ctx.method !== "GET" && ctx.method !== "HEAD" && ctx.req.body !== null;
@@ -256,7 +261,7 @@ export function captureMiddleware(opts: CaptureOptions) {
       const st = ctx.state[STATE] as { start: number; query: Record<string, string | string[]>; reqBody: Promise<Decoded> } | undefined;
       if (!st) return;
       const proxied = ctx.state[PROXIED] === true;
-      if (opts.only === "proxied" && !proxied) return;
+      if (only === "proxied" && !proxied) return;
       const durationMs = Math.round((performance.now() - st.start) * 100) / 100;
       // An event stream may never end: recording it would keep this capture (and a tee of the
       // stream) alive for as long as the upstream keeps sending.
@@ -284,14 +289,53 @@ export function captureMiddleware(opts: CaptureOptions) {
             if (reqBody.omitted) entry.bodyOmitted = reqBody.omitted;
             if (resBody.omitted) entry.responseOmitted = resBody.omitted;
             await writeTo(opts.sink, entry);
+            counters.recorded++;
           } catch (err) {
+            counters.failed++;
             ctx.log.warn("contract capture failed", { err: err instanceof Error ? err.message : String(err) });
           }
         })(),
       );
     },
+    manage(): ManageSection[] {
+      const custom = typeof sample === "function";
+      const Only = t.enum(["all", "proxied"] as const, { description: "Record every exchange, or only those forwarded to the old app." });
+      const since = "Since this instance started";
+      return [
+        {
+          id: "capture",
+          title: "Contract capture",
+          description: "Request/response pairs recorded (redacted) for verifyContracts().",
+          status: () => ({
+            stats: [
+              { label: "Recorded", value: counters.recorded, hint: since },
+              { label: "Failed writes", value: counters.failed, hint: since, ...(counters.failed ? { tone: "warning" as const } : {}) },
+              { label: "Sample", value: typeof sample === "function" ? "custom" : sample },
+              { label: "Recording", value: only },
+              { label: "Max body bytes", value: max },
+            ],
+          }),
+          settings: custom
+            ? {
+                schema: t.object({ only: Only }),
+                get: () => ({ only }),
+                set(v: { only: "all" | "proxied" }) {
+                  only = v.only;
+                },
+              }
+            : {
+                schema: t.object({ sample: t.number({ min: 0, max: 1, description: "Fraction of requests to record (0 = stop recording)." }), only: Only }),
+                get: () => ({ sample: sample as number, only }),
+                set(v: { sample: number; only: "all" | "proxied" }) {
+                  sample = v.sample;
+                  only = v.only;
+                },
+              },
+        },
+      ];
+    },
     inspect() {
-      return { sample: typeof opts.sample === "function" ? "custom" : (opts.sample ?? 1), only: opts.only ?? "all", maxBodyBytes: max, redactKeys: opts.redact?.keys ?? [], headers: extra };
+      return { sample: typeof sample === "function" ? "custom" : sample, only, maxBodyBytes: max, redactKeys: opts.redact?.keys ?? [], headers: extra };
     },
   });
 }

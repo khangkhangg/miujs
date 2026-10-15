@@ -155,6 +155,16 @@ R2 needs every part except the last to be at least 5 MiB and the same size.
 | `key` | `(file) => string` | `<prefix><random><ext>` | Choose the key yourself. |
 | `metadata` | `Record<string, string>` | none | Extra metadata stored with each file. |
 
+## In @miujs/admin
+
+`files()` has a management section (`manage()`), shown by `@miujs/admin`:
+
+- **Status**: store kind and its non-secret details (directory, R2 binding, S3 bucket/region/endpoint), file count and total size (one page of up to 1,000 files is counted; more shows as `1000+`), max upload size, multipart on/off, and whether a signing secret is set (never its value).
+- **Files list** (paged; the search box is a key prefix): delete a file (dangerous, idempotent) and get a download link (a signed GET URL, 10 s to 1 h, default 5 min; anyone holding it can download until it expires).
+- **Settings**: `maxUploadSize`, the default size limit for signed PUT uploads, applied at once.
+
+There is no "purge orphaned uploads": stores do not list unfinished multipart uploads (the memory store drops stale ones by itself).
+
 ## Errors
 
 - `MIU_E_FILES_KEY_INVALID`: the key is not a safe relative path (400).

@@ -22,22 +22,22 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 | --- | --- |
 | `miujs` | [MIU_E_APP_NOT_READY](#miu_e_app_not_ready), [MIU_E_APP_STARTED](#miu_e_app_started), [MIU_E_BAD_JSON](#miu_e_bad_json), [MIU_E_BAD_REQUEST](#miu_e_bad_request), [MIU_E_BODY_TOO_LARGE](#miu_e_body_too_large), [MIU_E_CLOUDFLARE_ASSETS_CONFLICT](#miu_e_cloudflare_assets_conflict), [MIU_E_CONFLICT](#miu_e_conflict), [MIU_E_COOKIE_VALUE_INVALID](#miu_e_cookie_value_invalid), [MIU_E_FORBIDDEN](#miu_e_forbidden), [MIU_E_INTERNAL](#miu_e_internal), [MIU_E_LISTEN_UNSUPPORTED](#miu_e_listen_unsupported), [MIU_E_MCP_TOOL_DUPLICATE](#miu_e_mcp_tool_duplicate), [MIU_E_METHOD_NOT_ALLOWED](#miu_e_method_not_allowed), [MIU_E_NOT_FOUND](#miu_e_not_found), [MIU_E_PARAM_MISSING](#miu_e_param_missing), [MIU_E_PARAM_SHADOWED](#miu_e_param_shadowed), [MIU_E_PARAM_UNKNOWN](#miu_e_param_unknown), [MIU_E_PERMISSION_UNCHECKED](#miu_e_permission_unchecked), [MIU_E_RATE_LIMITED](#miu_e_rate_limited), [MIU_E_RESPONSE_INVALID](#miu_e_response_invalid), [MIU_E_ROUTE_CONFLICT](#miu_e_route_conflict), [MIU_E_ROUTE_DUPLICATE](#miu_e_route_duplicate), [MIU_E_ROUTE_INVALID](#miu_e_route_invalid), [MIU_E_ROUTE_NAME_DUPLICATE](#miu_e_route_name_duplicate), [MIU_E_ROUTE_NOT_FOUND](#miu_e_route_not_found), [MIU_E_SERVICE_DUPLICATE](#miu_e_service_duplicate), [MIU_E_SERVICE_MISSING](#miu_e_service_missing), [MIU_E_UNAUTHORIZED](#miu_e_unauthorized), [MIU_E_VALIDATION](#miu_e_validation), [MIU_E_WS_EXPECTED](#miu_e_ws_expected), [MIU_E_WS_UNSUPPORTED](#miu_e_ws_unsupported) |
 | `@miujs/cli` | [MIU_E_CLI_ADD_USAGE](#miu_e_cli_add_usage), [MIU_E_CLI_BUILD_FAILED](#miu_e_cli_build_failed), [MIU_E_CLI_DB_NOT_FOUND](#miu_e_cli_db_not_found), [MIU_E_CLI_DB_SOURCE](#miu_e_cli_db_source), [MIU_E_CLI_DB_USAGE](#miu_e_cli_db_usage), [MIU_E_CLI_DENO_JSON](#miu_e_cli_deno_json), [MIU_E_CLI_DEPLOY_TARGET](#miu_e_cli_deploy_target), [MIU_E_CLI_DRIZZLE_MISSING](#miu_e_cli_drizzle_missing), [MIU_E_CLI_EXISTS](#miu_e_cli_exists), [MIU_E_CLI_FLAG_VALUE](#miu_e_cli_flag_value), [MIU_E_CLI_LOADTEST_USAGE](#miu_e_cli_loadtest_usage), [MIU_E_CLI_LOGS_FILE](#miu_e_cli_logs_file), [MIU_E_CLI_LOGS_SOURCE](#miu_e_cli_logs_source), [MIU_E_CLI_NEW_USAGE](#miu_e_cli_new_usage), [MIU_E_CLI_NO_APP](#miu_e_cli_no_app), [MIU_E_CLI_NO_DEFAULT_EXPORT](#miu_e_cli_no_default_export), [MIU_E_CLI_SCHEMA_EMPTY](#miu_e_cli_schema_empty), [MIU_E_CLI_SCHEMA_NOT_FOUND](#miu_e_cli_schema_not_found), [MIU_E_CLI_TEMPLATE](#miu_e_cli_template), [MIU_E_CLI_UNKNOWN_COMMAND](#miu_e_cli_unknown_command), [MIU_E_CLI_UNKNOWN_FLAG](#miu_e_cli_unknown_flag), [MIU_E_CLI_WRANGLER](#miu_e_cli_wrangler), [MIU_E_NOT_IMPLEMENTED](#miu_e_not_implemented), [MIU_W_DO_NOT_EXPORTED](#miu_w_do_not_exported), [MIU_W_SECRET_IN_CODE](#miu_w_secret_in_code), [MIU_W_TYPECHECK](#miu_w_typecheck), [MIU_W_UNAUTHENTICATED_MUTATION](#miu_w_unauthenticated_mutation), [MIU_W_WORKERS_BUNDLE](#miu_w_workers_bundle), [MIU_W_WORKERS_NODE_IMPORT](#miu_w_workers_node_import), [MIU_W_WORKFLOW_NOT_EXPORTED](#miu_w_workflow_not_exported) |
-| `@miujs/auth` | [MIU_E_AUTH_APP_URL_INVALID](#miu_e_auth_app_url_invalid), [MIU_E_AUTH_APP_URL_MISSING](#miu_e_auth_app_url_missing), [MIU_E_AUTH_EMAIL_TAKEN](#miu_e_auth_email_taken), [MIU_E_AUTH_EMAIL_UNVERIFIED](#miu_e_auth_email_unverified), [MIU_E_AUTH_HASH_UNSUPPORTED](#miu_e_auth_hash_unsupported), [MIU_E_AUTH_INVALID](#miu_e_auth_invalid), [MIU_E_AUTH_MAILER_MISSING](#miu_e_auth_mailer_missing), [MIU_E_AUTH_OAUTH_ACCOUNT_EXISTS](#miu_e_auth_oauth_account_exists), [MIU_E_AUTH_OAUTH_ALREADY_LINKED](#miu_e_auth_oauth_already_linked), [MIU_E_AUTH_OAUTH_CLIENT_SECRET_MISSING](#miu_e_auth_oauth_client_secret_missing), [MIU_E_AUTH_OAUTH_CONFIG](#miu_e_auth_oauth_config), [MIU_E_AUTH_OAUTH_CONFLICT](#miu_e_auth_oauth_conflict), [MIU_E_AUTH_OAUTH_DENIED](#miu_e_auth_oauth_denied), [MIU_E_AUTH_OAUTH_DISCOVERY](#miu_e_auth_oauth_discovery), [MIU_E_AUTH_OAUTH_EMAIL_UNVERIFIED](#miu_e_auth_oauth_email_unverified), [MIU_E_AUTH_OAUTH_ID_TOKEN](#miu_e_auth_oauth_id_token), [MIU_E_AUTH_OAUTH_LAST_METHOD](#miu_e_auth_oauth_last_method), [MIU_E_AUTH_OAUTH_PROFILE](#miu_e_auth_oauth_profile), [MIU_E_AUTH_OAUTH_PROVIDER_UNKNOWN](#miu_e_auth_oauth_provider_unknown), [MIU_E_AUTH_OAUTH_RETURN_TO](#miu_e_auth_oauth_return_to), [MIU_E_AUTH_OAUTH_SESSION_REQUIRED](#miu_e_auth_oauth_session_required), [MIU_E_AUTH_OAUTH_STATE](#miu_e_auth_oauth_state), [MIU_E_AUTH_OAUTH_STATE_SECRET_MISSING](#miu_e_auth_oauth_state_secret_missing), [MIU_E_AUTH_OAUTH_TOKEN](#miu_e_auth_oauth_token), [MIU_E_AUTH_PASSKEY_ALGORITHM](#miu_e_auth_passkey_algorithm), [MIU_E_AUTH_PASSKEY_ATTESTATION](#miu_e_auth_passkey_attestation), [MIU_E_AUTH_PASSKEY_CHALLENGE](#miu_e_auth_passkey_challenge), [MIU_E_AUTH_PASSKEY_CLONED](#miu_e_auth_passkey_cloned), [MIU_E_AUTH_PASSKEY_CONFIG](#miu_e_auth_passkey_config), [MIU_E_AUTH_PASSKEY_EXISTS](#miu_e_auth_passkey_exists), [MIU_E_AUTH_PASSKEY_FLAGS](#miu_e_auth_passkey_flags), [MIU_E_AUTH_PASSKEY_INVALID](#miu_e_auth_passkey_invalid), [MIU_E_AUTH_PASSKEY_ORIGIN](#miu_e_auth_passkey_origin), [MIU_E_AUTH_PASSKEY_RP_ID](#miu_e_auth_passkey_rp_id), [MIU_E_AUTH_PASSKEY_SESSION_REQUIRED](#miu_e_auth_passkey_session_required), [MIU_E_AUTH_PASSWORD_INCORRECT](#miu_e_auth_password_incorrect), [MIU_E_AUTH_PASSWORD_WEAK](#miu_e_auth_password_weak), [MIU_E_AUTH_RATELIMIT_BINDING](#miu_e_auth_ratelimit_binding), [MIU_E_AUTH_RESET_INVALID](#miu_e_auth_reset_invalid), [MIU_E_AUTH_SESSION_REQUIRED](#miu_e_auth_session_required), [MIU_E_AUTH_STORE_UNSUPPORTED](#miu_e_auth_store_unsupported), [MIU_E_AUTH_TOKEN_INVALID](#miu_e_auth_token_invalid), [MIU_E_AUTH_TURNSTILE_FAILED](#miu_e_auth_turnstile_failed), [MIU_E_AUTH_TURNSTILE_SECRET_MISSING](#miu_e_auth_turnstile_secret_missing), [MIU_E_AUTH_VERIFY_INVALID](#miu_e_auth_verify_invalid) |
+| `@miujs/auth` | [MIU_E_AUTH_ACCOUNT_DISABLED](#miu_e_auth_account_disabled), [MIU_E_AUTH_APP_URL_INVALID](#miu_e_auth_app_url_invalid), [MIU_E_AUTH_APP_URL_MISSING](#miu_e_auth_app_url_missing), [MIU_E_AUTH_EMAIL_TAKEN](#miu_e_auth_email_taken), [MIU_E_AUTH_EMAIL_UNVERIFIED](#miu_e_auth_email_unverified), [MIU_E_AUTH_HASH_UNSUPPORTED](#miu_e_auth_hash_unsupported), [MIU_E_AUTH_INVALID](#miu_e_auth_invalid), [MIU_E_AUTH_MAILER_MISSING](#miu_e_auth_mailer_missing), [MIU_E_AUTH_OAUTH_ACCOUNT_EXISTS](#miu_e_auth_oauth_account_exists), [MIU_E_AUTH_OAUTH_ALREADY_LINKED](#miu_e_auth_oauth_already_linked), [MIU_E_AUTH_OAUTH_CLIENT_SECRET_MISSING](#miu_e_auth_oauth_client_secret_missing), [MIU_E_AUTH_OAUTH_CONFIG](#miu_e_auth_oauth_config), [MIU_E_AUTH_OAUTH_CONFLICT](#miu_e_auth_oauth_conflict), [MIU_E_AUTH_OAUTH_DENIED](#miu_e_auth_oauth_denied), [MIU_E_AUTH_OAUTH_DISCOVERY](#miu_e_auth_oauth_discovery), [MIU_E_AUTH_OAUTH_EMAIL_UNVERIFIED](#miu_e_auth_oauth_email_unverified), [MIU_E_AUTH_OAUTH_ID_TOKEN](#miu_e_auth_oauth_id_token), [MIU_E_AUTH_OAUTH_LAST_METHOD](#miu_e_auth_oauth_last_method), [MIU_E_AUTH_OAUTH_PROFILE](#miu_e_auth_oauth_profile), [MIU_E_AUTH_OAUTH_PROVIDER_UNKNOWN](#miu_e_auth_oauth_provider_unknown), [MIU_E_AUTH_OAUTH_RETURN_TO](#miu_e_auth_oauth_return_to), [MIU_E_AUTH_OAUTH_SESSION_REQUIRED](#miu_e_auth_oauth_session_required), [MIU_E_AUTH_OAUTH_SIGNUPS_CLOSED](#miu_e_auth_oauth_signups_closed), [MIU_E_AUTH_OAUTH_STATE](#miu_e_auth_oauth_state), [MIU_E_AUTH_OAUTH_STATE_SECRET_MISSING](#miu_e_auth_oauth_state_secret_missing), [MIU_E_AUTH_OAUTH_TOKEN](#miu_e_auth_oauth_token), [MIU_E_AUTH_PASSKEY_ALGORITHM](#miu_e_auth_passkey_algorithm), [MIU_E_AUTH_PASSKEY_ATTESTATION](#miu_e_auth_passkey_attestation), [MIU_E_AUTH_PASSKEY_CHALLENGE](#miu_e_auth_passkey_challenge), [MIU_E_AUTH_PASSKEY_CLONED](#miu_e_auth_passkey_cloned), [MIU_E_AUTH_PASSKEY_CONFIG](#miu_e_auth_passkey_config), [MIU_E_AUTH_PASSKEY_EXISTS](#miu_e_auth_passkey_exists), [MIU_E_AUTH_PASSKEY_FLAGS](#miu_e_auth_passkey_flags), [MIU_E_AUTH_PASSKEY_INVALID](#miu_e_auth_passkey_invalid), [MIU_E_AUTH_PASSKEY_ORIGIN](#miu_e_auth_passkey_origin), [MIU_E_AUTH_PASSKEY_RP_ID](#miu_e_auth_passkey_rp_id), [MIU_E_AUTH_PASSKEY_SESSION_REQUIRED](#miu_e_auth_passkey_session_required), [MIU_E_AUTH_PASSWORD_INCORRECT](#miu_e_auth_password_incorrect), [MIU_E_AUTH_PASSWORD_WEAK](#miu_e_auth_password_weak), [MIU_E_AUTH_RATELIMIT_BINDING](#miu_e_auth_ratelimit_binding), [MIU_E_AUTH_RESET_INVALID](#miu_e_auth_reset_invalid), [MIU_E_AUTH_SESSION_REQUIRED](#miu_e_auth_session_required), [MIU_E_AUTH_SIGNUPS_CLOSED](#miu_e_auth_signups_closed), [MIU_E_AUTH_STORE_UNSUPPORTED](#miu_e_auth_store_unsupported), [MIU_E_AUTH_TOKEN_INVALID](#miu_e_auth_token_invalid), [MIU_E_AUTH_TURNSTILE_FAILED](#miu_e_auth_turnstile_failed), [MIU_E_AUTH_TURNSTILE_SECRET_MISSING](#miu_e_auth_turnstile_secret_missing), [MIU_E_AUTH_VERIFY_INVALID](#miu_e_auth_verify_invalid) |
 | `@miujs/session` | [MIU_E_CSRF](#miu_e_csrf), [MIU_E_SESSION_KV_MISSING](#miu_e_session_kv_missing), [MIU_E_SESSION_REDIS](#miu_e_session_redis), [MIU_E_SESSION_REDIS_CLIENT](#miu_e_session_redis_client), [MIU_E_SESSION_SECRET_MISSING](#miu_e_session_secret_missing), [MIU_E_SESSION_SECRET_WEAK](#miu_e_session_secret_weak), [MIU_E_SESSION_TABLE_INVALID](#miu_e_session_table_invalid), [MIU_E_SESSION_TOO_LARGE](#miu_e_session_too_large) |
 | `@miujs/db` | [MIU_E_DB_BIND_UNDEFINED](#miu_e_db_bind_undefined), [MIU_E_DB_BINDING_MISSING](#miu_e_db_binding_missing), [MIU_E_DB_CLOSED](#miu_e_db_closed), [MIU_E_DB_DRIZZLE_MISSING](#miu_e_db_drizzle_missing), [MIU_E_DB_MIGRATION_DUPLICATE](#miu_e_db_migration_duplicate), [MIU_E_DB_MIGRATION_FAILED](#miu_e_db_migration_failed), [MIU_E_DB_MIGRATION_INVALID](#miu_e_db_migration_invalid), [MIU_E_DB_MIGRATION_NAME](#miu_e_db_migration_name), [MIU_E_DB_MIGRATIONS_DIR](#miu_e_db_migrations_dir), [MIU_E_DB_MISSING](#miu_e_db_missing), [MIU_E_DB_SCHEMA](#miu_e_db_schema), [MIU_E_DB_UNSUPPORTED](#miu_e_db_unsupported) |
 | `@miujs/cache` | [MIU_E_CACHE_BINDING](#miu_e_cache_binding), [MIU_E_CACHE_CONFIG](#miu_e_cache_config), [MIU_E_CACHE_KEY](#miu_e_cache_key), [MIU_E_CACHE_REDIS](#miu_e_cache_redis), [MIU_E_CACHE_REDIS_RUNTIME](#miu_e_cache_redis_runtime), [MIU_E_CACHE_TTL](#miu_e_cache_ttl), [MIU_E_CACHE_VALUE](#miu_e_cache_value) |
 | `@miujs/queue` | [MIU_E_QUEUE_BINDING](#miu_e_queue_binding), [MIU_E_QUEUE_CONFIG](#miu_e_queue_config), [MIU_E_QUEUE_CRON](#miu_e_queue_cron), [MIU_E_QUEUE_DELAY](#miu_e_queue_delay), [MIU_E_QUEUE_JOB_DUPLICATE](#miu_e_queue_job_duplicate), [MIU_E_QUEUE_REDIS](#miu_e_queue_redis), [MIU_E_QUEUE_RUNTIME](#miu_e_queue_runtime), [MIU_E_QUEUE_SQLITE](#miu_e_queue_sqlite), [MIU_E_QUEUE_TIMEOUT](#miu_e_queue_timeout), [MIU_E_QUEUE_UNKNOWN_JOB](#miu_e_queue_unknown_job) |
 | `@miujs/ratelimit` | [MIU_E_RATELIMIT_BINDING](#miu_e_ratelimit_binding), [MIU_E_RATELIMIT_CONFIG](#miu_e_ratelimit_config), [MIU_E_RATELIMIT_ORDER](#miu_e_ratelimit_order), [MIU_E_RATELIMIT_STORE](#miu_e_ratelimit_store), [MIU_E_RATELIMIT_UNSUPPORTED](#miu_e_ratelimit_unsupported) |
 | `@miujs/bots` | [MIU_E_BOT_BLOCKED](#miu_e_bot_blocked), [MIU_E_BOTS_CONFIG](#miu_e_bots_config), [MIU_E_BOTS_ORDER](#miu_e_bots_order) |
-| `@miujs/realtime` | [MIU_E_ROOM_ALREADY_JOINED](#miu_e_room_already_joined), [MIU_E_ROOM_BAD_FRAME](#miu_e_room_bad_frame), [MIU_E_ROOM_CLIENT_NOT_FOUND](#miu_e_room_client_not_found), [MIU_E_ROOM_CLOSED](#miu_e_room_closed), [MIU_E_ROOM_CODE_RATE_LIMITED](#miu_e_room_code_rate_limited), [MIU_E_ROOM_CODE_UNKNOWN](#miu_e_room_code_unknown), [MIU_E_ROOM_CODES_EXHAUSTED](#miu_e_room_codes_exhausted), [MIU_E_ROOM_CREATE_FAILED](#miu_e_room_create_failed), [MIU_E_ROOM_ENCODING_UNSUPPORTED](#miu_e_room_encoding_unsupported), [MIU_E_ROOM_FULL](#miu_e_room_full), [MIU_E_ROOM_HANDLER_FAILED](#miu_e_room_handler_failed), [MIU_E_ROOM_HANDLER_UNKNOWN](#miu_e_room_handler_unknown), [MIU_E_ROOM_HOST_KEY](#miu_e_room_host_key), [MIU_E_ROOM_ID_INVALID](#miu_e_room_id_invalid), [MIU_E_ROOM_JOIN_INVALID](#miu_e_room_join_invalid), [MIU_E_ROOM_JOIN_REJECTED](#miu_e_room_join_rejected), [MIU_E_ROOM_KICKED](#miu_e_room_kicked), [MIU_E_ROOM_MESSAGE_INVALID](#miu_e_room_message_invalid), [MIU_E_ROOM_MESSAGE_TOO_LARGE](#miu_e_room_message_too_large), [MIU_E_ROOM_NOT_FOUND](#miu_e_room_not_found), [MIU_E_ROOM_NOT_JOINED](#miu_e_room_not_joined), [MIU_E_ROOM_RATE_LIMITED](#miu_e_room_rate_limited), [MIU_E_ROOM_REACT_MISSING](#miu_e_room_react_missing), [MIU_E_ROOM_RESUME_EXPIRED](#miu_e_room_resume_expired), [MIU_E_ROOM_SHARD_SIZE](#miu_e_room_shard_size), [MIU_E_ROOM_STATE_INVALID](#miu_e_room_state_invalid), [MIU_E_ROOM_TIMER_NOT_DURABLE](#miu_e_room_timer_not_durable), [MIU_E_ROOM_TIMER_UNKNOWN](#miu_e_room_timer_unknown), [MIU_E_ROOM_TYPE_INVALID](#miu_e_room_type_invalid), [MIU_E_ROOM_TYPE_UNKNOWN](#miu_e_room_type_unknown), [MIU_E_ROOM_UNKNOWN_MESSAGE](#miu_e_room_unknown_message) |
+| `@miujs/realtime` | [MIU_E_ROOM_ADMIN_FAILED](#miu_e_room_admin_failed), [MIU_E_ROOM_ALREADY_JOINED](#miu_e_room_already_joined), [MIU_E_ROOM_BAD_FRAME](#miu_e_room_bad_frame), [MIU_E_ROOM_CLIENT_NOT_FOUND](#miu_e_room_client_not_found), [MIU_E_ROOM_CLOSED](#miu_e_room_closed), [MIU_E_ROOM_CODE_RATE_LIMITED](#miu_e_room_code_rate_limited), [MIU_E_ROOM_CODE_UNKNOWN](#miu_e_room_code_unknown), [MIU_E_ROOM_CODES_EXHAUSTED](#miu_e_room_codes_exhausted), [MIU_E_ROOM_CREATE_FAILED](#miu_e_room_create_failed), [MIU_E_ROOM_ENCODING_UNSUPPORTED](#miu_e_room_encoding_unsupported), [MIU_E_ROOM_FULL](#miu_e_room_full), [MIU_E_ROOM_HANDLER_FAILED](#miu_e_room_handler_failed), [MIU_E_ROOM_HANDLER_UNKNOWN](#miu_e_room_handler_unknown), [MIU_E_ROOM_HOST_KEY](#miu_e_room_host_key), [MIU_E_ROOM_ID_INVALID](#miu_e_room_id_invalid), [MIU_E_ROOM_JOIN_INVALID](#miu_e_room_join_invalid), [MIU_E_ROOM_JOIN_REJECTED](#miu_e_room_join_rejected), [MIU_E_ROOM_KICKED](#miu_e_room_kicked), [MIU_E_ROOM_MESSAGE_INVALID](#miu_e_room_message_invalid), [MIU_E_ROOM_MESSAGE_TOO_LARGE](#miu_e_room_message_too_large), [MIU_E_ROOM_NOT_FOUND](#miu_e_room_not_found), [MIU_E_ROOM_NOT_JOINED](#miu_e_room_not_joined), [MIU_E_ROOM_RATE_LIMITED](#miu_e_room_rate_limited), [MIU_E_ROOM_REACT_MISSING](#miu_e_room_react_missing), [MIU_E_ROOM_RESUME_EXPIRED](#miu_e_room_resume_expired), [MIU_E_ROOM_SHARD_SIZE](#miu_e_room_shard_size), [MIU_E_ROOM_STATE_INVALID](#miu_e_room_state_invalid), [MIU_E_ROOM_TIMER_NOT_DURABLE](#miu_e_room_timer_not_durable), [MIU_E_ROOM_TIMER_UNKNOWN](#miu_e_room_timer_unknown), [MIU_E_ROOM_TYPE_INVALID](#miu_e_room_type_invalid), [MIU_E_ROOM_TYPE_UNKNOWN](#miu_e_room_type_unknown), [MIU_E_ROOM_UNKNOWN_MESSAGE](#miu_e_room_unknown_message) |
 | `@miujs/files` | [MIU_E_FILES_BAD_FORM](#miu_e_files_bad_form), [MIU_E_FILES_BAD_REQUEST](#miu_e_files_bad_request), [MIU_E_FILES_BINDING](#miu_e_files_binding), [MIU_E_FILES_BODY_USED](#miu_e_files_body_used), [MIU_E_FILES_CONFIG](#miu_e_files_config), [MIU_E_FILES_KEY_CONFLICT](#miu_e_files_key_conflict), [MIU_E_FILES_KEY_INVALID](#miu_e_files_key_invalid), [MIU_E_FILES_METADATA_INVALID](#miu_e_files_metadata_invalid), [MIU_E_FILES_NO_FILE](#miu_e_files_no_file), [MIU_E_FILES_NOT_FOUND](#miu_e_files_not_found), [MIU_E_FILES_PART_INVALID](#miu_e_files_part_invalid), [MIU_E_FILES_RUNTIME](#miu_e_files_runtime), [MIU_E_FILES_S3](#miu_e_files_s3), [MIU_E_FILES_S3_CONFIG](#miu_e_files_s3_config), [MIU_E_FILES_SECRET_MISSING](#miu_e_files_secret_missing), [MIU_E_FILES_SECRET_WEAK](#miu_e_files_secret_weak), [MIU_E_FILES_STORE_MISSING](#miu_e_files_store_missing), [MIU_E_FILES_TOKEN_EXPIRED](#miu_e_files_token_expired), [MIU_E_FILES_TOKEN_INVALID](#miu_e_files_token_invalid), [MIU_E_FILES_TOO_LARGE](#miu_e_files_too_large), [MIU_E_FILES_TOO_MANY_FILES](#miu_e_files_too_many_files), [MIU_E_FILES_TYPE_NOT_ALLOWED](#miu_e_files_type_not_allowed), [MIU_E_FILES_UPLOAD_NOT_FOUND](#miu_e_files_upload_not_found) |
 | `@miujs/web` | [MIU_E_WEB_BAD_PATH](#miu_e_web_bad_path), [MIU_E_WEB_CONFIG](#miu_e_web_config), [MIU_E_WEB_HTML_ASYNC](#miu_e_web_html_async), [MIU_E_WEB_HTML_FUNCTION](#miu_e_web_html_function), [MIU_E_WEB_HTML_RAW](#miu_e_web_html_raw), [MIU_E_WEB_HX_URL](#miu_e_web_hx_url), [MIU_E_WEB_JSX_ATTR](#miu_e_web_jsx_attr), [MIU_E_WEB_JSX_EVENT_HANDLER](#miu_e_web_jsx_event_handler), [MIU_E_WEB_JSX_INNER_HTML](#miu_e_web_jsx_inner_html), [MIU_E_WEB_JSX_TAG](#miu_e_web_jsx_tag), [MIU_E_WEB_JSX_VOID_CHILDREN](#miu_e_web_jsx_void_children), [MIU_E_WEB_NO_NONCE](#miu_e_web_no_nonce), [MIU_E_WEB_VITE_DEV_UNREACHABLE](#miu_e_web_vite_dev_unreachable), [MIU_E_WEB_VITE_ENTRY](#miu_e_web_vite_entry), [MIU_E_WEB_VITE_MANIFEST](#miu_e_web_vite_manifest) |
 | `@miujs/mail` | [MIU_E_MAIL_ADDRESS_INVALID](#miu_e_mail_address_invalid), [MIU_E_MAIL_API_KEY_MISSING](#miu_e_mail_api_key_missing), [MIU_E_MAIL_CONTENT_MISSING](#miu_e_mail_content_missing), [MIU_E_MAIL_HEADER_INVALID](#miu_e_mail_header_invalid), [MIU_E_MAIL_SEND_FAILED](#miu_e_mail_send_failed), [MIU_E_MAIL_TEMPLATE_UNKNOWN](#miu_e_mail_template_unknown), [MIU_E_MAIL_TIMEOUT](#miu_e_mail_timeout), [MIU_E_MAIL_TRANSPORT_MISSING](#miu_e_mail_transport_missing) |
 | `@miujs/access` | [MIU_E_ACCESS_ALREADY_MEMBER](#miu_e_access_already_member), [MIU_E_ACCESS_APP_URL_MISSING](#miu_e_access_app_url_missing), [MIU_E_ACCESS_DATABASE_MISSING](#miu_e_access_database_missing), [MIU_E_ACCESS_EMAIL_UNVERIFIED](#miu_e_access_email_unverified), [MIU_E_ACCESS_INVITE_EMAIL_MISMATCH](#miu_e_access_invite_email_mismatch), [MIU_E_ACCESS_INVITE_EXPIRED](#miu_e_access_invite_expired), [MIU_E_ACCESS_INVITE_INVALID](#miu_e_access_invite_invalid), [MIU_E_ACCESS_INVITE_USED](#miu_e_access_invite_used), [MIU_E_ACCESS_LAST_OWNER](#miu_e_access_last_owner), [MIU_E_ACCESS_MAILER_MISSING](#miu_e_access_mailer_missing), [MIU_E_ACCESS_NO_ORG](#miu_e_access_no_org), [MIU_E_ACCESS_NOT_MEMBER](#miu_e_access_not_member), [MIU_E_ACCESS_OWNER_ROLE_MISSING](#miu_e_access_owner_role_missing), [MIU_E_ACCESS_PERMISSION_INVALID](#miu_e_access_permission_invalid), [MIU_E_ACCESS_PLUGIN_MISSING](#miu_e_access_plugin_missing), [MIU_E_ACCESS_POLICY_INVALID](#miu_e_access_policy_invalid), [MIU_E_ACCESS_ROLE_TOO_HIGH](#miu_e_access_role_too_high), [MIU_E_ACCESS_ROLE_UNKNOWN](#miu_e_access_role_unknown), [MIU_E_ACCESS_SESSION_MISSING](#miu_e_access_session_missing) |
 | `@miujs/audit` | [MIU_E_AUDIT_ANCHOR_FAILED](#miu_e_audit_anchor_failed), [MIU_E_AUDIT_ANCHOR_INVALID](#miu_e_audit_anchor_invalid), [MIU_E_AUDIT_APPEND_CONFLICT](#miu_e_audit_append_conflict), [MIU_E_AUDIT_CHAIN_BROKEN](#miu_e_audit_chain_broken), [MIU_E_AUDIT_INVALID](#miu_e_audit_invalid), [MIU_E_AUDIT_KEY_MISSING](#miu_e_audit_key_missing), [MIU_E_AUDIT_KEY_WEAK](#miu_e_audit_key_weak), [MIU_E_AUDIT_ORG_MISMATCH](#miu_e_audit_org_mismatch), [MIU_E_AUDIT_QUERY_INVALID](#miu_e_audit_query_invalid), [MIU_E_AUDIT_RETENTION_INVALID](#miu_e_audit_retention_invalid), [MIU_E_AUDIT_SINK_INVALID](#miu_e_audit_sink_invalid), [MIU_E_AUDIT_SINK_MISSING](#miu_e_audit_sink_missing), [MIU_E_AUDIT_SINK_UNSUPPORTED](#miu_e_audit_sink_unsupported), [MIU_E_AUDIT_STORE_MISSING](#miu_e_audit_store_missing), [MIU_E_AUDIT_TABLE_INVALID](#miu_e_audit_table_invalid) |
 | `@miujs/workflows` | [MIU_E_WORKFLOW_ACTION_UNKNOWN](#miu_e_workflow_action_unknown), [MIU_E_WORKFLOW_APPROVAL_NOT_PENDING](#miu_e_workflow_approval_not_pending), [MIU_E_WORKFLOW_CONFIG](#miu_e_workflow_config), [MIU_E_WORKFLOW_DUPLICATE](#miu_e_workflow_duplicate), [MIU_E_WORKFLOW_DURATION](#miu_e_workflow_duration), [MIU_E_WORKFLOW_EVENT_RESERVED](#miu_e_workflow_event_reserved), [MIU_E_WORKFLOW_EXPRESSION](#miu_e_workflow_expression), [MIU_E_WORKFLOW_MAILER_MISSING](#miu_e_workflow_mailer_missing), [MIU_E_WORKFLOW_NOT_APPROVER](#miu_e_workflow_not_approver), [MIU_E_WORKFLOW_RUN_NOT_FOUND](#miu_e_workflow_run_not_found), [MIU_E_WORKFLOW_RUN_STATE](#miu_e_workflow_run_state), [MIU_E_WORKFLOW_SIGNATURE](#miu_e_workflow_signature), [MIU_E_WORKFLOW_SPEC_INVALID](#miu_e_workflow_spec_invalid), [MIU_E_WORKFLOW_STEP_DUPLICATE](#miu_e_workflow_step_duplicate), [MIU_E_WORKFLOW_UNKNOWN](#miu_e_workflow_unknown) |
-| `@miujs/ai` | [MIU_E_AI_AUTH](#miu_e_ai_auth), [MIU_E_AI_BAD_REQUEST](#miu_e_ai_bad_request), [MIU_E_AI_BINDING](#miu_e_ai_binding), [MIU_E_AI_CONFIG](#miu_e_ai_config), [MIU_E_AI_INVALID_OUTPUT](#miu_e_ai_invalid_output), [MIU_E_AI_MISSING_KEY](#miu_e_ai_missing_key), [MIU_E_AI_PROVIDER_ERROR](#miu_e_ai_provider_error), [MIU_E_AI_RATE_LIMITED](#miu_e_ai_rate_limited), [MIU_E_AI_REFUSED](#miu_e_ai_refused), [MIU_E_AI_TIMEOUT](#miu_e_ai_timeout), [MIU_E_AI_UNSUPPORTED](#miu_e_ai_unsupported) |
-| `@miujs/admin` | [MIU_E_ADMIN_ACTION_UNKNOWN](#miu_e_admin_action_unknown), [MIU_E_ADMIN_CURSOR_INVALID](#miu_e_admin_cursor_invalid), [MIU_E_ADMIN_FIELDS_INVALID](#miu_e_admin_fields_invalid), [MIU_E_ADMIN_FILTER_INVALID](#miu_e_admin_filter_invalid), [MIU_E_ADMIN_HOOK_REJECTED](#miu_e_admin_hook_rejected), [MIU_E_ADMIN_IMPORT_EMPTY](#miu_e_admin_import_empty), [MIU_E_ADMIN_IMPORT_INVALID](#miu_e_admin_import_invalid), [MIU_E_ADMIN_IMPORT_TOO_LARGE](#miu_e_admin_import_too_large), [MIU_E_ADMIN_IN_USE](#miu_e_admin_in_use), [MIU_E_ADMIN_INCLUDE_INVALID](#miu_e_admin_include_invalid), [MIU_E_ADMIN_NO_TENANT](#miu_e_admin_no_tenant), [MIU_E_ADMIN_RECORD_NOT_FOUND](#miu_e_admin_record_not_found), [MIU_E_ADMIN_RELATION_INVALID](#miu_e_admin_relation_invalid), [MIU_E_ADMIN_RESOURCE_UNKNOWN](#miu_e_admin_resource_unknown), [MIU_E_ADMIN_SORT_INVALID](#miu_e_admin_sort_invalid), [MIU_E_ADMIN_UI_CONFIG](#miu_e_admin_ui_config), [MIU_E_ADMIN_UI_DATABASE](#miu_e_admin_ui_database), [MIU_E_ADMIN_UI_NO_ADMIN](#miu_e_admin_ui_no_admin), [MIU_E_ADMIN_UI_NOT_READY](#miu_e_admin_ui_not_ready), [MIU_E_ADMIN_UNIQUE](#miu_e_admin_unique), [MIU_E_ADMIN_VIEW_UNKNOWN](#miu_e_admin_view_unknown), [MIU_E_ADMIN_WORKFLOW_NAME_TAKEN](#miu_e_admin_workflow_name_taken), [MIU_E_ADMIN_WORKFLOW_PUBLISH](#miu_e_admin_workflow_publish), [MIU_E_ADMIN_WORKFLOWS_MISSING](#miu_e_admin_workflows_missing) |
+| `@miujs/ai` | [MIU_E_AI_AUTH](#miu_e_ai_auth), [MIU_E_AI_BAD_REQUEST](#miu_e_ai_bad_request), [MIU_E_AI_BINDING](#miu_e_ai_binding), [MIU_E_AI_CONFIG](#miu_e_ai_config), [MIU_E_AI_INVALID_OUTPUT](#miu_e_ai_invalid_output), [MIU_E_AI_MISSING_KEY](#miu_e_ai_missing_key), [MIU_E_AI_PROVIDER_ERROR](#miu_e_ai_provider_error), [MIU_E_AI_RATE_LIMITED](#miu_e_ai_rate_limited), [MIU_E_AI_REFUSED](#miu_e_ai_refused), [MIU_E_AI_TEST_RATE_LIMITED](#miu_e_ai_test_rate_limited), [MIU_E_AI_TIMEOUT](#miu_e_ai_timeout), [MIU_E_AI_UNSUPPORTED](#miu_e_ai_unsupported) |
+| `@miujs/admin` | [MIU_E_ADMIN_ACTION_UNKNOWN](#miu_e_admin_action_unknown), [MIU_E_ADMIN_CURSOR_INVALID](#miu_e_admin_cursor_invalid), [MIU_E_ADMIN_FIELDS_INVALID](#miu_e_admin_fields_invalid), [MIU_E_ADMIN_FILTER_INVALID](#miu_e_admin_filter_invalid), [MIU_E_ADMIN_HOOK_REJECTED](#miu_e_admin_hook_rejected), [MIU_E_ADMIN_IMPORT_EMPTY](#miu_e_admin_import_empty), [MIU_E_ADMIN_IMPORT_INVALID](#miu_e_admin_import_invalid), [MIU_E_ADMIN_IMPORT_TOO_LARGE](#miu_e_admin_import_too_large), [MIU_E_ADMIN_IN_USE](#miu_e_admin_in_use), [MIU_E_ADMIN_INCLUDE_INVALID](#miu_e_admin_include_invalid), [MIU_E_ADMIN_NO_TENANT](#miu_e_admin_no_tenant), [MIU_E_ADMIN_RECORD_NOT_FOUND](#miu_e_admin_record_not_found), [MIU_E_ADMIN_RELATION_INVALID](#miu_e_admin_relation_invalid), [MIU_E_ADMIN_RESOURCE_UNKNOWN](#miu_e_admin_resource_unknown), [MIU_E_ADMIN_SORT_INVALID](#miu_e_admin_sort_invalid), [MIU_E_ADMIN_SYSTEM_ACTION_UNKNOWN](#miu_e_admin_system_action_unknown), [MIU_E_ADMIN_SYSTEM_FILTER_INVALID](#miu_e_admin_system_filter_invalid), [MIU_E_ADMIN_SYSTEM_FORBIDDEN](#miu_e_admin_system_forbidden), [MIU_E_ADMIN_SYSTEM_LIST_UNKNOWN](#miu_e_admin_system_list_unknown), [MIU_E_ADMIN_SYSTEM_ORG_SCOPED](#miu_e_admin_system_org_scoped), [MIU_E_ADMIN_SYSTEM_PLUGIN_UNKNOWN](#miu_e_admin_system_plugin_unknown), [MIU_E_ADMIN_SYSTEM_SEARCH_UNSUPPORTED](#miu_e_admin_system_search_unsupported), [MIU_E_ADMIN_SYSTEM_SECTION_UNKNOWN](#miu_e_admin_system_section_unknown), [MIU_E_ADMIN_SYSTEM_SETTINGS_UNKNOWN](#miu_e_admin_system_settings_unknown), [MIU_E_ADMIN_UI_CONFIG](#miu_e_admin_ui_config), [MIU_E_ADMIN_UI_DATABASE](#miu_e_admin_ui_database), [MIU_E_ADMIN_UI_NO_ADMIN](#miu_e_admin_ui_no_admin), [MIU_E_ADMIN_UI_NOT_READY](#miu_e_admin_ui_not_ready), [MIU_E_ADMIN_UNIQUE](#miu_e_admin_unique), [MIU_E_ADMIN_VIEW_UNKNOWN](#miu_e_admin_view_unknown), [MIU_E_ADMIN_WORKFLOW_NAME_TAKEN](#miu_e_admin_workflow_name_taken), [MIU_E_ADMIN_WORKFLOW_PUBLISH](#miu_e_admin_workflow_publish), [MIU_E_ADMIN_WORKFLOWS_MISSING](#miu_e_admin_workflows_missing) |
 | `@miujs/game` | [MIU_E_GAME_ACHIEVEMENT_INVALID](#miu_e_game_achievement_invalid), [MIU_E_GAME_ALREADY_QUEUED](#miu_e_game_already_queued), [MIU_E_GAME_CLIENT_SCORES_DISABLED](#miu_e_game_client_scores_disabled), [MIU_E_GAME_LEADERBOARD_CONFIG](#miu_e_game_leaderboard_config), [MIU_E_GAME_LOBBY_FULL](#miu_e_game_lobby_full), [MIU_E_GAME_LOBBY_NOT_FOUND](#miu_e_game_lobby_not_found), [MIU_E_GAME_LOBBY_NOT_HOST](#miu_e_game_lobby_not_host), [MIU_E_GAME_LOBBY_NOT_MEMBER](#miu_e_game_lobby_not_member), [MIU_E_GAME_LOBBY_NOT_READY](#miu_e_game_lobby_not_ready), [MIU_E_GAME_LOBBY_STARTED](#miu_e_game_lobby_started), [MIU_E_GAME_LOOP_NOT_DURABLE](#miu_e_game_loop_not_durable), [MIU_E_GAME_MATCH_FAILED](#miu_e_game_match_failed), [MIU_E_GAME_MATCH_TIMEOUT](#miu_e_game_match_timeout), [MIU_E_GAME_MATCH_UNKNOWN](#miu_e_game_match_unknown), [MIU_E_GAME_PLAYER_NOT_FOUND](#miu_e_game_player_not_found), [MIU_E_GAME_PROOF_INVALID](#miu_e_game_proof_invalid), [MIU_E_GAME_QUEUE_CONFIG](#miu_e_game_queue_config), [MIU_E_GAME_QUEUE_UNKNOWN](#miu_e_game_queue_unknown), [MIU_E_GAME_REGION_INVALID](#miu_e_game_region_invalid), [MIU_E_GAME_RESULT_INVALID](#miu_e_game_result_invalid), [MIU_E_GAME_RESULT_UNSIGNED](#miu_e_game_result_unsigned), [MIU_E_GAME_ROOM_CONFIG](#miu_e_game_room_config), [MIU_E_GAME_SCORE_INVALID](#miu_e_game_score_invalid), [MIU_E_GAME_SCORE_RATE_LIMITED](#miu_e_game_score_rate_limited), [MIU_E_GAME_SECRET_MISSING](#miu_e_game_secret_missing), [MIU_E_GAME_SECRET_WEAK](#miu_e_game_secret_weak), [MIU_E_GAME_STORE_MISSING](#miu_e_game_store_missing), [MIU_E_GAME_TICKET_EXPIRED](#miu_e_game_ticket_expired), [MIU_E_GAME_TICKET_INVALID](#miu_e_game_ticket_invalid), [MIU_E_GAME_TICKET_REQUIRED](#miu_e_game_ticket_required), [MIU_E_GAME_TICKET_USED](#miu_e_game_ticket_used), [MIU_E_GAME_TIMEZONE_INVALID](#miu_e_game_timezone_invalid) |
 | `@miujs/migrate` | [MIU_E_MIGRATE_APP_KEY](#miu_e_migrate_app_key), [MIU_E_MIGRATE_CASES](#miu_e_migrate_cases), [MIU_E_MIGRATE_CONFIG](#miu_e_migrate_config), [MIU_E_MIGRATE_CSRF](#miu_e_migrate_csrf), [MIU_E_MIGRATE_DECRYPT](#miu_e_migrate_decrypt), [MIU_E_MIGRATE_NOT_PORTED](#miu_e_migrate_not_ported), [MIU_E_MIGRATE_OPENAPI](#miu_e_migrate_openapi), [MIU_E_MIGRATE_PHP_CLASS](#miu_e_migrate_php_class), [MIU_E_MIGRATE_PHP_SERIALIZE](#miu_e_migrate_php_serialize), [MIU_E_MIGRATE_PHP_UNSERIALIZE](#miu_e_migrate_php_unserialize), [MIU_E_MIGRATE_SECRET_KEY](#miu_e_migrate_secret_key), [MIU_E_MIGRATE_SIGNATURE](#miu_e_migrate_signature), [MIU_E_MIGRATE_SIGNATURE_EXPIRED](#miu_e_migrate_signature_expired), [MIU_E_MIGRATE_UPSTREAM](#miu_e_migrate_upstream), [MIU_E_MIGRATE_UPSTREAM_TIMEOUT](#miu_e_migrate_upstream_timeout), [MIU_E_MIGRATE_WEBSOCKET](#miu_e_migrate_websocket) |
 | `@miujs/tour` | [MIU_E_TOUR_ANALYTICS_DISABLED](#miu_e_tour_analytics_disabled), [MIU_E_TOUR_ASSET_NOT_FOUND](#miu_e_tour_asset_not_found), [MIU_E_TOUR_ASSET_TYPE](#miu_e_tour_asset_type), [MIU_E_TOUR_CALLBACK_INVALID](#miu_e_tour_callback_invalid), [MIU_E_TOUR_CALLBACK_STALE](#miu_e_tour_callback_stale), [MIU_E_TOUR_CONFIG](#miu_e_tour_config), [MIU_E_TOUR_FILES_MISSING](#miu_e_tour_files_missing), [MIU_E_TOUR_FLOORPLAN_NOT_FOUND](#miu_e_tour_floorplan_not_found), [MIU_E_TOUR_GUIDE_ONLY](#miu_e_tour_guide_only), [MIU_E_TOUR_GUIDE_TOKEN](#miu_e_tour_guide_token), [MIU_E_TOUR_HOTSPOT_NOT_FOUND](#miu_e_tour_hotspot_not_found), [MIU_E_TOUR_INVALID](#miu_e_tour_invalid), [MIU_E_TOUR_JOBS_NOT_REGISTERED](#miu_e_tour_jobs_not_registered), [MIU_E_TOUR_LIVE_MISSING](#miu_e_tour_live_missing), [MIU_E_TOUR_LOCKED](#miu_e_tour_locked), [MIU_E_TOUR_NOT_FOUND](#miu_e_tour_not_found), [MIU_E_TOUR_PASSWORD_WRONG](#miu_e_tour_password_wrong), [MIU_E_TOUR_PROCESSOR_FAILED](#miu_e_tour_processor_failed), [MIU_E_TOUR_PROCESSOR_MISSING](#miu_e_tour_processor_missing), [MIU_E_TOUR_PROCESSOR_RESULT_INVALID](#miu_e_tour_processor_result_invalid), [MIU_E_TOUR_PROCESSOR_UNAVAILABLE](#miu_e_tour_processor_unavailable), [MIU_E_TOUR_QUEUE_MISSING](#miu_e_tour_queue_missing), [MIU_E_TOUR_RATE_LIMITED](#miu_e_tour_rate_limited), [MIU_E_TOUR_SCENE_NOT_FOUND](#miu_e_tour_scene_not_found), [MIU_E_TOUR_SECRET_MISSING](#miu_e_tour_secret_missing), [MIU_E_TOUR_SECRET_WEAK](#miu_e_tour_secret_weak), [MIU_E_TOUR_SLUG_TAKEN](#miu_e_tour_slug_taken), [MIU_E_TOUR_SOURCE_MISSING](#miu_e_tour_source_missing), [MIU_E_TOUR_STRICT_CDN](#miu_e_tour_strict_cdn), [MIU_E_TOUR_TOKEN_EXPIRED](#miu_e_tour_token_expired), [MIU_E_TOUR_TOKEN_INVALID](#miu_e_tour_token_invalid) |
@@ -744,6 +744,16 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 
 **How to fix:** add `export const {w.className} = createCloudflareWorkflow(...)` to {entryRel}.
 
+## MIU_E_AUTH_ACCOUNT_DISABLED
+
+- **Package:** `@miujs/auth`
+- **HTTP status:** 403
+- **Source:** [`auth/src/index.ts`](../packages/auth/src/index.ts)
+
+**What it means:** This account has been disabled
+
+**How to fix:** Contact the site's administrators to have it enabled again.
+
 ## MIU_E_AUTH_APP_URL_INVALID
 
 - **Package:** `@miujs/auth`
@@ -934,11 +944,17 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 
 - **Package:** `@miujs/auth`
 - **HTTP status:** 409
-- **Source:** [`auth/src/oauth.ts`](../packages/auth/src/oauth.ts)
+- **Source:** [`auth/src/manage.ts`](../packages/auth/src/manage.ts), [`auth/src/oauth.ts`](../packages/auth/src/oauth.ts)
 
-**What it means:** {ctx.params.provider} is your only way to sign in
+**What it means:**
 
-**How to fix:** Add another way to sign in first: set a password (POST {deps.base}/password/forgot), add a passkey, or link another provider. Then unlink {ctx.params.provider}.
+- {provider} is the only way {u.email} can sign in
+- {ctx.params.provider} is your only way to sign in
+
+**How to fix:**
+
+- Send them a password reset email first (it lets them set a password), then unlink. (otherwise: Have the user add a passkey or link another provider first, then unlink.)
+- Add another way to sign in first: set a password (POST {deps.base}/password/forgot), add a passkey, or link another provider. Then unlink {ctx.params.provider}.
 
 ## MIU_E_AUTH_OAUTH_PROFILE
 
@@ -985,6 +1001,16 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 **What it means:** Linking a sign-in provider needs a signed-in browser session
 
 **How to fix:** Sign in in the browser (not with an API token), then open the link from your account settings.
+
+## MIU_E_AUTH_OAUTH_SIGNUPS_CLOSED
+
+- **Package:** `@miujs/auth`
+- **HTTP status:** 403
+- **Source:** [`auth/src/oauth.ts`](../packages/auth/src/oauth.ts)
+
+**What it means:** Sign-ups are closed
+
+**How to fix:** New accounts cannot be created right now. Sign in with an existing account, or try again later.
 
 ## MIU_E_AUTH_OAUTH_STATE
 
@@ -1148,9 +1174,9 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 - **HTTP status:** 400
 - **Source:** [`auth/src/index.ts`](../packages/auth/src/index.ts)
 
-**What it means:** Password must be {minLen}–{MAX_PASSWORD} characters
+**What it means:** Password must be {live.minPasswordLength}–{MAX_PASSWORD} characters
 
-**How to fix:** Choose a password of at least {minLen} characters (a passphrase works well).
+**How to fix:** Choose a password of at least {live.minPasswordLength} characters (a passphrase works well).
 
 ## MIU_E_AUTH_RATELIMIT_BINDING
 
@@ -1188,15 +1214,31 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 - Add session() before auth() in miu({ plugins: [session(), auth()] }).
 - Use miu({ plugins: [session(), auth()] }).
 
+## MIU_E_AUTH_SIGNUPS_CLOSED
+
+- **Package:** `@miujs/auth`
+- **HTTP status:** 403
+- **Source:** [`auth/src/index.ts`](../packages/auth/src/index.ts)
+
+**What it means:** Sign-ups are closed
+
+**How to fix:** New accounts cannot be created right now. Sign in with an existing account, or try again later.
+
 ## MIU_E_AUTH_STORE_UNSUPPORTED
 
 - **Package:** `@miujs/auth`
 - **HTTP status:** 500
-- **Source:** [`auth/src/index.ts`](../packages/auth/src/index.ts)
+- **Source:** [`auth/src/index.ts`](../packages/auth/src/index.ts), [`auth/src/manage.ts`](../packages/auth/src/manage.ts)
 
-**What it means:** The {users.kind} user store lacks {…}, needed for {feature}
+**What it means:**
 
-**How to fix:** Use memoryUserStore() or dbUserStore(db), or implement those UserStore methods in your store.
+- The {users.kind} user store lacks {…}, needed for {feature}
+- The {users.kind} user store lacks {method}, needed for this admin action
+
+**How to fix:**
+
+- Use memoryUserStore() or dbUserStore(db), or implement those UserStore methods in your store.
+- Use memoryUserStore() or dbUserStore(db), or implement that UserStore method in your store.
 
 ## MIU_E_AUTH_TOKEN_INVALID
 
@@ -1763,6 +1805,16 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 
 **How to fix:** List {before}() before bots() in miu({ plugins }): signed-in users then bypass the bot cache and partial responses.
 
+## MIU_E_ROOM_ADMIN_FAILED
+
+- **Package:** `@miujs/realtime`
+- **HTTP status:** 502
+- **Source:** [`realtime/src/manage.ts`](../packages/realtime/src/manage.ts)
+
+**What it means:** The Durable Object for {label} answered {res.status}
+
+**How to fix:** Pass the same rooms to createRoomDurableObject() and rooms({ rooms }).
+
 ## MIU_E_ROOM_ALREADY_JOINED
 
 - **Package:** `@miujs/realtime`
@@ -1909,16 +1961,18 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 
 - **Package:** `@miujs/realtime`
 - **HTTP status:** 400
-- **Source:** [`realtime/src/cloudflare.ts`](../packages/realtime/src/cloudflare.ts), [`realtime/src/plugin.ts`](../packages/realtime/src/plugin.ts)
+- **Source:** [`realtime/src/cloudflare.ts`](../packages/realtime/src/cloudflare.ts), [`realtime/src/manage.ts`](../packages/realtime/src/manage.ts), [`realtime/src/plugin.ts`](../packages/realtime/src/plugin.ts)
 
 **What it means:**
 
 - Invalid room id
+- Room id must be 1-64 letters, digits, '_' or '-' (shards: id:shardN)
 - Room id must be 1-64 letters, digits, '_' or '-'
 
 **How to fix:**
 
 - Use 1-64 letters, digits, '_' or '-'.
+- Copy the room id from the rooms list.
 - Use the id from createRoom(), or a short code such as one from rooms.createCode().
 
 ## MIU_E_ROOM_JOIN_INVALID
@@ -1981,16 +2035,19 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 
 - **Package:** `@miujs/realtime`
 - **HTTP status:** 404
-- **Source:** [`realtime/src/cloudflare.ts`](../packages/realtime/src/cloudflare.ts), [`realtime/src/plugin.ts`](../packages/realtime/src/plugin.ts)
+- **Source:** [`realtime/src/cloudflare.ts`](../packages/realtime/src/cloudflare.ts), [`realtime/src/manage.ts`](../packages/realtime/src/manage.ts), [`realtime/src/plugin.ts`](../packages/realtime/src/plugin.ts)
 
 **What it means:**
 
 - No active room here
+- No active room {label}
 - No active room {type}/{id}
 
 **How to fix:**
 
 - Join the room first.
+- Check the room type and id.
+- Check the room type and id in the rooms list; the room may have closed.
 - Call rooms_list to see active rooms.
 
 ## MIU_E_ROOM_NOT_JOINED
@@ -2093,13 +2150,14 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 
 - **Package:** `@miujs/realtime`
 - **HTTP status:** 404
-- **Source:** [`realtime/src/cloudflare.ts`](../packages/realtime/src/cloudflare.ts), [`realtime/src/plugin.ts`](../packages/realtime/src/plugin.ts)
+- **Source:** [`realtime/src/cloudflare.ts`](../packages/realtime/src/cloudflare.ts), [`realtime/src/manage.ts`](../packages/realtime/src/manage.ts), [`realtime/src/plugin.ts`](../packages/realtime/src/plugin.ts)
 
 **What it means:** No room type "{type}"
 
 **How to fix:**
 
 - Use one of: {…}, and pass the same rooms to createRoomDurableObject().
+- Use one of: {…}.
 - Use one of: {…}, or add the room to rooms({ rooms: [...] }).
 
 ## MIU_E_ROOM_UNKNOWN_MESSAGE
@@ -2919,7 +2977,7 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 
 - **Package:** `@miujs/audit`
 - **HTTP status:** 403
-- **Source:** [`audit/src/plugin.ts`](../packages/audit/src/plugin.ts)
+- **Source:** [`audit/src/manage.ts`](../packages/audit/src/manage.ts), [`audit/src/plugin.ts`](../packages/audit/src/plugin.ts)
 
 **What it means:** You can only read the audit log of the active organization
 
@@ -3269,6 +3327,16 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 
 **How to fix:** Rephrase the request. For Claude, the response's stop_reason was `refusal`; see the provider's refusal docs.
 
+## MIU_E_AI_TEST_RATE_LIMITED
+
+- **Package:** `@miujs/ai`
+- **HTTP status:** 429
+- **Source:** [`ai/src/manage.ts`](../packages/ai/src/manage.ts)
+
+**What it means:** Too many test prompts
+
+**How to fix:** Wait a minute; at most {TEST_PER_MINUTE} test prompts per minute are allowed.
+
 ## MIU_E_AI_TIMEOUT
 
 - **Package:** `@miujs/ai`
@@ -3442,6 +3510,96 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 **What it means:** Cannot sort by {value}
 
 **How to fix:** Sort by one field, prefixed with - for descending. Sortable: {…}.
+
+## MIU_E_ADMIN_SYSTEM_ACTION_UNKNOWN
+
+- **Package:** `@miujs/admin`
+- **HTTP status:** 404
+- **Source:** [`admin/src/errors.ts`](../packages/admin/src/errors.ts)
+
+**What it means:** Section {plugin}/{section} has no action "{action}" here
+
+**How to fix:** Use one of: {…}. (otherwise: There are no actions here.)
+
+## MIU_E_ADMIN_SYSTEM_FILTER_INVALID
+
+- **Package:** `@miujs/admin`
+- **HTTP status:** 400
+- **Source:** [`admin/src/errors.ts`](../packages/admin/src/errors.ts)
+
+**What it means:** Invalid filters: {message}
+
+**How to fix:** Send filters as a JSON object of the list's filter keys to one of their options, e.g. filters={"state":"failed"}. GET the section to see each list's filters.
+
+## MIU_E_ADMIN_SYSTEM_FORBIDDEN
+
+- **Package:** `@miujs/admin`
+- **HTTP status:** 403
+- **Source:** [`admin/src/errors.ts`](../packages/admin/src/errors.ts)
+
+**What it means:** Missing permission "{permission}" (otherwise: The System area needs the admin role)
+
+**How to fix:** Give the user a global role (user.roles, not an organization role) that grants "{permission}", e.g. operator: ["system:*"] in defineRoles(). "system:&lt;verb&gt;" grants it for every plugin, "system.&lt;plugin&gt;:*" everything on one plugin. (otherwise: Sign in as a user whose roles include "admin", or install @miujs/access and grant "system:*" / "system.&lt;plugin&gt;:&lt;verb&gt;" permissions.)
+
+## MIU_E_ADMIN_SYSTEM_LIST_UNKNOWN
+
+- **Package:** `@miujs/admin`
+- **HTTP status:** 404
+- **Source:** [`admin/src/errors.ts`](../packages/admin/src/errors.ts)
+
+**What it means:** Section {plugin}/{section} has no list "{list}"
+
+**How to fix:** Use one of: {…}. (otherwise: This section has no lists.)
+
+## MIU_E_ADMIN_SYSTEM_ORG_SCOPED
+
+- **Package:** `@miujs/admin`
+- **HTTP status:** 400
+- **Source:** [`admin/src/errors.ts`](../packages/admin/src/errors.ts)
+
+**What it means:** System routes are app-wide and do not take an organization
+
+**How to fix:** Send the request without x-org-id (or the org your access() orgFrom reads): System permissions come from the user's global roles, never from an organization role.
+
+## MIU_E_ADMIN_SYSTEM_PLUGIN_UNKNOWN
+
+- **Package:** `@miujs/admin`
+- **HTTP status:** 404
+- **Source:** [`admin/src/errors.ts`](../packages/admin/src/errors.ts)
+
+**What it means:** No plugin named "{name}" in the System area
+
+**How to fix:** Use one of: {none}. GET &lt;basePath&gt;/_admin/system lists the plugins you may read.
+
+## MIU_E_ADMIN_SYSTEM_SEARCH_UNSUPPORTED
+
+- **Package:** `@miujs/admin`
+- **HTTP status:** 400
+- **Source:** [`admin/src/errors.ts`](../packages/admin/src/errors.ts)
+
+**What it means:** List "{list}" is not searchable
+
+**How to fix:** Leave out `search`, or use the list's filters instead.
+
+## MIU_E_ADMIN_SYSTEM_SECTION_UNKNOWN
+
+- **Package:** `@miujs/admin`
+- **HTTP status:** 404
+- **Source:** [`admin/src/errors.ts`](../packages/admin/src/errors.ts)
+
+**What it means:** Plugin "{plugin}" has no section "{section}"
+
+**How to fix:** Use one of: {…}. (otherwise: "{plugin}" has no manage() sections; GET &lt;basePath&gt;/_admin/system/{plugin} shows what it offers.)
+
+## MIU_E_ADMIN_SYSTEM_SETTINGS_UNKNOWN
+
+- **Package:** `@miujs/admin`
+- **HTTP status:** 404
+- **Source:** [`admin/src/errors.ts`](../packages/admin/src/errors.ts)
+
+**What it means:** Section {plugin}/{section} has no settings
+
+**How to fix:** Only sections whose manage() entry has `settings` can be read or changed here.
 
 ## MIU_E_ADMIN_UI_CONFIG
 
@@ -3713,15 +3871,16 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 
 - Queue "{name}" uses room type "{cfg.room}", which the rooms plugin does not host
 - Queue "{name}": {what}
+- Queue "{this.name}": windows must be &gt;= 0
 
 **How to fix:**
 
 - Add it: rooms({ rooms: [{cfg.room}] }), and pass that plugin as matchmaker({ rooms }).
+- Use initialWindow, widenBy and maxWindow of 0 or more.
 - join failed ({res.status})
 - status failed ({r.status})
 - e.g. leaderboard({ id: "weekly-wins", ... }).
 - Use sort: "desc" for points, "asc" for times.
-- e.g. resets: "weekly".
 
 ## MIU_E_GAME_QUEUE_UNKNOWN
 

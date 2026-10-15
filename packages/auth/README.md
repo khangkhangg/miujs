@@ -168,6 +168,16 @@ Both need a store with the extra methods (`memoryUserStore()` and `dbUserStore()
 
 `rateLimit.limiter` is `memoryRateLimiter()` by default, or `cloudflareRateLimiter("BINDING")`.
 
+## In @miujs/admin
+
+`auth()` has a management section (`manage()`), shown by `@miujs/admin`:
+
+- **Status**: user count, sign-ups, sign-ins and failed sign-ins since the instance started, sign-in methods (names only), password hashing parameters, email verification mode, login rate limit.
+- **Users list** (paged, search by email): disable / enable (a disabled user is signed out, cannot sign in, and their API tokens stop working until enabled), sign out everywhere, revoke API tokens, send a password reset email (with a mailer), unlink an OAuth provider (never the last way to sign in).
+- **Settings** (apply at once, in this instance): allow sign-ups (password and OAuth; existing users always sign in), minimum password length, login lockout thresholds.
+
+Nothing there shows password hashes, tokens, reset links or provider secrets. Custom `UserStore`s get the list and row actions by implementing `countUsers`, `listUsers`, `setUserDisabled` and `revokeSessions` (the built-in stores have them; `dbUserStore` adds `users.disabled_at` in migration `miu_auth_004_disabled`).
+
 ## Errors
 
 - [`MIU_E_AUTH_INVALID`](../../docs/errors.md#miu_e_auth_invalid): 401, wrong email or password.
@@ -183,6 +193,8 @@ Both need a store with the extra methods (`memoryUserStore()` and `dbUserStore()
 - [`MIU_E_AUTH_RATELIMIT_BINDING`](../../docs/errors.md#miu_e_auth_ratelimit_binding): `cloudflareRateLimiter` binding not configured.
 - [`MIU_E_AUTH_HASH_UNSUPPORTED`](../../docs/errors.md#miu_e_auth_hash_unsupported): bcrypt or argon2 hash outside Bun.
 - [`MIU_E_AUTH_STORE_UNSUPPORTED`](../../docs/errors.md#miu_e_auth_store_unsupported): the user store lacks methods a feature needs.
+- [`MIU_E_AUTH_ACCOUNT_DISABLED`](../../docs/errors.md#miu_e_auth_account_disabled): 403, an operator disabled this account (only after the password matched).
+- [`MIU_E_AUTH_SIGNUPS_CLOSED`](../../docs/errors.md#miu_e_auth_signups_closed) / [`MIU_E_AUTH_OAUTH_SIGNUPS_CLOSED`](../../docs/errors.md#miu_e_auth_oauth_signups_closed): 403, an operator closed sign-ups; existing users still sign in.
 
 See [all error codes](../../docs/errors.md).
 

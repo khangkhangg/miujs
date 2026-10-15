@@ -7,6 +7,7 @@ import { memoryStore } from "./memory.ts";
 import { multipartRoutes, type MultipartOptions } from "./multipart.ts";
 import { randomHex, type FileStore } from "./store.ts";
 import { limitStream } from "./stream.ts";
+import { filesManage } from "./manage.ts";
 import { verifyToken, type TokenPayload } from "./token.ts";
 
 declare module "miujs" {
@@ -193,7 +194,7 @@ export function files(opts: FilesOptions = {}) {
       const p = await verifyToken(rt.secretsFor(ctx), ctx.params.token, "url", now());
       if (p.m !== "PUT") throw filesErrors.tokenInvalid("this URL was signed for GET");
       const key = checkKey(p.k);
-      const limit = p.ms ?? maxUploadSize;
+      const limit = p.ms ?? rt.maxUploadSize;
       const cl = ctx.headers.get("content-length");
       const declared = cl !== null && /^\d{1,15}$/.test(cl) ? Number(cl) : undefined;
       if (declared !== undefined && declared > limit) throw filesErrors.tooLarge(limit);
@@ -237,13 +238,26 @@ export function files(opts: FilesOptions = {}) {
     onRequest(ctx: Context) {
       ctx.files = new Files(ctx, rt);
     },
+    manage() {
+      return filesManage({
+        rt,
+        store: () => store,
+        multipart: opts.multipart !== false,
+        dev: () => dev,
+        hasSecret(ctx) {
+          const env = ctx.env ?? {};
+          const raw = opts.secret ?? ((env.FILES_SECRET as string) || (env.SESSION_SECRET as string) || undefined);
+          return (Array.isArray(raw) ? raw : [raw]).some((s) => typeof s === "string" && s !== "");
+        },
+      });
+    },
     inspect() {
       return {
         store: store.kind,
         basePath,
         ...store.inspect?.(),
         multipart: opts.multipart !== false,
-        maxUploadSize,
+        maxUploadSize: rt.maxUploadSize,
         secret: opts.secret ? "(option)" : "env.FILES_SECRET or env.SESSION_SECRET",
       };
     },

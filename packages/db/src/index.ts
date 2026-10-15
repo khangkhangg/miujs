@@ -14,6 +14,7 @@
 // diffSchema, tableFromSchema DDL) speak those dialects. A future `@miujs/db` adapter would need a
 // dialect-aware Database interface first; until then use Drizzle directly for those databases.
 
+import { dbManage } from "./manage.ts";
 import { definePlugin, detectRuntime, errors, targetRuntime, type CloudflareNeeds, type Env, type Runtime } from "miujs";
 
 export type SqlValue = string | number | bigint | boolean | null | Uint8Array | ArrayBuffer;
@@ -524,6 +525,14 @@ export function db(opts: DbOptions = {}) {
         const make = await (factory ??= loadDrizzle());
         (ctx as unknown as { orm: unknown }).orm = make(database, opts.drizzle);
       }
+    },
+    manage() {
+      return dbManage({
+        resolve: (env) => resolveDatabase(getSource(), env),
+        describe: () => describeDatabase(getSource()),
+        migrations: opts.migrations ?? [],
+        migrate,
+      });
     },
     inspect() {
       const info: Record<string, unknown> = describeDatabase(getSource());

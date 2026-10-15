@@ -121,7 +121,7 @@ deno serve app.ts   # Deno
 wrangler deploy     # Cloudflare Workers (or: miu deploy cloudflare)
 ```
 
-> Status: **0.2 preview**: core, 18 packages and the CLI are built and tested; the admin/CRM, game and tour kits are in progress. APIs may still change. See [the spec](https://claude.ai/code/artifact/cea50b68-c0e3-4821-a540-fb6b0f4903fc) for the full plan.
+> Status: **0.2 preview**: the core, the CLI, 16 batteries and the admin/CRM, game and 3D tour kits are built and tested (3,300+ tests, soak-tested for memory and shutdown). Not yet deployed to a real Cloudflare account or published to npm. APIs may still change. See [the spec](https://claude.ai/code/artifact/cea50b68-c0e3-4821-a540-fb6b0f4903fc) for the full plan.
 
 ## Why MiuJS
 
@@ -131,7 +131,10 @@ wrangler deploy     # Cloudflare Workers (or: miu deploy cloudflare)
 | **Agent-native** | `mcp: true` serves every route as an MCP tool at `/mcp`. `miu inspect --json` describes the whole app. Errors carry a stable `MIU_E_*` code and a `fix`. |
 | **No build** | Erasable TypeScript, run as written. Validators are composed at startup without `eval`, so they work on Workers. |
 | **Batteries** | Auth (passwords, OAuth, passkeys), sessions, SQL + Drizzle, cache, queues, files, mail, permissions, audit log, rate limits, workflows, AI and realtime rooms as official `@miujs/*` packages with swappable adapters (memory/SQLite/Redis/S3 locally, Cloudflare bindings in production). |
-| **Games** | `@miujs/realtime` rooms run on Durable Objects or in-process — enough for a Kahoot-style quiz. See [examples/quiz](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/examples/quiz). |
+| **Games** | `@miujs/realtime` rooms run on Durable Objects or in-process — enough for a Kahoot-style quiz. `@miujs/game` adds matchmaking, lobbies, leaderboards and Unity/Godot clients. See [examples/quiz](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/examples/quiz). |
+| **Bot-aware** | `@miujs/bots` tells humans from search engines, AI crawlers and scrapers (Cloudflare bot score, user agent, headers) and reads the visitor's country. Block them, give them partial data, or answer from a cache so they never touch your database. |
+| **Back office** | `@miujs/admin` turns resource definitions into a CRM-style admin with tables, CSV import/export, a visual workflow builder, and a System area where every installed package shows its status, lists, settings and actions (also as MCP tools, permission-checked and audited). |
+| **Fast and lean** | Starts in ~11 ms, validates JSON bodies faster than Elysia and Hono, and keeps memory flat under load (see [Performance](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/README.md#performance)). |
 
 ## Packages
 
@@ -155,9 +158,53 @@ wrangler deploy     # Cloudflare Workers (or: miu deploy cloudflare)
 | [`@miujs/bots`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/bots) | Bot, AI crawler and location detection; block, trim or serve cached responses to crawlers |
 | [`@miujs/ai`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/ai) | Claude, OpenAI-compatible and Workers AI; structured output, tool loops, RAG |
 | [`@miujs/migrate`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/migrate) | Port Laravel, Django or FastAPI apps route by route (proxy, shared sessions, contract tests) |
-| `@miujs/admin`, `@miujs/game`, `@miujs/tour` | In progress: CRM/back-office, game and 3D tour kits |
+| [`@miujs/admin`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/admin) | Admin + CRM kit: resources become tables, API, MCP tools and an admin UI; visual workflow builder; System area for every package |
+| [`@miujs/game`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/game) | Game kit: matchmaking, lobbies, game rooms with timers, leaderboards, achievements, Unity/Godot clients |
+| [`@miujs/tour`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/tour) | 3D and 360° tours: scenes, hotspots, floor plans, tiling jobs, live guided tours, analytics, field encryption |
 
 Full guide: [docs/guide.md](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/guide.md). Every error code: [docs/errors.md](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md).
+
+## Architecture
+
+```
+ Requests: browsers, apps, MCP agents, search and AI crawlers
+     │
+     ▼
+ Visitor gate (@miujs/bots, optional) ── block (403) or cached copy ──▶ answered here: no handler, no DB
+     │ full or partial
+     ▼
+ Your app: route files, rooms, jobs, workflows (plain TypeScript, no build)
+     │
+     ▼
+ MiuJS core: router, t schemas, errors, plugins    Agent layer: MCP, OpenAPI, inspect    CLI (miu)
+     │
+     ▼
+ Kits: admin (back office, CRM) · game · tour
+     │
+     ▼
+ Batteries: auth session db cache queue realtime files web mail access audit workflows ratelimit ai migrate bots
+     │
+     ├─▶ Cloudflare bindings: D1, KV, R2, Queues, Durable Objects, Workflows, Cache API, bot score and geo
+     └─▶ Local and self-hosted: SQLite, memory, disk, Redis, S3, HTTP mail
+     │
+     ▼
+ Runtimes: Cloudflare Workers · Bun · Deno · Node
+```
+
+Your code talks only to the core and the battery APIs. The adapter under each battery is picked
+by where the app runs, so the same files deploy to Workers, Bun, Deno or Node.
+
+**Request path**, in order:
+
+1. **Visitor gate** (`@miujs/bots`): classifies the caller (human, search, AI crawler, bot,
+   unknown), reads location, then blocks, serves a cached copy, trims the response, or lets it
+   through. Signed-in users, MCP and `/_miu/*` are never affected.
+2. **Plugin `onRequest` hooks** in the order listed (session, auth, rate limits, access).
+3. **Router and validation**: params, query and body checked against the route's schemas; bodies
+   capped at `maxBodySize`.
+4. **Handler**, then `onResponse` hooks (the bot cache stores eligible responses here).
+5. **Background work** (`waitUntil`, jobs, room timers). `app.stop()` drains it and calls each
+   plugin's `stop()`, so processes exit cleanly.
 
 ## Core concepts
 
@@ -262,8 +309,33 @@ miu deploy cloudflare           # wrangler.toml from your plugins, then wrangler
 
 ## Performance
 
-`bun bench/run.ts` compares in-process `fetch()` throughput with Elysia and Hono on the same
-Bun. See [bench/README.md](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/bench/README.md) for the latest numbers and method.
+In-process `fetch()` on Bun 1.4.3 against Elysia and Hono (Windows laptop, best of 3 rounds;
+compare within a row, since absolute numbers move ±10% between runs):
+
+| Scenario | MiuJS | Compared with the fastest of Elysia and Hono |
+| --- | ---: | ---: |
+| `POST /json`, body validation → JSON | ~400k req/s | **103–104%** (fastest) |
+| `GET /users/:id`, params → JSON | ~950k–1M req/s | 82–90% |
+| `GET /` text, called the way `Bun.serve` calls it | ~1.5M req/s | 84–90% |
+| Cold start, process start → first response | **~11 ms** | Hono ~13 ms, Elysia ~53 ms |
+
+Over real HTTP all three frameworks hit the same loopback ceiling (~72k req/s on this
+machine). Memory kept per 10,000 requests is about zero for all three. Method and history:
+[bench/README.md](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/bench/README.md); run it with `bun bench/run.ts` (`BENCH_HTTP=1` adds HTTP).
+
+**Memory and stability** ([soak report](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/scripts/soak/REPORT.md)): the example apps ran under
+sustained load over real HTTP and WebSockets on Bun, Node and Deno.
+
+- Heap stays flat on every runtime. Every package has a leak test (forced-GC rounds, bytes and
+  objects per iteration) and an exit test (a process using it exits on its own).
+- Shutdown takes 12–46 ms, and no request or socket is left hanging after clients disconnect.
+- Fixes from the soak include:
+  - **Sign-ins:** argon2id is capped at 19 MiB per hash and 4 hashes at a time. 32 concurrent
+    sign-ins went from +1.3 GB to +78 MB.
+  - **Game rooms:** finished rooms now close 5 s after the result. Live rooms after load went
+    from 22,726 to 0, and heap from 132 MB to 3 MB.
+  - **Long-polls:** they stop when the client disconnects.
+  - **JSON bodies:** the read is faster, and peak heap per 10,000 requests dropped from 288 KB to 8 KB.
 
 ## Security defaults
 
@@ -299,9 +371,12 @@ that runs end to end. The full plan is in the
 | Phase | Status | What it adds |
 | --- | --- | --- |
 | **1. Foundations** | Done | `@miujs/files` (uploads, signed URLs, resumable uploads, R2), `@miujs/web` (static files, HTML/JSX without a build, htmx, Vite, security headers), `@miujs/access` (roles, per-record policies, organizations, invites), `@miujs/audit` (tamper-evident audit log), `@miujs/mail` (+ email verification and password reset), `@miujs/workflows` (durable automation) |
-| **2. Admin + CRM kit** | In progress | Define a resource once and get tables, API, MCP tools, lifecycle events and an admin UI. Pipelines, tasks, search, CSV import/export, and a visual workflow builder |
-| **3. Game kit** | In progress | Room timers on Durable Object alarms, matchmaking and lobbies, join codes, leaderboards, achievements, Unity/Godot clients |
-| **4. 3D tour kit** | In progress | 360° tiling and 3D model compression jobs, hotspots and floor plans, live guided tours, viewing analytics. Healthcare building blocks: field encryption, consent, retention |
+| **2. Admin + CRM kit** | Done (preview) | Define a resource once and get tables, API, MCP tools, lifecycle events and an admin UI. Pipelines, tasks, search, CSV import/export, and a visual workflow builder |
+| **3. Game kit** | Done (preview) | Room timers on Durable Object alarms, matchmaking and lobbies, join codes, leaderboards, achievements, Unity/Godot clients |
+| **4. 3D tour kit** | Done (preview) | 360° tiling and 3D model compression jobs, hotspots and floor plans, live guided tours, viewing analytics. Healthcare building blocks: field encryption, consent, retention |
+| **5. Hardening** | Done | Leak and exit tests for every package, soak tests over HTTP and WebSockets, memory caps for password hashing, faster body reads, `app.stop()` |
+| **6. Traffic and operations** | Done (preview) | `@miujs/bots` (done): bot, AI crawler and location detection with block / partial / cached / full. Admin System area (done): every package shows its status, lists, settings and actions in the admin and as MCP tools |
+| **Next** | Planned | First real Cloudflare deploy (D1, KV, R2, Queues, Durable Objects, bot score and geo), npm release with prebuilt JS for Node, a Postgres-over-Hyperdrive guide |
 
 ### Automation workflows
 
@@ -323,10 +398,10 @@ export const followUp = defineWorkflow("contact-follow-up", {
 - **Triggers:** events, cron schedules, signed webhooks, or a manual start.
 - **Control:** approvals, retries, cancel and retry-from-failed-step, and run history.
 - **AI agents:** MCP tools so agents can start and inspect runs.
-- **No-code:** the same engine runs JSON-defined workflows, which phase 2's visual builder will
-  produce.
+- **No-code:** the same engine runs JSON-defined workflows, which the admin's visual builder
+  produces.
 
-## Known limitations (0.1)
+## Known limitations (0.2)
 
 - **Cloudflare:** never deployed to a real account. Durable Objects, D1, KV and Queues are tested
   against in-test fakes, and every package bundles for a Workers target. Pending `after`/`tick`
@@ -335,13 +410,15 @@ export const followUp = defineWorkflow("contact-follow-up", {
   validation, body limits, cookies, `ctx.ip`, MCP, `waitUntil`); all pass. The full test suite runs on
   Bun only. Published packages will need prebuilt JS for Node, because Node won't strip types inside
   `node_modules`.
-- **Speed:** level with Elysia on validated bodies, 20–30% behind on trivial routes
-  ([bench](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/bench/README.md)).
+- **Speed:** fastest on validated JSON bodies; 10–18% behind Elysia on a params route and
+  10–16% behind on a trivial text route under `Bun.serve`. Elysia compiles one function per route
+  with `new Function`, which Workers forbid ([bench](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/bench/README.md)).
+- **Bot detection:** without Cloudflare's bot score, detection relies on user agents and headers,
+  so a crawler that copies a browser's headers passes as human.
 - **Verified only against fakes:** Redis and S3 adapters (fake servers, AWS signature test vectors),
   Laravel/Django session crypto (independent reference ports, no real PHP/Python app yet), OAuth
   providers and the Anthropic/Workers AI APIs (recorded shapes, no live calls).
-- **Not built yet:** the admin UI and visual workflow builder (phase 2), parts of the game and tour
-  kits, and an npm release (`scripts/build-packages.ts` builds it; the `@miujs` npm scope isn't
+- **Not built yet:** an npm release (`scripts/build-packages.ts` builds it; the `@miujs` npm scope isn't
   registered yet).
 
 ## Developing MiuJS
@@ -1129,6 +1206,16 @@ Both need a store with the extra methods (`memoryUserStore()` and `dbUserStore()
 
 `rateLimit.limiter` is `memoryRateLimiter()` by default, or `cloudflareRateLimiter("BINDING")`.
 
+## In @miujs/admin
+
+`auth()` has a management section (`manage()`), shown by `@miujs/admin`:
+
+- **Status**: user count, sign-ups, sign-ins and failed sign-ins since the instance started, sign-in methods (names only), password hashing parameters, email verification mode, login rate limit.
+- **Users list** (paged, search by email): disable / enable (a disabled user is signed out, cannot sign in, and their API tokens stop working until enabled), sign out everywhere, revoke API tokens, send a password reset email (with a mailer), unlink an OAuth provider (never the last way to sign in).
+- **Settings** (apply at once, in this instance): allow sign-ups (password and OAuth; existing users always sign in), minimum password length, login lockout thresholds.
+
+Nothing there shows password hashes, tokens, reset links or provider secrets. Custom `UserStore`s get the list and row actions by implementing `countUsers`, `listUsers`, `setUserDisabled` and `revokeSessions` (the built-in stores have them; `dbUserStore` adds `users.disabled_at` in migration `miu_auth_004_disabled`).
+
 ## Errors
 
 - [`MIU_E_AUTH_INVALID`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#miu_e_auth_invalid): 401, wrong email or password.
@@ -1144,6 +1231,8 @@ Both need a store with the extra methods (`memoryUserStore()` and `dbUserStore()
 - [`MIU_E_AUTH_RATELIMIT_BINDING`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#miu_e_auth_ratelimit_binding): `cloudflareRateLimiter` binding not configured.
 - [`MIU_E_AUTH_HASH_UNSUPPORTED`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#miu_e_auth_hash_unsupported): bcrypt or argon2 hash outside Bun.
 - [`MIU_E_AUTH_STORE_UNSUPPORTED`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#miu_e_auth_store_unsupported): the user store lacks methods a feature needs.
+- [`MIU_E_AUTH_ACCOUNT_DISABLED`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#miu_e_auth_account_disabled): 403, an operator disabled this account (only after the password matched).
+- [`MIU_E_AUTH_SIGNUPS_CLOSED`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#miu_e_auth_signups_closed) / [`MIU_E_AUTH_OAUTH_SIGNUPS_CLOSED`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#miu_e_auth_oauth_signups_closed): 403, an operator closed sign-ups; existing users still sign in.
 
 See [all error codes](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md).
 
@@ -1328,6 +1417,17 @@ export default miu({
 | `onWarning` | `(message: string) => void` | request logger | Where dev-mode warnings go. |
 
 Store options: `dbSessionStore(database, { table })` (default `"miu_sessions"`), `redisSessionStore(client, { prefix })` (default `"miu:session:"`).
+
+## Admin (`manage()`)
+
+With `@miujs/admin`, `session()` shows a **Sessions** section:
+
+- **Status**: storage (`cookie` or the store kind), active sessions (memory and `dbSessionStore`; capped at 10000+; KV, Redis and cookies say they cannot count), max age, whether a secret is configured (never the secret itself; a random dev secret is flagged) and whether the CSRF check is on.
+- **Settings**: `maxAge` in seconds (60 s to 400 days). Applies to sessions written from then on.
+- **Active sessions** list (memory and `dbSessionStore`; paged, search = exact user id). Session ids are secrets, so rows show only a 12-character SHA-256 prefix; each row carries an encrypted reference (AES-GCM, key derived from the session secret) for the **revoke** row action.
+- **Action** `revokeUser` (danger): delete every session whose `userId` (what `@miujs/auth` stores) matches. Memory and `dbSessionStore` only.
+
+Cookie sessions cannot be listed or revoked one by one: rotate `SESSION_SECRET` to sign everyone out. KV and Redis stores cannot be listed or searched by user.
 
 ## Errors
 
@@ -1515,6 +1615,16 @@ The subpath also exports `tableFromSchema(name, t.object(...), { primaryKey, ind
 
 `sqlite(path)`: `path` defaults to `":memory:"`.
 
+## In @miujs/admin
+
+`db()` has a management section (`manage()`), shown by `@miujs/admin`:
+
+- **Status**: adapter (`sqlite`, or `d1 (binding DB)`), tables with row counts (first 50 tables; counts stop at 10,000 so a big table is never fully scanned), applied migrations (every plugin's, from `_miu_migrations`) and pending ones from `db({ migrations })`.
+- **Migrations list** (filter applied / pending).
+- **Apply pending migrations** (dangerous; only when `db({ migrations })` is set): runs `migrate()` with those migrations, each in its own transaction. Running it again does nothing.
+
+There is no way to run arbitrary SQL from the admin, on purpose.
+
 ## Errors
 
 - [`MIU_E_DB_BINDING_MISSING`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#miu_e_db_binding_missing): no D1 binding with that name in `env`.
@@ -1680,7 +1790,7 @@ const store = redisStore(redisFromCommand((cmd, args) => client.sendCommand([cmd
 
 ### Custom stores
 
-A `CacheStore` moves strings: `name`, `get(key)`, `set(key, value, { ttl })`, `delete(key)`, and optionally `size()`, `forEnv(env)` and `inspect()`.
+A `CacheStore` moves strings: `name`, `get(key)`, `set(key, value, { ttl })`, `delete(key)`, and optionally `size()`, `bytes()`, `scan(query)`, `clear()`, `forEnv(env)` and `inspect()`.
 
 ## Options
 
@@ -1709,6 +1819,16 @@ A `CacheStore` moves strings: `name`, `get(key)`, `set(key, value, { ttl })`, `d
 | --- | --- | --- | --- |
 | `ttl` | `number` | none | Seconds until the entry expires. Must be positive. |
 | `tags` | `string[]` | `[]` | Tags for `invalidateTag`. |
+
+## Admin (`manage()`)
+
+With `@miujs/admin`, the plugin shows a **Cache** section:
+
+- **Status**: store name, entries and total size (memory store; `null` with a hint on KV and Redis, which cannot count cheaply), hits, misses and hit rate counted by this instance since it started.
+- **Keys** list (paged, search = key prefix, values are never shown): memory store, and KV when the binding has `list()` (real Cloudflare bindings do). Redis cannot list keys (no `SCAN` in `RedisLike`), so the list explains that instead. Row action: delete.
+- **Actions**: `deleteKey`, `invalidateTag`, `purgePrefix` (danger) and `purgeAll` (danger). Purges need a store that can list keys and delete at most 1000 keys per run; the result says when more remain. `purgeAll` on the memory store clears it at once.
+
+Custom stores can opt in by implementing `scan({ prefix, cursor, limit })`, `clear()` and `bytes()`.
 
 ## Errors
 
@@ -1936,6 +2056,18 @@ SQLite and Redis adapters are `DurableQueue`s: `drain()`, `stop()`, `close()`, `
 | `binding` | `string` | `"JOBS"` | Producer binding name. |
 | `queue` | `string` | all batches | Only consume batches from this queue name. |
 
+## Admin (`manage()`)
+
+With `@miujs/admin`, the plugin shows a **Queue** section:
+
+- **Status**: adapter, pending, delayed, running and dead-letter counts (memory, SQLite and Redis; Cloudflare Queues cannot be counted or listed from a Worker, so those stats are `null` with a hint pointing to the Cloudflare dashboard), whether this instance is paused, its concurrency, a **Jobs** table (retries, backoff, last run and result in this instance) and a **Schedules** table (cron, job, last fired in this instance).
+- **Jobs** list (memory, SQLite, Redis), filtered by state (`pending`, `delayed`, `running`), paged by offset up to 10 000. Row action: `delete` (danger, only jobs that have not started).
+- **Dead letters** list, newest first. Row actions: `retry` (queues the message again as attempt 1) and `delete` (danger). Both are idempotent: a second run says there is nothing to do. On Redis, retry/delete look through the newest 10 000 dead letters.
+- **Actions**: `dispatch` (enqueue a job with JSON input, validated by its schema; internal `miu.*` jobs are refused), `runSchedule` (dispatch a schedule's job with its input now; pass `cron` when the job has several), and `pause` / `resume` (this instance only; jobs are still accepted, other instances keep running, a restart resumes).
+- **Settings**: `concurrency` (1–1000), applied at once in this instance.
+
+Job inputs are shown as compact JSON with secret-looking keys (`password`, `token`, `apiKey`, `secret`, ...) replaced by `[redacted]`. Custom adapters opt in by implementing the optional `QueueManagement` methods (`stats`, `listJobs`, `listDead`, `retryDead`, `deleteDead`, `pause`, `resume`, `setConcurrency`, ...); durable backends by implementing `jobs`, `deadPage` and `takeDead`.
+
 ## Errors
 
 - [`MIU_E_VALIDATION`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#miu_e_validation): job input does not match its schema.
@@ -2128,6 +2260,17 @@ Rule fields:
 `limiter(options)` takes `limit`, `window`, `algorithm` (default `"sliding"`), `burst`, `store` (default `memoryStore()`), `name` (default `"limiter"`, the key prefix) and `now`.
 
 Store options: `memoryStore` `maxKeys` (default `100000`); `kvStore` and `redisStore` `prefix` (default `"ratelimit:"`); `durableObjectStore` binding (default `"RATE_LIMITER"`); `cloudflareBindingStore` `limit`, `period` (10 or 60) and optional `namespaceId`.
+
+## Admin (`manage()`)
+
+With `@miujs/admin`, `rateLimit()` shows a **Rate limits** section:
+
+- **Status**: store, number of rules, keys tracked (memory store only; other stores say they cannot count), 429s and store errors in this instance since it started, and a table of rules with their rejections.
+- **Settings**: `limit` and `window` per rule (e.g. `{ api: { limit: 200, window: "1m" } }`). They apply at once in this instance; the admin persists them and re-applies them on start. A value the store cannot enforce (e.g. a Cloudflare binding's fixed limit) is rejected and nothing changes. Lowering a limit can start affected clients on a fresh window.
+- **Limited clients** list (memory store only; paged, search, filter limited/all). API keys appear only as their hash. Row action: reset.
+- **Action** `resetKey`: forget one client (`ip:203.0.113.7`, `user:<id>`, `key:<hash>`) for a rule. Not available on `cloudflareBindingStore()`, which cannot reset.
+
+Counters are per instance; `limiter()` instances are not part of the plugin and do not appear.
 
 ## Errors
 
@@ -2392,7 +2535,7 @@ Over budget: 429 `MIU_E_RATE_LIMITED` with `Retry-After`.
 | `cacheClientStore()` | everything on the same backend | Uses `ctx.cache` from `@miujs/cache` (KV on Workers, Redis, memory). List `cache()` first. Long keys are hashed. |
 | `cacheApiStore()` | one Cloudflare data center | Workers Cache API (`caches.default`), no binding needed. |
 
-On Workers without `cache.store`, the plugin uses `ctx.cache` when `@miujs/cache` is listed first, else the Cache API, else memory. A store is `{ name, get(key, ctx), set(key, entry, ctx), delete?, size?, inspect?, cloudflare? }`.
+On Workers without `cache.store`, the plugin uses `ctx.cache` when `@miujs/cache` is listed first, else the Cache API, else memory. A store is `{ name, get(key, ctx), set(key, entry, ctx), delete?, size?, bytes?, purge?, inspect?, cloudflare? }`.
 
 ## Options
 
@@ -2420,6 +2563,15 @@ On Workers without `cache.store`, the plugin uses `ctx.cache` when `@miujs/cache
 | `timers` | `{ set(fn, ms), clear(handle) }` | `setTimeout` / `clearTimeout` | Timers for `waitMs`, for tests. |
 
 `miu inspect` shows the policy, cache settings and counters by kind, by action and for the cache (hit, stale, miss, coalesced, stored, skipped, waitTimeouts).
+
+## Admin (`manage()`)
+
+With `@miujs/admin`, `bots()` shows a **Bots** section:
+
+- **Status**: requests by kind and by decision, blocked and over-budget counts, and the bot cache: store, entries and size (memory store; other stores say they cannot count), hits, misses, hit rate, stale served, stored, not stored, errors and wait timeouts. Counters are per instance since it started.
+- **Settings**: `policy` per kind, `blockCountries`, `allowCountries` (empty = no restriction), `botScoreThreshold` (1–99) and `cacheTtl` (when the cache is on). They apply at once in this instance; the admin persists them and re-applies them on start.
+- **Recently blocked** list: the last 200 blocked visits in this instance (time, kind, agent, country, path without the query string, and the reason: policy, route policy, rule n, country blocked, country not allowed). Filter by kind; search agent, country or path.
+- **Actions**: `purgeCache` (danger; all or under a path prefix, memory store only), `purgeUrl` (one page on any store with `delete`; on KV or the Cache API, entries varied by country or `varyBy` cannot be found), and `classifyUserAgent` (what a User-Agent claims and the access its kind gets; nothing is verified without Cloudflare or `verify`).
 
 ## Errors
 
@@ -2718,6 +2870,15 @@ new_sqlite_classes = ["MiuRooms"]
 
 On Bun, Deno and Node rooms run in process (`LocalRooms`); nothing else is needed.
 
+## Admin
+
+`rooms()` implements `manage()`, so `@miujs/admin` shows a **Realtime rooms** section:
+
+- **Status**: live rooms, connected sockets, members (and rooms) in reconnect grace, and a per-type table. These count rooms in this process; on Cloudflare every room is its own Durable Object, which a Worker cannot list, so the numbers cover only the current isolate (normally 0) and say so.
+- **List** `rooms`: type, id, members, connected, in grace, age and a truncated preview of the public state (never `secret`, resume tokens or host keys). Filter by type, search by id. Empty on Cloudflare.
+- **Row actions**: `broadcast` (`{ event, message? }`), `kick` (`{ member }`, danger) and `close` (`{ reason? }`, danger).
+- **Actions** `broadcastRoom`, `kickMember`, `closeRoom`: the same, by `type` and `id`. On Cloudflare they are forwarded to the room's Durable Object, so they work there too. Closing a room that is not open, or kicking a member who already left, is a no-op with a message.
+
 ## Links
 
 - [Getting started guide](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/guide.md)
@@ -2889,6 +3050,16 @@ R2 needs every part except the last to be at least 5 MiB and the same size.
 | `prefix` | `string` | `"uploads/"` | Prefix of generated keys. |
 | `key` | `(file) => string` | `<prefix><random><ext>` | Choose the key yourself. |
 | `metadata` | `Record<string, string>` | none | Extra metadata stored with each file. |
+
+## In @miujs/admin
+
+`files()` has a management section (`manage()`), shown by `@miujs/admin`:
+
+- **Status**: store kind and its non-secret details (directory, R2 binding, S3 bucket/region/endpoint), file count and total size (one page of up to 1,000 files is counted; more shows as `1000+`), max upload size, multipart on/off, and whether a signing secret is set (never its value).
+- **Files list** (paged; the search box is a key prefix): delete a file (dangerous, idempotent) and get a download link (a signed GET URL, 10 s to 1 h, default 5 min; anyone holding it can download until it expires).
+- **Settings**: `maxUploadSize`, the default size limit for signed PUT uploads, applied at once.
+
+There is no "purge orphaned uploads": stores do not list unfinished multipart uploads (the memory store drops stale ones by itself).
 
 ## Errors
 
@@ -3266,6 +3437,16 @@ console.log(sent.to, sent.subject);
 
 `consoleTransport(options)`: `log` (default `console.log`), `keep` (default `50`).
 
+## Admin (`manage()`)
+
+With `@miujs/admin`, the plugin shows a **Mail** section:
+
+- **Status**: transport kind (never its API key, URL or headers), sender, sends that succeeded and failed since this instance started, and the number of templates.
+- **Recent sends**: the last 200 sends of this instance (a ring buffer), newest first, filterable by `sent` / `failed`. Recipients are masked (`a***@example.com`), bodies are never kept, and 6+ digit codes and long tokens in subjects show as `[hidden]`. Failures show their error code.
+- **Action** `sendTest`: send a short test email to one address through the configured transport.
+
+The counters and the list are also available in code: `createMailer(...).stats()` and `.recent()`.
+
 ## Errors
 
 - `MIU_E_MAIL_TRANSPORT_MISSING`: no transport in production; fails at startup.
@@ -3473,6 +3654,17 @@ console.log(await store.getMembership(org.id, "carol")); // { role: "member" }
 | `appUrl` | `string` | `env.APP_URL` (request origin in dev only) | Public base URL for invite links. |
 | `inviteUrl` | `(token, ctx) => string` | `${appUrl}/invites/${token}` | Build the invite link yourself. |
 
+## In @miujs/admin
+
+`access()` has a management section (`manage()`), shown by `@miujs/admin`:
+
+- **Status**: roles with their permission counts and grants, number of organizations, memberships, pending invites and policies.
+- **Organizations list** (paged, search by name) with member counts.
+- **Members list** across organizations (paged, search by email, user id or an exact org id, filter by role): change role and remove member. Both are marked dangerous; the last owner can be neither demoted nor removed. Operators are not limited by `roleCovers` (the admin checks its own permission instead).
+- **Check a permission**: would this user (by their role in an org), or this role, be granted `resource:action`, and by which pattern. Record-level policies are not evaluated.
+
+Invite token hashes are never shown.
+
 ## Errors
 
 - [`MIU_E_ACCESS_NOT_MEMBER`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#miu_e_access_not_member): 403, the user is not a member of the requested org.
@@ -3654,6 +3846,16 @@ console.log(check.ok);
 | `emailSalt` | `string` | the audit key | Salt for `emailHash`, 32+ characters. With neither, the email is dropped. |
 
 Stores: `memoryAuditStore({ key? })` and `dbAuditStore(database, { key?, table? })` (default table `audit_log`).
+
+## Admin (`manage()`)
+
+With `@miujs/admin`, the plugin shows an **Audit log** section. It is read only: the log is append-only, so there is no delete or edit action (retention stays with `purgeOlderThan`).
+
+- **Status**: entries written in the last 24 hours (counted by sequence number, so it stays cheap), the newest sequence number and time, whether entries are HMAC-signed (a warning when not), and the store.
+- **Entries** list, newest first, paged with the store's cursor. Search with `actor:`, `action:`, `resource:`, `id:`, `org:`, `since:` and `until:` (ISO date or epoch ms); a bare word matches the resource. The **Time** filter limits to the last `1h`, `24h`, `7d` or `30d`. Rows show the changed field names, not their values.
+- **Action** `export`: up to 1000 matching entries as JSON or CSV (with hashes, for offline checks); the result says when more match. CSV cells that a spreadsheet would run as formulas are prefixed with `'`.
+
+Like `GET /audit`, a request with an active organization only sees that organization's entries. `AuditQuery` also accepts `action` now. Chain verification is not offered as an action because it reads the whole log; run `verifyChain` from a job or script.
 
 ## Errors
 
@@ -3888,6 +4090,17 @@ The memory store is bounded so a long-running process does not grow: it keeps th
 
 `defineWorkflow(name, config)`: `run` (required), `input` (a `t` schema; default any object), `trigger` (one or an array; default `manual()`), `description`, `concurrency: { key(input), limit }` (limit default `1`).
 
+## Admin (`manage()`)
+
+With `@miujs/admin`, the plugin shows a **Workflows** section next to the admin's workflow builder (which edits definitions; this section operates runs):
+
+- **Status**: registered and disabled workflows, runs queued, running, sleeping, waiting and failed (each counted up to 200, then shown as `200+`), the store and queue in use, a **Workflows** table (triggers, enabled) and the 5 most recent failures.
+- **Runs** list, newest first, filtered by workflow and status; search finds a run by id. Rows never include the resume token, and inputs hide secret-looking keys. Row actions: `cancel` (danger) and `retry` (failed runs, from the failed step). Both answer with a message instead of failing when there is nothing to do.
+- **Actions**: `start` (start a workflow with JSON input as a manual run by the operator) and `emit` (send an event with optional data and idempotency key).
+- **Settings**: `disabled`, a list of workflow names that start no new runs from any trigger (event, cron, webhook, manual, admin). Runs already started go on; cancel them from the runs list. Starting a disabled workflow fails with `MIU_E_CONFLICT` (409); emit reports it under `skipped`; cron firings are skipped without retries.
+
+There is no "resume now" action for sleeping or waiting runs: they wake on their timer or event (use `emit`).
+
 ## Errors
 
 - `MIU_E_WORKFLOW_CONFIG`: invalid `defineWorkflow`, trigger, action or plugin options.
@@ -4088,12 +4301,21 @@ Vector stores: `memoryVectors()` (in-process), `sqliteVectors(db, { table })` (f
 | `maxTokens` | `number` | `16000` (`64000` for `stream`) | Default `max_tokens`. |
 | `timeoutMs` | `number` | `120000` | Request timeout (for streams: until headers arrive). |
 | `retries` | `number` | `2` | Retries on 429, 5xx and network errors, honoring `retry-after`. |
+| `temperature` | `number` | the provider's | Default sampling temperature when a call passes none. |
 | `fetch` | `typeof fetch` | global `fetch` | Injected fetch (tests, proxies). |
 | `env` | `Env` | process env | `createAI` only: where API keys and bindings are read. |
 | `log` | `Logger` | a `createLogger("info")` | `createAI` only: usage is logged at debug level. |
 | `stores` | `VectorStore[]` | `[]` | `ai()` only: stores whose bindings `miu deploy cloudflare` should declare. |
 
 Per-call options for `generate` / `stream` / `object`: `system`, `prompt`, `messages`, `model`, `maxTokens`, `temperature`, `tools`, `cache`, `signal`, `extra`. `run` adds `tools` (required), `maxSteps` (default 10) and `limits: { totalTokens, timeMs }`. `rag` takes `query`, `store`, `topK` (default 4) and `filter`.
+
+## Admin
+
+`ai()` implements `manage()`, so `@miujs/admin` shows an **AI** section:
+
+- **Status**: provider, model and embeddings names; completed requests, input/output tokens, tool calls, embedding calls, errors and the last error code, plus a per-model table (20 models, the rest under `(other)`). Counters are in memory, per process (per isolate on Workers). Keys, prompts, replies and provider error messages are never kept.
+- **Settings**: default `model` (`null` = configured default), `maxTokens` and `temperature` (`null` = provider default), applied to later requests without a deploy.
+- **Action** `testPrompt` (`{ prompt, maxTokens? }`, default 256 tokens): sends a prompt with the current settings and returns the reply (2000 characters at most), model, usage and stop reason. At most 5 per minute per process (`MIU_E_AI_TEST_RATE_LIMITED`).
 
 ## Errors
 

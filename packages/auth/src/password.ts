@@ -77,6 +77,12 @@ function preferred(opts: PasswordOptions): "argon2id" | "pbkdf2" {
   return bunPassword(opts) ? "argon2id" : "pbkdf2";
 }
 
+/** How new passwords are hashed on this runtime, e.g. "pbkdf2-sha256, 600000 iterations". No secrets. */
+export function describePasswordHashing(opts: PasswordOptions = {}): string {
+  if (preferred(opts) === "argon2id") return `argon2id, m=${opts.memoryCost ?? DEFAULT_MEMORY_COST} KiB, t=${opts.timeCost ?? DEFAULT_TIME_COST}`;
+  return `pbkdf2-sha256, ${opts.iterations ?? DEFAULT_ITERATIONS} iterations`;
+}
+
 async function pbkdf2(password: string, salt: string, iterations: number): Promise<Uint8Array> {
   const key = await crypto.subtle.importKey("raw", utf8(password), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: utf8(salt), iterations }, key, 256);

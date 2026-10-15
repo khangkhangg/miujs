@@ -4,7 +4,8 @@
 import { definePlugin, errors, processEnv, route, t, type AuthUser, type CloudflareNeeds, type Context, type Env, type RouteDef } from "miujs";
 import { getSession, hex, randomId, sha256, timingSafeEqual, utf8, base64urlEncode, randomBytes } from "@miujs/session";
 import { defaultAuthEmails, type AuthEmails, type AuthMailer } from "./emails.ts";
-import { UNUSABLE_PASSWORD, hashPassword, needsRehash, verifyPassword, type PasswordOptions } from "./password.ts";
+import { UNUSABLE_PASSWORD, describePasswordHashing, hashPassword, needsRehash, verifyPassword, type PasswordOptions } from "./password.ts";
+import { authManage } from "./manage.ts";
 import { RATE_LIMIT_DEFAULTS, memoryRateLimiter, type RateLimitOptions } from "./ratelimit.ts";
 import { memoryUserStore, type OneTimeTokenPurpose, type OneTimeTokenRecord, type StoredUser, type UserStore } from "./store.ts";
 import { OAUTH_STORE_METHODS, oauth as oauthRoutes, type OAuthOptions } from "./oauth.ts";
@@ -134,13 +135,18 @@ export function auth(opts: AuthOptions = {}) {
   const users = opts.users ?? memoryUserStore();
   const base = (opts.basePath ?? "/auth").replace(/\/+$/, "");
   const pw = opts.password ?? {};
-  const minLen = opts.minPasswordLength ?? 8;
+  // Runtime settings an operator can change (auth().manage()); start from the options.
+  const live = { allowSignUps: true, minPasswordLength: opts.minPasswordLength ?? 8 };
+  // Since this instance started; plain numbers, so memory stays constant.
+  const counters = { signUps: 0, signIns: 0, failedSignIns: 0 };
   const prefix = opts.tokenPrefix ?? "miu_";
   const verification: EmailVerificationMode = opts.emailVerification ?? "off";
   const emails: AuthEmails = { ...defaultAuthEmails, ...opts.emails };
   const pages = { verifyEmail: "/verify-email", resetPassword: "/reset-password", forgotPassword: "/forgot-password", ...opts.pages };
   let dummyHash: Promise<string> | undefined;
   let dev = true;
+  // Account emails (reset links) can be sent: a mailer was given, or setup found mail() in plugins.
+  let mailOn = !!opts.mailer;
 
   const rl = opts.rateLimit === false ? null : (opts.rateLimit ?? {});
   const limiter = rl ? (rl.limiter ?? memoryRateLimiter()) : null;
@@ -210,18 +216,20 @@ export function auth(opts: AuthOptions = {}) {
   }
 
   function checkPassword(password: string) {
-    if (password.length < minLen || password.length > MAX_PASSWORD) {
+    if (password.length < live.minPasswordLength || password.length > MAX_PASSWORD) {
       throw errors.custom({
         code: "MIU_E_AUTH_PASSWORD_WEAK",
         status: 400,
-        message: `Password must be ${minLen}–${MAX_PASSWORD} characters`,
-        fix: `Choose a password of at least ${minLen} characters (a passphrase works well).`,
+        message: `Password must be ${live.minPasswordLength}–${MAX_PASSWORD} characters`,
+        fix: `Choose a password of at least ${live.minPasswordLength} characters (a passphrase works well).`,
       });
     }
   }
 
   function signIn(ctx: Context, user: StoredUser) {
+    if (user.disabledAt != null) throw accountDisabled();
     const s = requireSession(ctx);
+    counters.signIns++;
     s.regenerate();
     s.set("userId", user.id);
     s.set("sv", user.sessionVersion ?? 0);
@@ -288,6 +296,14 @@ export function auth(opts: AuthOptions = {}) {
   const StatusSchema = t.object({ status: t.string() });
 
   async function registerChecks(ctx: Context, body: { password: string; "cf-turnstile-response"?: string }): Promise<Response | null> {
+    if (!live.allowSignUps) {
+      throw errors.custom({
+        code: "MIU_E_AUTH_SIGNUPS_CLOSED",
+        status: 403,
+        message: "Sign-ups are closed",
+        fix: "New accounts cannot be created right now. Sign in with an existing account, or try again later.",
+      });
+    }
     const ip = clientIp(ctx);
     const blocked = await limited(ctx, [[ip ? `register:ip:${ip}` : null, registerLimits.perIp]], registerLimits.windowSeconds);
     if (blocked) return blocked;
@@ -314,6 +330,7 @@ export function auth(opts: AuthOptions = {}) {
             const appUrl = appUrlFor(c);
             const passwordHash = await hashPassword(ctx.body.password, pw);
             const created = await users.createUser({ email: ctx.body.email, name: ctx.body.name ?? null, roles: [...(opts.defaultRoles ?? [])], passwordHash }, ctx.env);
+            if (created) counters.signUps++;
             // Same answer either way, so the form cannot be used to test which emails have accounts.
             inBackground(c, async () => {
               if (created) return sendVerify(mailer, appUrl, created, ctx.env);
@@ -349,6 +366,7 @@ export function auth(opts: AuthOptions = {}) {
                 fix: "Sign in with POST /auth/login instead, or use another email.",
               });
             }
+            counters.signUps++;
             signIn(c, user);
             if (mailer) inBackground(c, () => sendVerify(mailer, appUrl, user, ctx.env));
             return { user: publicUser(user) };
@@ -382,9 +400,13 @@ export function auth(opts: AuthOptions = {}) {
         // Same work as a real check, so response time does not reveal whether the email exists.
         dummyHash ??= hashPassword(randomId(), pw);
         await verifyPassword(ctx.body.password, await dummyHash, pw).catch(() => false);
+        counters.failedSignIns++;
         throw invalidLogin();
       }
-      if (!(await verifyPassword(ctx.body.password, user.passwordHash, pw))) throw invalidLogin();
+      if (!(await verifyPassword(ctx.body.password, user.passwordHash, pw))) {
+        counters.failedSignIns++;
+        throw invalidLogin();
+      }
       if (needsRehash(user.passwordHash, pw)) {
         await users.updatePasswordHash(user.id, await hashPassword(ctx.body.password, pw), ctx.env);
       }
@@ -615,6 +637,7 @@ export function auth(opts: AuthOptions = {}) {
         isDev: () => dev,
         appUrlFor,
         signIn,
+        allowSignUps: () => live.allowSignUps,
       })
     : null;
 
@@ -684,12 +707,13 @@ export function auth(opts: AuthOptions = {}) {
       // On Workers env arrives per request, so APP_URL is checked when the first link is built.
       if (!dev && !opts.appUrl && app.runtime !== "workerd" && !processEnv().APP_URL) throw appUrlMissing();
       app.add(accountRoutes);
+      mailOn = true;
     },
     async onRequest(ctx) {
       const header = ctx.headers.get("authorization");
       if (header && /^bearer\s/i.test(header)) {
         const user = await userFromToken(header.slice(7).trim(), ctx.env);
-        if (!user) throw invalidToken();
+        if (!user || user.disabledAt != null) throw invalidToken();
         ctx.user = publicUser(user);
         ctx.state.authMethod = "token";
         return;
@@ -700,11 +724,33 @@ export function auth(opts: AuthOptions = {}) {
         const user = await users.findUserById(userId, ctx.env);
         // A password reset/change bumps sessionVersion, which signs out sessions from before it.
         const current = user && (s!.get<number>("sv") ?? 0) === (user.sessionVersion ?? 0);
-        if (user && current && !(verification === "required" && user.emailVerifiedAt == null)) {
+        if (user && current && user.disabledAt == null && !(verification === "required" && user.emailVerifiedAt == null)) {
           ctx.user = publicUser(user);
           ctx.state.authMethod = "session";
         }
       }
+    },
+    manage() {
+      return authManage({
+        users,
+        live,
+        counters,
+        loginLimits,
+        rateLimited: !!limiter,
+        register: opts.register !== false,
+        passwordHashing: describePasswordHashing(pw),
+        verification,
+        oauthProviders: oauth?.providers ?? [],
+        passkeys: !!passkeys,
+        maxPasswordLength: MAX_PASSWORD,
+        canMail: () => mailOn,
+        async sendReset(ctx, user) {
+          const mailer = mailerFor(ctx);
+          const appUrl = appUrlFor(ctx);
+          const token = await issueToken(user.id, "reset", ctx.env);
+          await mailer.send({ to: user.email, ...emails.resetPassword({ link: link(appUrl, pages.resetPassword, token), appUrl }) });
+        },
+      });
     },
     inspect() {
       return {
@@ -754,5 +800,14 @@ function emailUnverified(base: string) {
     status: 403,
     message: "Confirm your email address before signing in",
     fix: `Open the link in the confirmation email we sent. To get a new one, POST { "email" } to ${base}/verify-email/request.`,
+  });
+}
+
+function accountDisabled() {
+  return errors.custom({
+    code: "MIU_E_AUTH_ACCOUNT_DISABLED",
+    status: 403,
+    message: "This account has been disabled",
+    fix: "Contact the site's administrators to have it enabled again.",
   });
 }

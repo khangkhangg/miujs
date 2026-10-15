@@ -4,7 +4,7 @@
 // WebSocket upgrades are not proxied (fetch cannot carry them): route WebSocket paths to the old
 // app at the load balancer, or port them to MiuJS (`ctx.upgrade`).
 
-import { definePlugin, detectRuntime, isMiuError, type Context } from "miujs";
+import { definePlugin, detectRuntime, isMiuError, t, type Context, type ManageSection } from "miujs";
 import { migrateError } from "./errors.ts";
 
 export interface MigrateProxyOptions {
@@ -90,7 +90,10 @@ function rewriteCookie(cookie: string, upstreamHost: string, domain: string | un
 export function migrateProxy(opts: MigrateProxyOptions) {
   const base = parseUpstream(opts.upstream);
   const prefix = base.pathname.replace(/\/+$/, "");
-  const timeout = opts.timeout ?? 30_000;
+  // Live: an operator can change it (manage() settings).
+  let timeout = opts.timeout ?? 30_000;
+  // Since this instance started (plain numbers: constant memory).
+  const counters = { served: 0, proxied: 0, upstream5xx: 0, unreachable: 0, timeouts: 0 };
   const trust = opts.trustForwardedHeaders ?? false;
   // fetch(url, init), not fetch(new Request(...)): a Request would drop Bun's `decompress` option.
   const doFetch = opts.fetch ? (u: URL, i: RequestInit) => opts.fetch!(new Request(u, i)) : (u: URL, i: RequestInit) => fetch(u, i);
@@ -156,6 +159,7 @@ export function migrateProxy(opts: MigrateProxyOptions) {
     } catch (err) {
       if (isMiuError(err)) throw err;
       if (timedOut) {
+        counters.timeouts++;
         throw migrateError(
           "UPSTREAM_TIMEOUT",
           504,
@@ -163,6 +167,7 @@ export function migrateProxy(opts: MigrateProxyOptions) {
           "Check the old app's health and logs, or raise migrateProxy({ timeout }).",
         );
       }
+      if (!req.signal?.aborted) counters.unreachable++;
       throw migrateError(
         "UPSTREAM",
         502,
@@ -175,6 +180,7 @@ export function migrateProxy(opts: MigrateProxyOptions) {
       req.signal?.removeEventListener?.("abort", onClientAbort);
     }
 
+    if (res.status >= 500) counters.upstream5xx++;
     const resDrop = connectionTokens(res.headers);
     const out = new Headers();
     for (const [k, v] of res.headers) {
@@ -208,9 +214,43 @@ export function migrateProxy(opts: MigrateProxyOptions) {
   return definePlugin({
     name: "migrate-proxy",
     onRequest(ctx) {
-      if (ctx.route && (opts.ported?.(ctx) ?? !ctx.route.tags.includes(NOT_PORTED_TAG))) return;
+      if (ctx.route && (opts.ported?.(ctx) ?? !ctx.route.tags.includes(NOT_PORTED_TAG))) {
+        counters.served++;
+        return;
+      }
       ctx.state[PROXIED] = true;
+      counters.proxied++;
       return forward(ctx);
+    },
+    manage(): ManageSection[] {
+      const since = "Since this instance started";
+      return [
+        {
+          id: "proxy",
+          title: "Strangler proxy",
+          description: "Requests MiuJS serves itself, and those still forwarded to the old app.",
+          status: () => ({
+            stats: [
+              { label: "Upstream", value: base.origin + prefix },
+              { label: "Served by MiuJS", value: counters.served, hint: since },
+              { label: "Proxied", value: counters.proxied, hint: `${since}; requests that matched no ported route` },
+              { label: "Upstream 5xx", value: counters.upstream5xx, hint: since, ...(counters.upstream5xx ? { tone: "warning" as const } : {}) },
+              { label: "Upstream unreachable", value: counters.unreachable, hint: since, ...(counters.unreachable ? { tone: "critical" as const } : {}) },
+              { label: "Upstream timeouts", value: counters.timeouts, hint: since, ...(counters.timeouts ? { tone: "warning" as const } : {}) },
+              { label: "Timeout (ms)", value: timeout },
+              // Names only: values are often shared secrets the old app checks.
+              { label: "Extra headers", value: Object.keys(opts.headers ?? {}).join(", ") },
+            ],
+          }),
+          settings: {
+            schema: t.object({ timeout: t.integer({ min: 100, max: 600_000, description: "Milliseconds to wait for the old app's response headers." }) }),
+            get: () => ({ timeout }),
+            set(v: { timeout: number }) {
+              timeout = v.timeout;
+            },
+          },
+        },
+      ];
     },
     inspect() {
       return {

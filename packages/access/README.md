@@ -170,6 +170,17 @@ console.log(await store.getMembership(org.id, "carol")); // { role: "member" }
 | `appUrl` | `string` | `env.APP_URL` (request origin in dev only) | Public base URL for invite links. |
 | `inviteUrl` | `(token, ctx) => string` | `${appUrl}/invites/${token}` | Build the invite link yourself. |
 
+## In @miujs/admin
+
+`access()` has a management section (`manage()`), shown by `@miujs/admin`:
+
+- **Status**: roles with their permission counts and grants, number of organizations, memberships, pending invites and policies.
+- **Organizations list** (paged, search by name) with member counts.
+- **Members list** across organizations (paged, search by email, user id or an exact org id, filter by role): change role and remove member. Both are marked dangerous; the last owner can be neither demoted nor removed. Operators are not limited by `roleCovers` (the admin checks its own permission instead).
+- **Check a permission**: would this user (by their role in an org), or this role, be granted `resource:action`, and by which pattern. Record-level policies are not evaluated.
+
+Invite token hashes are never shown.
+
 ## Errors
 
 - [`MIU_E_ACCESS_NOT_MEMBER`](../../docs/errors.md#miu_e_access_not_member): 403, the user is not a member of the requested org.

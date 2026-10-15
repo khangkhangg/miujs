@@ -36,7 +36,7 @@ const oneLine = (s: string) => s.replace(/[\r\n\t]+/g, " ").trim();
 
 const hasRole = (opts: AccessOptions, role: string) => Object.prototype.hasOwnProperty.call(opts.roles, role);
 
-function unknownRole(opts: AccessOptions, role: string) {
+export function unknownRole(opts: AccessOptions, role: string) {
   return errors.custom({
     code: "MIU_E_ACCESS_ROLE_UNKNOWN",
     status: 400,
@@ -54,7 +54,7 @@ function roleTooHigh(mine: string, target: string) {
   });
 }
 
-const lastOwner = (ownerRole: string) =>
+export const lastOwner = (ownerRole: string) =>
   errors.custom({
     code: "MIU_E_ACCESS_LAST_OWNER",
     status: 409,

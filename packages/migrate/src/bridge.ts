@@ -1,6 +1,6 @@
 // bridgeAuth: users signed in to the old app are signed in to MiuJS too.
 
-import { definePlugin, type AuthUser, type Context } from "miujs";
+import { definePlugin, type AuthUser, type Context, type ManageSection } from "miujs";
 import { migrateError } from "./errors.ts";
 import type { LegacySession, LegacySessionSource } from "./types.ts";
 
@@ -38,6 +38,8 @@ function originOf(v: string): string | null {
 export function bridgeAuth(opts: BridgeAuthOptions) {
   const csrf = opts.csrf ?? true;
   const trusted = new Set((opts.trustedOrigins ?? []).map((o) => originOf(o)).filter((o): o is string => !!o));
+  // Since this instance started (plain numbers: constant memory).
+  const counters = { bridged: 0, notFound: 0, csrfBlocked: 0 };
 
   function sameOrigin(ctx: Context): boolean {
     const here = ctx.url.origin;
@@ -55,6 +57,7 @@ export function bridgeAuth(opts: BridgeAuthOptions) {
       ctx.state[LEGACY] = session;
       if (!session?.userId) return;
       if (csrf && UNSAFE.has(ctx.method) && !sameOrigin(ctx)) {
+        counters.csrfBlocked++;
         throw migrateError(
           "CSRF",
           403,
@@ -63,7 +66,30 @@ export function bridgeAuth(opts: BridgeAuthOptions) {
         );
       }
       const user = await opts.findUser(session.userId, ctx);
-      if (user) ctx.user = user;
+      if (user) {
+        ctx.user = user;
+        counters.bridged++;
+      } else counters.notFound++;
+    },
+    manage(): ManageSection[] {
+      const since = "Since this instance started";
+      return [
+        {
+          id: "bridge-auth",
+          title: "Shared sign-in",
+          description: "Users signed in to the old app, recognized by MiuJS through its session cookie.",
+          status: () => ({
+            stats: [
+              { label: "Source", value: opts.from.kind },
+              { label: "Signed in via old session", value: counters.bridged, hint: since },
+              { label: "Old-session users not found", value: counters.notFound, hint: `${since}; findUser returned nothing` },
+              { label: "Cross-site writes blocked", value: counters.csrfBlocked, hint: since },
+              { label: "CSRF check", value: csrf, ...(csrf ? {} : { tone: "warning" as const }) },
+              { label: "Trusted origins", value: [...trusted].join(", ") },
+            ],
+          }),
+        },
+      ];
     },
     inspect() {
       return { from: opts.from.inspect(), csrf, trustedOrigins: [...trusted] };

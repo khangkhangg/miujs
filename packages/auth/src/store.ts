@@ -13,6 +13,17 @@ export interface StoredUser {
   emailVerifiedAt: number | null;
   /** Bumped on password reset/change. Sessions signed in under an older version are rejected. */
   sessionVersion: number;
+  /** Epoch ms when an operator disabled the account, or null. A disabled user cannot sign in. */
+  disabledAt?: number | null;
+}
+
+/** A page of users for operators (`auth().manage()`), ordered by email. */
+export interface UserListQuery {
+  /** The last email of the previous page. */
+  cursor?: string;
+  limit: number;
+  /** Case-insensitive substring of the email. */
+  search?: string;
 }
 
 export type OneTimeTokenPurpose = "verify" | "reset";
@@ -95,6 +106,14 @@ export interface UserStore {
   /** Atomically deletes and returns the challenge if it exists with this purpose (expired or not). */
   consumeChallenge?(challenge: string, purpose: ChallengePurpose, env: Env): Promise<ChallengeRecord | null>;
 
+  // Needed for the operator screens in @miujs/admin (built-in stores have them).
+  countUsers?(env: Env): Promise<number>;
+  listUsers?(q: UserListQuery, env: Env): Promise<{ users: StoredUser[]; next?: string }>;
+  /** Sets or clears `disabledAt`. Returns false when there is no such user. */
+  setUserDisabled?(id: string, disabledAt: number | null, env: Env): Promise<boolean>;
+  /** Bumps `sessionVersion` (signs out every session). Returns the new version, or null when there is no such user. */
+  revokeSessions?(id: string, env: Env): Promise<number | null>;
+
   inspect?(): Record<string, unknown>;
   cloudflare?(): { d1?: string[] };
 }
@@ -144,6 +163,9 @@ export interface ChallengeRecord {
 
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
+const MAX_PAGE = 100;
+const pageSize = (n: number) => Math.max(1, Math.min(MAX_PAGE, Math.floor(Number(n)) || 1));
+
 // ---------------------------------------------------------------------------------------------
 
 /** In-process users. For dev and tests; data is lost on restart. */
@@ -172,7 +194,7 @@ export function memoryUserStore(): UserStore {
     async createUser(u) {
       const email = normalizeEmail(u.email);
       if (byEmail.has(email)) return null;
-      const user: StoredUser = { id: randomId(16), email, name: u.name ?? null, roles: [...u.roles], passwordHash: u.passwordHash, createdAt: Date.now(), emailVerifiedAt: null, sessionVersion: 0 };
+      const user: StoredUser = { id: randomId(16), email, name: u.name ?? null, roles: [...u.roles], passwordHash: u.passwordHash, createdAt: Date.now(), emailVerifiedAt: null, sessionVersion: 0, disabledAt: null };
       users.set(user.id, user);
       byEmail.set(email, user.id);
       return structuredClone(user);
@@ -292,6 +314,26 @@ export function memoryUserStore(): UserStore {
       challenges.delete(challenge);
       return c;
     },
+    async countUsers() {
+      return users.size;
+    },
+    async listUsers(q) {
+      const limit = pageSize(q.limit);
+      const needle = q.search ? q.search.toLowerCase() : "";
+      const emails = [...byEmail.keys()].filter((e) => (q.cursor === undefined || e > q.cursor) && (!needle || e.includes(needle))).sort();
+      const page = emails.slice(0, limit).map((e) => structuredClone(users.get(byEmail.get(e)!)!));
+      return emails.length > limit ? { users: page, next: page[page.length - 1].email } : { users: page };
+    },
+    async setUserDisabled(id, at) {
+      const u = users.get(id);
+      if (!u) return false;
+      u.disabledAt = at;
+      return true;
+    },
+    async revokeSessions(id) {
+      const u = users.get(id);
+      return u ? ++u.sessionVersion : null;
+    },
     inspect: () => ({ store: "memory" }),
   };
 }
@@ -321,6 +363,10 @@ CREATE TABLE passkeys (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES use
 CREATE INDEX passkeys_user ON passkeys (user_id);
 CREATE TABLE auth_challenges (challenge TEXT PRIMARY KEY, purpose TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
 CREATE INDEX auth_challenges_expires ON auth_challenges (expires_at);`,
+  },
+  {
+    id: "miu_auth_004_disabled",
+    sql: `ALTER TABLE users ADD COLUMN disabled_at INTEGER;`,
   },
 ];
 
@@ -392,6 +438,7 @@ interface UserRow {
   created_at: number;
   email_verified_at: number | null;
   session_version: number;
+  disabled_at?: number | null;
 }
 interface OneTimeRow {
   token_hash: string;
@@ -425,6 +472,7 @@ function toUser(r: UserRow | null): StoredUser | null {
     createdAt: r.created_at,
     emailVerifiedAt: r.email_verified_at ?? null,
     sessionVersion: Number(r.session_version ?? 0),
+    disabledAt: r.disabled_at ?? null,
   };
 }
 
@@ -451,7 +499,7 @@ export function dbUserStore(database: DatabaseSource, opts: DbUserStoreOptions =
     if (auto) await migrateOnce(d, authMigrations);
     return d;
   };
-  const USER_COLS = "id, email, name, roles, password_hash, created_at, email_verified_at, session_version";
+  const USER_COLS = "id, email, name, roles, password_hash, created_at, email_verified_at, session_version, disabled_at";
   const ONE_TIME_COLS = "token_hash, user_id, purpose, created_at, expires_at";
   const OAUTH_COLS = "id, provider, subject, user_id, email, created_at";
   const PASSKEY_COLS = "id, user_id, credential_id, public_key, algorithm, sign_count, transports, name, created_at, last_used_at";
@@ -477,6 +525,7 @@ export function dbUserStore(database: DatabaseSource, opts: DbUserStoreOptions =
         createdAt: Date.now(),
         emailVerifiedAt: null,
         sessionVersion: 0,
+        disabledAt: null,
       };
       const r = await d
         .prepare("INSERT INTO users (id, email, name, roles, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(email) DO NOTHING")
@@ -595,6 +644,39 @@ export function dbUserStore(database: DatabaseSource, opts: DbUserStoreOptions =
     async consumeChallenge(challenge, purpose, env) {
       const d = await get(env);
       return toChallenge(await d.prepare(`DELETE FROM auth_challenges WHERE challenge = ? AND purpose = ? RETURNING ${CHALLENGE_COLS}`).bind(challenge, purpose).first<ChallengeRow>());
+    },
+    async countUsers(env) {
+      const d = await get(env);
+      return Number((await d.prepare("SELECT COUNT(*) AS n FROM users").first<number>("n")) ?? 0);
+    },
+    async listUsers(q, env) {
+      const d = await get(env);
+      const limit = pageSize(q.limit);
+      const where: string[] = [];
+      const values: unknown[] = [];
+      if (q.cursor !== undefined) {
+        where.push("email > ?");
+        values.push(q.cursor);
+      }
+      if (q.search) {
+        // LIKE wildcards in the search are literal characters.
+        where.push("email LIKE ? ESCAPE '!'");
+        values.push(`%${q.search.toLowerCase().replace(/[!%_]/g, (c) => `!${c}`)}%`);
+      }
+      const sql = `SELECT ${USER_COLS} FROM users${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY email LIMIT ?`;
+      const { results } = await d.prepare(sql).bind(...values, limit + 1).all<UserRow>();
+      const page = results.slice(0, limit).map((r) => toUser(r)!);
+      return results.length > limit ? { users: page, next: page[page.length - 1].email } : { users: page };
+    },
+    async setUserDisabled(id, at, env) {
+      const d = await get(env);
+      const r = await d.prepare("UPDATE users SET disabled_at = ? WHERE id = ?").bind(at, id).run();
+      return r.meta.changes > 0;
+    },
+    async revokeSessions(id, env) {
+      const d = await get(env);
+      const v = await d.prepare("UPDATE users SET session_version = session_version + 1 WHERE id = ? RETURNING session_version").bind(id).first<number>("session_version");
+      return v === null || v === undefined ? null : Number(v);
     },
     inspect: () => ({ store: "db", database: describeDatabase(database) }),
     cloudflare: () => {

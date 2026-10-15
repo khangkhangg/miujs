@@ -273,7 +273,7 @@ describe("OAuth accounts, passkeys, challenges and token revocation", () => {
   }
 
   test("migration 003 is appended and upgrades a 002 database in place", async () => {
-    expect(authMigrations.map((m) => m.id)).toEqual(["miu_auth_001_users_tokens", "miu_auth_002_verify_reset", "miu_auth_003_oauth_passkeys"]);
+    expect(authMigrations.map((m) => m.id)).toEqual(["miu_auth_001_users_tokens", "miu_auth_002_verify_reset", "miu_auth_003_oauth_passkeys", "miu_auth_004_disabled"]);
     const database = sqlite();
     const { migrate } = await import("@miujs/db");
     await migrate(database, authMigrations.slice(0, 2));
@@ -281,6 +281,20 @@ describe("OAuth accounts, passkeys, challenges and token revocation", () => {
     const s = dbUserStore(database);
     expect(await s.createOAuthAccount!({ id: "o1", provider: "github", subject: "9", userId: "u1", email: null, createdAt: 1 }, env)).toBe(true);
     expect((await s.findUserById("u1", env))!.email).toBe("old@b.co");
+  });
+
+  test("migration 004 adds disabled_at to a 003 database; existing users are enabled", async () => {
+    const database = sqlite();
+    const { migrate } = await import("@miujs/db");
+    await migrate(database, authMigrations.slice(0, 3));
+    await database.prepare("INSERT INTO users (id, email, name, roles, password_hash, created_at) VALUES ('u1', 'old@b.co', NULL, '[]', 'h', 1)").run();
+    const s = dbUserStore(database);
+    expect((await s.findUserById("u1", env))!.disabledAt).toBeNull();
+    expect(await s.setUserDisabled!("u1", 5, env)).toBe(true);
+    expect((await s.findUserById("u1", env))!.disabledAt).toBe(5);
+    expect(await s.setUserDisabled!("nope", 5, env)).toBe(false);
+    expect(await s.revokeSessions!("u1", env)).toBe(1);
+    expect(await s.revokeSessions!("nope", env)).toBeNull();
   });
 
   test("deleting a user cascades to oauth accounts and passkeys", async () => {

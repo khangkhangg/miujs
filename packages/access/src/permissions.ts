@@ -37,7 +37,7 @@ function invalid(permission: string, where: string) {
   );
 }
 
-function isValidPermission(p: unknown): p is string {
+export function isValidPermission(p: unknown): p is string {
   if (typeof p !== "string") return false;
   if (p === "*") return true;
   const parts = p.split(":");

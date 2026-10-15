@@ -148,6 +148,16 @@ The subpath also exports `tableFromSchema(name, t.object(...), { primaryKey, ind
 
 `sqlite(path)`: `path` defaults to `":memory:"`.
 
+## In @miujs/admin
+
+`db()` has a management section (`manage()`), shown by `@miujs/admin`:
+
+- **Status**: adapter (`sqlite`, or `d1 (binding DB)`), tables with row counts (first 50 tables; counts stop at 10,000 so a big table is never fully scanned), applied migrations (every plugin's, from `_miu_migrations`) and pending ones from `db({ migrations })`.
+- **Migrations list** (filter applied / pending).
+- **Apply pending migrations** (dangerous; only when `db({ migrations })` is set): runs `migrate()` with those migrations, each in its own transaction. Running it again does nothing.
+
+There is no way to run arbitrary SQL from the admin, on purpose.
+
 ## Errors
 
 - [`MIU_E_DB_BINDING_MISSING`](../../docs/errors.md#miu_e_db_binding_missing): no D1 binding with that name in `env`.

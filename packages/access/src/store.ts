@@ -92,7 +92,20 @@ export interface AccessStore {
   consumeInvite(id: string, userId: string, now: number): Promise<boolean>;
   /** Removes unused invites for an email in an org (a new invite replaces older ones). */
   revokePendingInvites(orgId: string, email: string): Promise<number>;
+
+  // For operators (access().manage()).
+  /** Counts for a status page: orgs, memberships and unexpired unused invites. */
+  counts(now?: number): Promise<{ orgs: number; members: number; pendingInvites: number }>;
+  /** Orgs by id, with member counts. `search` is a case-insensitive substring of the name. */
+  pageOrgs(q: { cursor?: string; limit: number; search?: string }): Promise<{ orgs: (Org & { members: number })[]; next?: string }>;
+  /** Memberships across orgs, by (org id, user id). `search` matches email or user id (substring), or an exact org id. */
+  pageMembers(q: { cursor?: string; limit: number; search?: string; role?: string; orgId?: string }): Promise<{ members: (Member & { orgId: string; orgName: string })[]; next?: string }>;
 }
+
+const MAX_PAGE = 100;
+const pageSize = (n: number) => Math.max(1, Math.min(MAX_PAGE, Math.floor(Number(n)) || 1));
+/** `%needle%` for LIKE … ESCAPE '!', with the needle's own wildcards made literal. */
+const likeContains = (s: string) => `%${s.replace(/[!%_]/g, (c) => `!${c}`)}%`;
 
 const stores = new WeakMap<Database, AccessStore>();
 
@@ -219,6 +232,62 @@ export function accessStore(database: Database): AccessStore {
       await ready();
       const r = await q("DELETE FROM access_invites WHERE org_id = ? AND email = ? AND accepted_at IS NULL", orgId, email).run();
       return r.meta.changes;
+    },
+    async counts(now = Date.now()) {
+      await ready();
+      const r = await q(
+        `SELECT (SELECT COUNT(*) FROM access_orgs) AS orgs, (SELECT COUNT(*) FROM access_memberships) AS members,
+                (SELECT COUNT(*) FROM access_invites WHERE accepted_at IS NULL AND expires_at > ?) AS pending`,
+        now,
+      ).first<{ orgs: number; members: number; pending: number }>();
+      return { orgs: Number(r?.orgs ?? 0), members: Number(r?.members ?? 0), pendingInvites: Number(r?.pending ?? 0) };
+    },
+    async pageOrgs({ cursor, limit, search }) {
+      await ready();
+      const n = pageSize(limit);
+      const where: string[] = [];
+      const values: unknown[] = [];
+      if (cursor !== undefined) (where.push("o.id > ?"), values.push(cursor));
+      if (search) (where.push("o.name LIKE ? ESCAPE '!'"), values.push(likeContains(search)));
+      const { results } = await q(
+        `SELECT o.*, (SELECT COUNT(*) FROM access_memberships m WHERE m.org_id = o.id) AS members FROM access_orgs o
+         ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY o.id LIMIT ?`,
+        ...values,
+        n + 1,
+      ).all<any>();
+      const orgs = results.slice(0, n).map((r) => ({ ...orgRow(r), members: Number(r.members) }));
+      return results.length > n ? { orgs, next: orgs[orgs.length - 1].id } : { orgs };
+    },
+    async pageMembers({ cursor, limit, search, role, orgId }) {
+      await ready();
+      const n = pageSize(limit);
+      const where: string[] = [];
+      const values: unknown[] = [];
+      if (cursor !== undefined) {
+        let after: unknown;
+        try {
+          after = JSON.parse(cursor);
+        } catch {}
+        if (Array.isArray(after) && after.length === 2 && after.every((x) => typeof x === "string")) {
+          where.push("(m.org_id > ? OR (m.org_id = ? AND m.user_id > ?))");
+          values.push(after[0], after[0], after[1]);
+        }
+      }
+      if (search) {
+        where.push("(m.email LIKE ? ESCAPE '!' OR m.user_id LIKE ? ESCAPE '!' OR m.org_id = ?)");
+        values.push(likeContains(search.toLowerCase()), likeContains(search), search);
+      }
+      if (role) (where.push("m.role = ?"), values.push(role));
+      if (orgId) (where.push("m.org_id = ?"), values.push(orgId));
+      const { results } = await q(
+        `SELECT m.org_id, m.user_id, m.email, m.role, m.created_at, o.name AS org_name FROM access_memberships m JOIN access_orgs o ON o.id = m.org_id
+         ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY m.org_id, m.user_id LIMIT ?`,
+        ...values,
+        n + 1,
+      ).all<any>();
+      const members = results.slice(0, n).map((r) => ({ orgId: r.org_id, orgName: r.org_name, userId: r.user_id, email: r.email ?? null, role: r.role, createdAt: r.created_at }));
+      const last = members[members.length - 1];
+      return results.length > n ? { members, next: JSON.stringify([last.orgId, last.userId]) } : { members };
     },
   };
   stores.set(database, store);

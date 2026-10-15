@@ -38,7 +38,7 @@ wrangler deploy     # Cloudflare Workers (or: miu deploy cloudflare)
 | **Batteries** | Auth (passwords, OAuth, passkeys), sessions, SQL + Drizzle, cache, queues, files, mail, permissions, audit log, rate limits, workflows, AI and realtime rooms as official `@miujs/*` packages with swappable adapters (memory/SQLite/Redis/S3 locally, Cloudflare bindings in production). |
 | **Games** | `@miujs/realtime` rooms run on Durable Objects or in-process — enough for a Kahoot-style quiz. `@miujs/game` adds matchmaking, lobbies, leaderboards and Unity/Godot clients. See [examples/quiz](examples/quiz). |
 | **Bot-aware** | `@miujs/bots` tells humans from search engines, AI crawlers and scrapers (Cloudflare bot score, user agent, headers) and reads the visitor's country. Block them, give them partial data, or answer from a cache so they never touch your database. |
-| **Back office** | `@miujs/admin` turns resource definitions into a CRM-style admin with tables, CSV import/export and a visual workflow builder. |
+| **Back office** | `@miujs/admin` turns resource definitions into a CRM-style admin with tables, CSV import/export, a visual workflow builder, and a System area where every installed package shows its status, lists, settings and actions (also as MCP tools, permission-checked and audited). |
 | **Fast and lean** | Starts in ~11 ms, validates JSON bodies faster than Elysia and Hono, and keeps memory flat under load (see [Performance](#performance)). |
 
 ## Packages
@@ -63,7 +63,7 @@ wrangler deploy     # Cloudflare Workers (or: miu deploy cloudflare)
 | [`@miujs/bots`](packages/bots) | Bot, AI crawler and location detection; block, trim or serve cached responses to crawlers |
 | [`@miujs/ai`](packages/ai) | Claude, OpenAI-compatible and Workers AI; structured output, tool loops, RAG |
 | [`@miujs/migrate`](packages/migrate) | Port Laravel, Django or FastAPI apps route by route (proxy, shared sessions, contract tests) |
-| [`@miujs/admin`](packages/admin) | Admin + CRM kit: resources become tables, API, MCP tools and an admin UI; visual workflow builder |
+| [`@miujs/admin`](packages/admin) | Admin + CRM kit: resources become tables, API, MCP tools and an admin UI; visual workflow builder; System area for every package |
 | [`@miujs/game`](packages/game) | Game kit: matchmaking, lobbies, game rooms with timers, leaderboards, achievements, Unity/Godot clients |
 | [`@miujs/tour`](packages/tour) | 3D and 360° tours: scenes, hotspots, floor plans, tiling jobs, live guided tours, analytics, field encryption |
 
@@ -280,7 +280,7 @@ that runs end to end. The full plan is in the
 | **3. Game kit** | Done (preview) | Room timers on Durable Object alarms, matchmaking and lobbies, join codes, leaderboards, achievements, Unity/Godot clients |
 | **4. 3D tour kit** | Done (preview) | 360° tiling and 3D model compression jobs, hotspots and floor plans, live guided tours, viewing analytics. Healthcare building blocks: field encryption, consent, retention |
 | **5. Hardening** | Done | Leak and exit tests for every package, soak tests over HTTP and WebSockets, memory caps for password hashing, faster body reads, `app.stop()` |
-| **6. Traffic and operations** | In progress | `@miujs/bots` (done): bot, AI crawler and location detection with block / partial / cached / full. Admin System area (in progress): every package shows its status, lists, settings and actions in the admin and as MCP tools |
+| **6. Traffic and operations** | Done (preview) | `@miujs/bots` (done): bot, AI crawler and location detection with block / partial / cached / full. Admin System area (done): every package shows its status, lists, settings and actions in the admin and as MCP tools |
 | **Next** | Planned | First real Cloudflare deploy (D1, KV, R2, Queues, Durable Objects, bot score and geo), npm release with prebuilt JS for Node, a Postgres-over-Hyperdrive guide |
 
 ### Automation workflows

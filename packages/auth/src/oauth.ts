@@ -63,6 +63,8 @@ export interface OAuthDeps {
   isDev(): boolean;
   appUrlFor(ctx: Context): string;
   signIn(ctx: Context, user: StoredUser): void;
+  /** False while an operator has closed sign-ups: no new accounts, existing ones still sign in. */
+  allowSignUps?(): boolean;
 }
 
 type Kind = "oidc" | "github" | "discord";
@@ -540,6 +542,9 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
         `${p.id} did not confirm an email address for this account`,
         `Confirm your email address with ${p.id} (or make it your primary one) and sign in again, or register with email and password.`,
       );
+    }
+    if (deps.allowSignUps?.() === false) {
+      throw oauthError("SIGNUPS_CLOSED", 403, "Sign-ups are closed", "New accounts cannot be created right now. Sign in with an existing account, or try again later.");
     }
     // An unverified address is not stored as the user's email: it would block its real owner from
     // registering, and a later verified sign-in would link to this account.
