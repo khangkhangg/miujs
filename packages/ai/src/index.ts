@@ -2,7 +2,7 @@ export { aiErrors } from "./errors.ts";
 export { createAI, type AIClient, type AIOptions, type GenerateOptions, type ObjectOptions } from "./client.ts";
 export { type RunOptions, type RunResult, type ToolCallRecord } from "./agent.ts";
 export { appTools, tool, ToolError, type AITool, type AppToolsOptions, type ToolContext, type ToolInput, type ToolSource } from "./tools.ts";
-export { ai } from "./plugin.ts";
+export { ai, type AIPluginOptions } from "./plugin.ts";
 export { toSSE } from "./sse.ts";
 export { anthropic, ANTHROPIC_DEFAULT_MODEL, type AnthropicOptions } from "./providers/anthropic.ts";
 export { openaiCompatible, type OpenAICompatibleOptions } from "./providers/openai.ts";

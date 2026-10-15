@@ -1,5 +1,14 @@
 import { definePlugin, type App, type CloudflareNeeds, type Context } from "miujs";
 import { makeClient, type AIClient, type AIOptions } from "./client.ts";
+import type { VectorStore } from "./vectors.ts";
+
+export interface AIPluginOptions extends AIOptions {
+  /**
+   * Vector stores the app uses. Listing them lets `miu deploy cloudflare` declare their
+   * bindings (e.g. `vectorize("DOCS", { indexName: "docs" })`). Optional.
+   */
+  stores?: VectorStore[];
+}
 
 declare module "miujs" {
   interface Context {
@@ -16,9 +25,9 @@ declare module "miujs" {
  * miu({ plugins: [ai({ provider: workersAI(), embeddings: {} })] }) // env.AI on Workers
  * ```
  */
-export function ai(opts: AIOptions) {
+export function ai(opts: AIPluginOptions) {
   let app: App | undefined;
-  const { env: _env, log: _log, ...shared } = opts;
+  const { env: _env, log: _log, stores = [], ...shared } = opts;
   return definePlugin({
     name: "ai",
     setup(a: App) {
@@ -37,9 +46,14 @@ export function ai(opts: AIOptions) {
       return makeClient(shared, { env: {}, log: undefined as never }).inspect();
     },
     cloudflare(): CloudflareNeeds {
-      // Workers AI needs an `[ai]` binding and Vectorize an index binding, but CloudflareNeeds has
-      // no field for either yet; declare them by hand in wrangler.toml for now.
-      return {};
+      // Workers AI's [ai] binding (chat or embeddings provider) and listed Vectorize indexes.
+      const parts = [shared.provider, shared.embeddings?.provider, ...stores].map((x) => x?.cloudflare?.() ?? {});
+      const needs: CloudflareNeeds = {};
+      const binding = parts.find((n) => n.ai)?.ai;
+      if (binding) needs.ai = binding;
+      const indexes = parts.flatMap((n) => n.vectorize ?? []);
+      if (indexes.length) needs.vectorize = indexes;
+      return needs;
     },
   });
 }

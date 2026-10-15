@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { definePlugin, miu, route, t, type App } from "miujs";
-import { ai, anthropic, appTools, createAI, toSSE } from "../src/index.ts";
+import { ai, aiGateway, anthropic, appTools, createAI, memoryVectors, toSSE, vectorize, workersAI } from "../src/index.ts";
 import { fakeFetch, json, sse } from "./helpers.ts";
 
 const KEY = "sk-ant-plugin-secret";
@@ -143,10 +143,26 @@ describe("appTools()", () => {
     expect(out.calls[0].isError).toBe(false);
   });
 
-  test("needs MCP on", async () => {
+  test("does not need MCP on, and still applies auth", async () => {
+    const f = script();
+    build(f, false);
+    const ok = await (await post({ prompt: "x" }, "Bearer good")).json();
+    expect(ok.calls[0]).toMatchObject({ name: "createNote", isError: false });
     build(script(), false);
-    const res = await post({ prompt: "x" }, "Bearer good");
-    expect((await res.json()).error.code).toBe("MIU_E_AI_CONFIG");
+    const anon = await (await post({ prompt: "x" })).json();
+    expect(anon.calls[0].isError).toBe(true);
+    expect(anon.calls[0].result).toContain("MIU_E_UNAUTHORIZED");
+  });
+
+  test("tool calls run with the request's env", async () => {
+    const seen: unknown[] = [];
+    const envRoute = route.post("/env", { name: "readEnv", summary: "Read env", handler: ({ env }) => (seen.push(env.MARKER), { ok: true }) });
+    const f = fakeFetch(claude([{ type: "tool_use", id: "t1", name: "readEnv", input: {} }], "tool_use"), claude([{ type: "text", text: "ok" }]));
+    const runner = route.post("/run", { handler: async ({ ai }) => (await ai.run({ prompt: "x", tools: [appTools({ include: ["readEnv"] })] })).toolCalls });
+    const a = miu({ routes: [envRoute, runner], plugins: [ai({ provider: anthropic(), fetch: f })], logLevel: "silent" });
+    const res = await a.dispatch(req("/run", { method: "POST" }), { ANTHROPIC_API_KEY: KEY, MARKER: "from-request" }, { runtime: "workerd" });
+    expect((await res.json())[0].isError).toBe(false);
+    expect(seen).toEqual(["from-request"]);
   });
 
   test("works outside requests with createAI and explicit headers", async () => {
@@ -154,5 +170,26 @@ describe("appTools()", () => {
     const client = createAI({ provider: anthropic(), fetch: script(), env: { ANTHROPIC_API_KEY: KEY } });
     const out = await client.run({ prompt: "x", tools: [appTools(app, { include: ["createNote"], headers: { authorization: "Bearer good" } })] });
     expect(out.toolCalls[0].isError).toBe(false);
+  });
+});
+
+describe("ai() cloudflare()", () => {
+  const needs = async (plugin: ReturnType<typeof ai>) => {
+    const app = miu({ plugins: [plugin], logLevel: "silent" });
+    await app.ready();
+    return app.inspect().cloudflare as any;
+  };
+
+  test("declares the Workers AI binding", async () => {
+    expect((await needs(ai({ provider: workersAI("MY_AI") }))).ai).toEqual({ binding: "MY_AI" });
+    expect((await needs(ai({ provider: aiGateway({ accountId: "a", gatewayId: "g" }, workersAI()) }))).ai).toEqual({ binding: "AI" });
+    expect((await needs(ai({ provider: anthropic(), embeddings: { provider: workersAI("EMB") } }))).ai).toEqual({ binding: "EMB" });
+    expect((await needs(ai({ provider: anthropic() }))).ai).toBeUndefined();
+  });
+
+  test("declares Vectorize indexes listed in stores", async () => {
+    const docs = vectorize("DOCS", { indexName: "docs-index" });
+    const out = await needs(ai({ provider: anthropic(), stores: [docs, vectorize("NO_INDEX"), memoryVectors()] }));
+    expect(out.vectorize).toEqual([{ binding: "DOCS", indexName: "docs-index" }]);
   });
 });

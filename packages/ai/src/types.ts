@@ -1,4 +1,4 @@
-import type { Env, JsonSchema, Logger, Schema } from "miujs";
+import type { CloudflareNeeds, Env, JsonSchema, Logger, Schema } from "miujs";
 
 /** One piece of a message. Providers translate these to and from their own shapes. */
 export type AIPart =
@@ -106,6 +106,8 @@ export interface Provider {
   embed?(texts: string[], model: string, rt: ProviderRuntime): Promise<number[][]>;
   /** Safe description for `inspect()`. Never includes keys. */
   inspect(): Record<string, unknown>;
+  /** Cloudflare bindings the provider needs on Workers (e.g. Workers AI's `[ai]`). */
+  cloudflare?(): CloudflareNeeds;
 }
 
 export type { Schema };

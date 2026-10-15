@@ -1,7 +1,7 @@
 // Vector stores for RAG. One interface, three adapters: in-memory, SQLite/D1 (brute-force cosine
 // over float32 blobs, fine for a few thousand vectors) and Cloudflare Vectorize.
 
-import type { Env } from "miujs";
+import type { CloudflareNeeds, Env } from "miujs";
 import { aiErrors } from "./errors.ts";
 
 export interface VectorRecord {
@@ -33,6 +33,8 @@ export interface VectorStore {
   /** For stores backed by a per-request binding: the store for this env. */
   forEnv?(env: Env): VectorStore;
   inspect?(): Record<string, unknown>;
+  /** Cloudflare bindings the store needs; declared when the store is listed in ai({ stores }). */
+  cloudflare?(): CloudflareNeeds;
 }
 
 export const DEFAULT_TOP_K = 4;
@@ -210,9 +212,15 @@ function vectorizeStore(index: VectorizeIndexLike): VectorStore {
 
 /**
  * Cloudflare Vectorize. Pass the binding name (resolved from the request env) or the binding.
- * Needs `[[vectorize]] binding = "..." index_name = "..."` in wrangler.toml.
+ * With `indexName`, listing the store in `ai({ stores: [...] })` declares the
+ * `[[vectorize]]` binding for `miu deploy cloudflare`; otherwise add it to wrangler.toml yourself.
+ *
+ * ```ts
+ * export const docs = vectorize("DOCS", { indexName: "docs" });
+ * miu({ plugins: [ai({ provider: anthropic(), stores: [docs] })] });
+ * ```
  */
-export function vectorize(binding: string | VectorizeIndexLike = "VECTORIZE"): VectorStore {
+export function vectorize(binding: string | VectorizeIndexLike = "VECTORIZE", opts: { indexName?: string } = {}): VectorStore {
   if (typeof binding !== "string") return { ...vectorizeStore(binding), inspect: () => ({ adapter: "vectorize" }) };
   const forEnv = (env: Env): VectorStore => {
     const index = env?.[binding] as VectorizeIndexLike | undefined;
@@ -228,6 +236,7 @@ export function vectorize(binding: string | VectorizeIndexLike = "VECTORIZE"): V
     query: () => Promise.reject(unbound(binding)),
     delete: () => Promise.reject(unbound(binding)),
     forEnv,
-    inspect: () => ({ adapter: "vectorize", binding }),
+    inspect: () => ({ adapter: "vectorize", binding, ...(opts.indexName ? { indexName: opts.indexName } : {}) }),
+    cloudflare: () => (opts.indexName ? { vectorize: [{ binding, indexName: opts.indexName }] } : {}),
   };
 }

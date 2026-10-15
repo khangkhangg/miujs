@@ -127,6 +127,10 @@ function make(binding: string, opts: WorkersAIOptions, gateway: GatewayRoute | u
       return out?.data ?? [];
     },
 
+    cloudflare() {
+      return { ai: { binding } };
+    },
+
     inspect() {
       const info: Record<string, unknown> = { provider: "workers-ai", binding };
       if (gateway) info.gateway = { accountId: gateway.accountId, gatewayId: gateway.gatewayId };
