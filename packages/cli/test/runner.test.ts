@@ -111,7 +111,7 @@ describe("CLI commands let the process exit on their own (no process.exit)", () 
   // TODO(@miujs/realtime): loadtest() races each join against sleep(joinTimeoutMs) and never
   // clears that timer, so a script calling it stays alive ~5 s after the report. `miu loadtest`
   // itself exits (bin.ts calls process.exit). Turn this back into test() once realtime clears it.
-  test.todo("loadtest closes its sockets and timers", async () => {
+  test("loadtest closes its sockets and timers", async () => {
     const { exitCheck } = await import("../../../scripts/lib/leak.ts");
     const r = await exitCheck(
       `

@@ -93,6 +93,13 @@ export function summarize(samples: readonly number[]): LatencySummary {
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Resolves with `p`, or `fallback` after `ms`; the timer is cleared either way so nothing keeps the process alive. */
+function raceTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const t = new Promise<T>((r) => (timer = setTimeout(() => r(fallback), ms)));
+  return Promise.race([p, t]).finally(() => clearTimeout(timer));
+}
+
 /** Simulate `players` clients against one room and report patch latency percentiles. */
 export async function loadtest(opts: LoadtestOptions): Promise<LoadtestReport> {
   const rate = opts.ratePerSecond ?? 5;
@@ -138,7 +145,7 @@ export async function loadtest(opts: LoadtestOptions): Promise<LoadtestReport> {
   });
 
   const timeout = opts.joinTimeoutMs ?? 5_000;
-  const joined = await Promise.all(bots.map((b) => Promise.race([b.client.ready.then(() => true, () => false), sleep(timeout).then(() => false)])));
+  const joined = await Promise.all(bots.map((b) => raceTimeout(b.client.ready.then(() => true, () => false), timeout, false)));
   const live = bots.filter((_, k) => joined[k]);
   // Give close/error events for failed joins a moment to arrive, then count reasons.
   if (live.length < bots.length) await sleep(10);

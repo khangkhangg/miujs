@@ -224,6 +224,7 @@ export class App {
   private background = new Set<Promise<unknown>>();
   private services = new Map<string, unknown>();
   private suggestKeys: string[] | undefined;
+  private stopping: Promise<void> | undefined;
   private maxBodySize: number;
   private workers: { queue: WorkersHandler[]; scheduled: WorkersHandler[] } = { queue: [], scheduled: [] };
   private staticEnv: Record<string, unknown>;
@@ -687,7 +688,32 @@ export class App {
       throw errors.config("MIU_E_LISTEN_UNSUPPORTED", `listen() is not available on ${this.runtime}`, "On Cloudflare Workers, `export default app` instead of calling listen().");
     }
     this.log.info(`MiuJS listening on ${server.url}`);
+    const closeServer = server.stop;
+    // Stopping the server stops the app too: plugins release timers and sockets, and
+    // background work finishes, so the process can exit.
+    server.stop = async () => {
+      await closeServer();
+      await this.stop();
+    };
     return server;
+  }
+
+  /**
+   * Shut the app down: waits for `ctx.waitUntil` work, then calls each plugin's `stop()` in
+   * reverse order (a failing one is logged and the rest still run). Safe to call more than once.
+   */
+  stop(): Promise<void> {
+    return (this.stopping ??= (async () => {
+      await this.drain();
+      for (const p of [...this.plugins].reverse()) {
+        if (!p.stop) continue;
+        try {
+          await p.stop();
+        } catch (err) {
+          this.log.error("plugin stop failed", { plugin: p.name, err });
+        }
+      }
+    })());
   }
 
   /**

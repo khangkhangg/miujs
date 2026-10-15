@@ -55,6 +55,11 @@ export interface Plugin {
   onRequest?(ctx: Context): MaybePromise<void | Response>;
   /** Runs on every response, including errors. Return a new Response to replace it. */
   onResponse?(ctx: Context, res: Response): MaybePromise<void | Response>;
+  /**
+   * Release what the plugin holds: timers, sockets, child processes, pollers. Called once by
+   * `app.stop()` (and by stopping a server from `app.listen()`), in reverse plugin order.
+   */
+  stop?(): MaybePromise<void>;
   /** Sees every error thrown while handling a request (a MiuError or anything else). Observe only. */
   onError?(ctx: Context, error: unknown): MaybePromise<void>;
   /** Extra MCP tools. */
