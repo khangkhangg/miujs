@@ -44,7 +44,7 @@ describe("manifest", () => {
     const m = (await call(app, `/tours/12-elm-st/manifest.json`)).body;
     const a = m.scenes[0].asset;
     expect(a).toMatchObject({ status: "ready", progress: 1, layout: "cube", tileSize: 512, faceSize: 512, levels: [{ size: 512 }] });
-    expect(a.tiles).toMatch(/^http:\/\/localhost\/tours\/_tiles\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\/\{level\}\/\{face\}\/\{row\}_\{col\}\.jpg$/);
+    expect(a.tiles).toMatch(/^http:\/\/localhost\/_files\/p\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\/\{level\}\/\{face\}\/\{row\}_\{col\}\.jpg$/);
     const tile = await app.request(a.tiles.replace("{level}", "0").replace("{face}", "f").replace("{row}", "0").replace("{col}", "0"));
     expect(tile.status).toBe(200);
     expect(tile.headers.get("content-type")).toBe("image/jpeg");
@@ -62,9 +62,11 @@ describe("manifest", () => {
     expect((await app.request(`${base}/0/f/0_0.jpg`)).status).toBe(200);
     expect((await app.request(`${base}/../../src/x.jpg`)).status).not.toBe(200);
     expect((await app.request(`${base}/..%2F..%2Fsrc%2Fx.jpg`)).status).toBe(400);
-    expect((await app.request(`${base}/0/f/0_0.jpg.exe`)).status).toBe(400);
+    expect((await app.request(`${base}/0/f/0_0.jpg.exe`)).status).toBe(404);
     expect((await app.request(`${base}/0/f/9_9.jpg`)).status).toBe(404);
-    const [body, sig] = base.split("/_tiles/")[1].split(".");
+    // Tiles are @miujs/files prefix URLs scoped to this run's output folder.
+    expect(base).toMatch(/^http:\/\/localhost\/_files\/p\//);
+    const [body, sig] = base.split("/_files/p/")[1].split(".");
     const forged = base.replace(`${body}.${sig}`, `${body}x.${sig}`);
     expect((await app.request(`${forged}/0/f/0_0.jpg`)).status).toBe(403);
   });
@@ -81,7 +83,7 @@ describe("manifest", () => {
     const r = await call(app, `/tours/12-elm-st/manifest.json`);
     expect(r.status).toBe(200);
     expect(r.headers.get("cache-control")).toBe("private, no-store");
-    const token = r.body.scenes[0].asset.tiles.split("/_tiles/")[1].split("/")[0];
+    const token = r.body.scenes[0].asset.tiles.split("/_files/p/")[1].split("/")[0];
     const exp = decode(token.split(".")[0]).e;
     expect(exp - Math.floor(Date.now() / 1000)).toBeLessThanOrEqual(600);
     const tile = await app.request(r.body.scenes[0].asset.tiles.replace("{level}", "0").replace("{face}", "f").replace("{row}", "0").replace("{col}", "0"));

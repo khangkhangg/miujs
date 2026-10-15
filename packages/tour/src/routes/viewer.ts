@@ -1,16 +1,15 @@
-// Viewer-facing routes: manifest, tiles, unlock (password) and share links.
+// Viewer-facing routes: manifest, unlock (password) and share links. Tiles are served by
+// @miujs/files prefix URLs (see manifest.ts).
 import { route, t, type Context, type RouteDef } from "miujs";
 import { KeyedLimiter } from "@miujs/realtime";
 import { loadViewable, unlockCookie, viewAccess } from "../access.ts";
-import { signTourToken, verifyPassword, verifyTourToken } from "../crypto.ts";
+import { signTourToken, verifyPassword } from "../crypto.ts";
 import { tourErrors } from "../errors.ts";
 import { buildManifest } from "../manifest.ts";
 import type { TourRuntime } from "../runtime.ts";
 import * as S from "../schemas.ts";
 import { loadTour } from "./admin.ts";
 
-const TILE_PATH = /^(?:\d{1,2}\/(?:[fblrud]\/)?\d{1,4}_\d{1,4}|preview)\.(jpg|webp|png)$/;
-const TILE_TYPES: Record<string, string> = { jpg: "image/jpeg", webp: "image/webp", png: "image/png" };
 
 /** The rooms plugin's path prefix (e.g. "/rooms"), when live tours are on. */
 export function livePath(rt: TourRuntime): string | null {
@@ -43,36 +42,6 @@ export function viewerRoutes(rt: TourRuntime): RouteDef[] {
       c.set.headers.set("cache-control", access === "public" ? "public, max-age=60" : "private, no-store");
       if (tour.visibility !== "public") c.set.headers.set("x-robots-tag", "noindex");
       return m;
-    },
-  });
-
-  const tiles = route.get(`${base}/_tiles/:token/*path`, {
-    name: "tours_tiles",
-    summary: "Serve one panorama tile through a prefix-scoped signed token",
-    tags: ["tours"],
-    mcp: false,
-    internal: true,
-    handler: async (c) => {
-      const ctx = c as unknown as Context;
-      const path = String(c.params.path ?? "");
-      const m = TILE_PATH.exec(path);
-      if (!m) throw tourErrors.invalid(`Not a tile path: ${JSON.stringify(path.slice(0, 80))}`, "Use the tile URL template from the manifest unchanged (e.g. 2/f/0_1.jpg).");
-      const nowSec = Math.floor(rt.now() / 1000);
-      const p = await verifyTourToken(rt.secrets(ctx.env, ctx.log), c.params.token, "tiles", nowSec);
-      const obj = await rt.files(ctx.env).get(`${p.prefix}/${path}`);
-      if (!obj) return Response.json({ error: { code: "MIU_E_TOUR_TILE_NOT_FOUND", message: "No such tile", fix: "Check the level/face/row/col against the manifest's levels." } }, { status: 404 });
-      const maxAge = Math.max(0, Math.min(p.pub ? 86_400 : 600, p.e - nowSec));
-      return new Response(obj.body, {
-        headers: {
-          "content-type": TILE_TYPES[m[1]],
-          "content-length": String(obj.size),
-          etag: `"${obj.etag}"`,
-          // Output prefixes are unique per processing run, so a tile never changes.
-          "cache-control": p.pub ? `public, max-age=${maxAge}, immutable` : `private, max-age=${maxAge}`,
-          "x-content-type-options": "nosniff",
-          "access-control-allow-origin": "*",
-        },
-      });
     },
   });
 
@@ -132,5 +101,5 @@ export function viewerRoutes(rt: TourRuntime): RouteDef[] {
     },
   });
 
-  return [manifest, tiles, unlock, share, revoke];
+  return [manifest, unlock, share, revoke];
 }

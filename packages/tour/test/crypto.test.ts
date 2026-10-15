@@ -34,13 +34,13 @@ describe("tour tokens", () => {
   });
 
   test("rotated secrets still verify; signing uses the first", async () => {
-    const old = await signTourToken([S2], { p: "tiles", tour: "t", prefix: "a/b", e: 2000 });
-    expect((await verifyTourToken([S, S2], old, "tiles", 1000)).prefix).toBe("a/b");
+    const old = await signTourToken([S2], { p: "unlock", tour: "t", v: 3, e: 2000 });
+    expect((await verifyTourToken([S, S2], old, "unlock", 1000)).v).toBe(3);
   });
 
   test("signing is deterministic, so equal payloads give equal (cacheable) URLs", async () => {
-    const a = await signTourToken([S], { p: "tiles", tour: "t", prefix: "x", e: 5 });
-    const b = await signTourToken([S], { p: "tiles", tour: "t", prefix: "x", e: 5 });
+    const a = await signTourToken([S], { p: "share", tour: "t", v: 1, e: 5 });
+    const b = await signTourToken([S], { p: "share", tour: "t", v: 1, e: 5 });
     expect(a).toBe(b);
   });
 });

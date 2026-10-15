@@ -2,8 +2,8 @@ import { filesErrors } from "./errors.ts";
 
 /** What a token authorizes. Short field names keep URLs short; the payload is signed, not secret. */
 export interface TokenPayload {
-  /** Purpose: "url" for signed GET/PUT URLs, "mpu" for a multipart upload id. */
-  p: "url" | "mpu";
+  /** Purpose: "url" for signed GET/PUT URLs, "mpu" for a multipart upload id, "pre" for a GET prefix. */
+  p: "url" | "mpu" | "pre";
   /** Object key. */
   k: string;
   /** Expiry, seconds since the epoch. */
@@ -14,6 +14,8 @@ export interface TokenPayload {
   ct?: string;
   /** Max upload size in bytes (PUT). */
   ms?: number;
+  /** 1 = publicly cacheable download (GET). */
+  c?: 1;
   /** Download filename (GET): served with Content-Disposition: attachment. */
   d?: string;
   /** Store upload id (mpu). */

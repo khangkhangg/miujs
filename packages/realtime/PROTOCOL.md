@@ -57,7 +57,7 @@ Limits per connection (the room may change them):
 
 | `t`    | Fields | Meaning |
 |--------|--------|---------|
-| `join` | `name`, `role?`, `resume?`, `hostKey?` | Join (same meaning as the query parameters). Only needed if the URL had no name/resume. |
+| `join` | `name`, `role?`, `resume?`, `hostKey?`, `params?` | Join (same meaning as the query parameters). Only needed if the URL had no name/resume. `params` (string values) reaches the room's `onJoinRequest` like extra query parameters do. |
 | `msg`  | `type`, `data`, `id?` | A typed room message, e.g. `{"t":"msg","type":"answer","data":{"choice":2}}`. `data` must match that message's schema. `id` (any JSON value) is echoed back on an error caused by this message. |
 | `ping` | — | Keep-alive; the server replies `pong`. |
 

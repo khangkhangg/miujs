@@ -132,6 +132,14 @@ export function queue(opts: QueueOptions = {}) {
     dispatch<J extends JobDef<any>>(job: J, input: JobInput<J>, o?: DispatchOptions, env: Env = processEnv()): Promise<{ id: string }> {
       return dispatch(job, input, o, env);
     },
+    /** True when this queue runs the job `name` (from `jobs` or `schedules`). */
+    hasJob(name: string): boolean {
+      return jobs.has(name);
+    },
+    /** Every job this queue runs. */
+    jobs(): JobDef<any>[] {
+      return [...jobs.values()];
+    },
     /** Stop schedule and delay timers. */
     stop() {
       adapter.stop?.();

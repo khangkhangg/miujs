@@ -27,6 +27,8 @@ export interface ConnectOptions {
   WebSocket?: new (url: string) => WebSocket;
   /** Auto-reconnect with the resume token. Default on. */
   reconnect?: boolean | { minDelayMs?: number; maxDelayMs?: number; maxAttempts?: number };
+  /** Extra join query parameters, seen by the room's `onJoinRequest` (e.g. a ticket). Cannot replace name, role, hostKey, resume or enc. */
+  params?: Record<string, string>;
   /** Wire encoding. `msgpack` sends `?enc=msgpack` and uses binary MessagePack frames. Default `json`. */
   encoding?: "json" | "msgpack";
 }
@@ -63,6 +65,8 @@ export interface RoomClient<S = any> {
   /** Leave for good (no reconnect). */
   close(): void;
 }
+
+const RESERVED = new Set(["name", "role", "hostKey", "resume", "enc"]);
 
 /** Close codes after which reconnecting would not help. */
 const TERMINAL = new Set([1000, 1003, 1009, 4001, 4003, 4004, 4005, 4008]);
@@ -106,6 +110,7 @@ export function connect<S = any>(url: string, opts: ConnectOptions = {}): RoomCl
 
   const buildUrl = () => {
     const u = new URL(url);
+    for (const [k, v] of Object.entries(opts.params ?? {})) if (!RESERVED.has(k)) u.searchParams.set(k, v);
     if (opts.name !== undefined) u.searchParams.set("name", opts.name);
     if (opts.role) u.searchParams.set("role", opts.role);
     if (hostKey) u.searchParams.set("hostKey", hostKey);

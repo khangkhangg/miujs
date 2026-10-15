@@ -76,6 +76,13 @@ export interface RoomDefinition<S, X, C extends Record<string, Schema<any>>> {
   init(ctx: InitContext): NoInfer<S>;
   /** Server-only state (answers, decks, RNG seeds). Never sent to clients. */
   secret?(ctx: InitContext): X;
+  /**
+   * Admission check for a new player, before they are seated (not called on resume). Sees every
+   * join query parameter (or the join frame's `params`), and may change `player.role` (and other
+   * players' roles), e.g. to make a ticket holder the host. Throw (e.g. `errors.forbidden()`) to
+   * refuse: the client gets an error frame and the socket closes with 4003. Synchronous.
+   */
+  onJoinRequest?(ctx: { params: Record<string, string>; player: Player; room: Room<S, X>; now: number }): void;
   onJoin?(ctx: { room: Room<S, X>; player: Player; now: number }): MaybePromise<void>;
   onLeave?(ctx: { room: Room<S, X>; player: Player; now: number }): MaybePromise<void>;
   on?: { [K in keyof C]?: (ctx: { room: Room<S, X>; sender: Player; msg: Infer<C[K]>; now: number }) => MaybePromise<void> };

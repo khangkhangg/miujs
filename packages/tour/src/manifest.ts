@@ -1,7 +1,7 @@
 // The viewer manifest: everything a viewer needs for one tour, with signed asset URLs.
 //
 // URLs: single files (previews, models, plan images, media) are @miujs/files signed URLs;
-// tile pyramids get one prefix-scoped tour token, served by GET /tours/_tiles/:token/*path,
+// tile pyramids get one @miujs/files prefix URL (signedPrefixUrl) for the run's output folder,
 // because signing thousands of tiles one by one would not scale.
 //
 // Caching: public tours sign with an expiry aligned to the day (valid 6-7 days), so every
@@ -10,7 +10,6 @@
 import type { Context } from "miujs";
 import type { FilesClient } from "@miujs/files";
 import type { ViewAccess } from "./access.ts";
-import { signTourToken } from "./crypto.ts";
 import { tourErrors } from "./errors.ts";
 import type { ModelResult, PanoramaResult } from "./processor.ts";
 import { richText } from "./richtext.ts";
@@ -72,15 +71,12 @@ export function urlExpiry(rt: TourRuntime, access: ViewAccess, nowSec: number): 
 export async function buildManifest(rt: TourRuntime, ctx: Context, s: TourStore, tour: Tour, access: ViewAccess, livePath: string | null, share?: string): Promise<Manifest> {
   const files = filesOf(ctx);
   const origin = ctx.url.origin;
-  // Files signs relative to the wall clock, so align with it (not rt.now) to keep URLs stable.
-  const wall = Math.floor(Date.now() / 1000);
-  const exp = urlExpiry(rt, access, wall);
-  const secrets = rt.secrets(ctx.env, ctx.log);
-  const sign = (key: string) => files.signedUrl(key, { expiresIn: Math.max(1, exp - wall) });
-  const tiles = async (prefix: string, pattern: string) => {
-    const token = await signTourToken(secrets, access === "public" ? { p: "tiles", tour: tour.id, prefix, e: exp, pub: 1 } : { p: "tiles", tour: tour.id, prefix, e: exp });
-    return `${origin}${rt.basePath}/_tiles/${token}/${pattern}`;
-  };
+  // @miujs/files checks expiry against the wall clock, so compute it from that (not rt.now).
+  const exp = urlExpiry(rt, access, Math.floor(Date.now() / 1000));
+  // A fixed expiresAt makes the URLs deterministic; "public" lets browsers and CDNs cache them.
+  const signing = access === "public" ? { expiresAt: exp, cache: "public" as const } : { expiresAt: exp };
+  const sign = (key: string) => files.signedUrl(key, signing);
+  const tiles = async (prefix: string, pattern: string) => `${await files.signedPrefixUrl(prefix, signing)}/${pattern}`;
   const urlOf = (src: { key?: string; url?: string }) => (src.key ? sign(src.key) : Promise.resolve(src.url!));
 
   const assetView = async (a: Asset | undefined): Promise<ManifestAsset | null> => {

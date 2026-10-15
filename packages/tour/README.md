@@ -30,13 +30,13 @@ import { tour, guidedTour, vipsProcessor, gltfTransformProcessor } from "@miujs/
 const database = sqlite("app.db");
 const store = localStore("./data/files");
 const live = rooms({ rooms: [guidedTour] });
-const tours = tour({ database, store, live, processors: [vipsProcessor(), gltfTransformProcessor()] });
+const tours = tour({ database, live, processors: [vipsProcessor(), gltfTransformProcessor()] });
 
 export default miu({
   plugins: [
     db({ database }),
     auth(), access({ roles }),              // provides ctx.authorize for tours:read / tours:write
-    files({ store }),                      // the SAME store as tour({ store })
+    files({ store }),                      // tour jobs use this store (app.service("files"))
     queue({ jobs: tours.jobs.all, schedules: [schedule("15 0 * * *", tours.jobs.aggregateStats)] }),
     live,
     secureHeaders({ csp: true }),          // optional; the viewer page sets its own CSP
@@ -70,7 +70,7 @@ All `:tour` parameters accept the tour id (`tour_…`) or its slug.
 | `POST /tours/:tour/live` | `tours:write` | | Start a live guided tour: join code, follow link, guide link |
 | `POST /tours/:tour/events` | viewer | | Analytics beacon (rate limited) |
 | `GET /tours/:tour/stats` | `tours:read` | yes | Daily views, sessions, dwell per scene, top hotspots |
-| `GET /tours/_tiles/:token/*path` | token | | Tiles (prefix-scoped signed token) |
+| `GET /_files/p/:token/*path` | token | | Tiles, served by @miujs/files prefix URLs |
 | `POST /tours/_processor/callback` | HMAC | | Results from `externalProcessor()` |
 
 Who may open a tour as a viewer: **published** + `public` or `unlisted` → everyone; `private` or
@@ -80,11 +80,11 @@ pass `ctx.can("tours:read")` (preview). Unlisted, private and shared pages are `
 ## Signed URLs and caching
 
 - Single files (models, previews, plan images, media) use `ctx.files.signedUrl()`.
-- Tile pyramids use one prefix-scoped tour token (`/tours/_tiles/<token>/{level}/{face}/{row}_{col}.jpg`),
+- Tile pyramids use one @miujs/files prefix URL (`ctx.files.signedPrefixUrl`, `/_files/p/<token>/{level}/{face}/{row}_{col}.jpg`),
   because signing every tile would not scale.
 - **Public** tours sign with an expiry aligned to the UTC day (valid 6-7 days): every visitor gets
   identical URLs for a day, so browsers and CDNs can cache them (`manifest.json`: `public, max-age=60`;
-  tiles: `public, immutable`). Output prefixes are unique per processing run, so a cached tile never goes stale.
+  files and tiles: `public, max-age`). Output prefixes are unique per processing run, so a cached tile never goes stale.
 - **Private / unlisted / shared / preview** access gets 10-minute URLs (`urls.privateTtl`) and
   `private, no-store`. The viewer refreshes the manifest before `expiresAt`.
 
@@ -137,14 +137,14 @@ stylesheets and `<model-viewer>`). `tourCsp()` builds the matching policy.
 
 Embedding is per tour: `PATCH /tours/:tour { "allowedEmbedOrigins": ["https://listings.example.com"] }`
 becomes `frame-ancestors` on that tour's page (default `'self'`). The page sets its own CSP, which
-`secureHeaders()` leaves alone; it reuses `secureHeaders`' nonce when present.
+`secureHeaders()` leaves alone (and then sends no `X-Frame-Options`); it reuses `secureHeaders`' nonce when present.
 
 ## Live guided tours
 
 `rooms({ rooms: [guidedTour] })` + `tour({ live })`. `POST /tours/:tour/live` returns a 6-digit
 code, a follow link (`/view?live=<code>`, with a share token for protected tours) and a guide link
 (`…#guide=<token>`; the fragment never reaches servers or logs). Followers join as spectators;
-the guide claims the room with the token. Guide-only messages (`camera`, `pointer`, `ack`, `end`)
+the guide link's token is a join parameter checked by the room's `onJoinRequest`, so only its holder gets the host seat. The page uses the rooms plugin's browser client (`/rooms/_client/<hash>.js`). Guide-only messages (`camera`, `pointer`, `ack`, `end`)
 check the role. Camera updates reach followers at most 10 times a second (the room rate limit plus
 coalescing with `room.schedule`); followers detach locally by moving the view and can rejoin.
 Followers can raise a hand; the guide sees the queue and answers. Double-click points at a spot.

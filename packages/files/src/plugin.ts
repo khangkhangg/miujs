@@ -1,4 +1,4 @@
-import { definePlugin, route, type CloudflareNeeds, type Context, type RouteDef } from "miujs";
+import { definePlugin, processEnv, route, type CloudflareNeeds, type Context, type Env, type RouteDef } from "miujs";
 import { Files, isPositiveInt, type FilesClient, type FilesRuntime } from "./client.ts";
 import { filesErrors } from "./errors.ts";
 import { contentDisposition, essence, etagMatches, ifRangeMatches, inlineSafe, parseRange, SANDBOX_CSP } from "./http.ts";
@@ -7,13 +7,29 @@ import { memoryStore } from "./memory.ts";
 import { multipartRoutes, type MultipartOptions } from "./multipart.ts";
 import { randomHex, type FileStore } from "./store.ts";
 import { limitStream } from "./stream.ts";
-import { verifyToken } from "./token.ts";
+import { verifyToken, type TokenPayload } from "./token.ts";
 
 declare module "miujs" {
   interface Context {
     /** File storage from `@miujs/files`. */
     files: FilesClient;
   }
+  interface Services {
+    /** File storage outside requests (queue jobs, scripts): `app.service("files")`. */
+    files: FilesService;
+  }
+}
+
+/**
+ * `app.service("files")`: the files client for code that runs outside a request. Signed URLs
+ * use `publicUrl` (relative URLs without it). On Workers, call `forEnv(env)` with the job's env
+ * so per-request bindings (R2) and secrets resolve.
+ */
+export interface FilesService extends FilesClient {
+  /** The underlying store for this env (what processors read and write). */
+  store(): FileStore;
+  /** The same service for another env (Workers bindings). */
+  forEnv(env: Env): FilesService;
 }
 
 export interface FilesOptions {
@@ -101,13 +117,33 @@ export function files(opts: FilesOptions = {}) {
       const ctx = c as unknown as Context;
       const p = await verifyToken(rt.secretsFor(ctx), ctx.params.token, "url", now());
       if (p.m !== "GET") throw filesErrors.tokenInvalid("this URL was signed for PUT");
-      const key = checkKey(p.k);
+      return serve(ctx, checkKey(p.k), p);
+    },
+  });
+
+  const downloadPrefixed = route.get(`${basePath}/p/:token/*path`, {
+    name: "files_download_prefix",
+    summary: "Download a file under a signed prefix URL",
+    tags: ["files"],
+    mcp: false,
+    handler: async (c) => {
+      const ctx = c as unknown as Context;
+      const p = await verifyToken(rt.secretsFor(ctx), ctx.params.token, "pre", now());
+      const rest = String(ctx.params.path ?? "");
+      // checkKey rejects '..' and empty segments, so the key stays under the prefix.
+      return serve(ctx, checkKey(`${checkKey(p.k)}/${rest}`), p);
+    },
+  });
+
+  /** Serve one object for a verified GET token (single key or prefix). */
+  async function serve(ctx: Context, key: string, p: TokenPayload): Promise<Response> {
+    {
       const st = rt.storeFor(ctx.env);
       const info = await st.head(key);
       if (!info) throw filesErrors.notFound(key);
 
       const h = new Headers();
-      h.set("cache-control", `private, max-age=${Math.max(0, p.e - now())}`);
+      h.set("cache-control", `${p.c ? "public" : "private"}, max-age=${Math.max(0, p.e - now())}`);
       h.set("x-content-type-options", "nosniff");
       h.set("etag", `"${info.etag}"`);
       const inm = ctx.headers.get("if-none-match");
@@ -143,8 +179,8 @@ export function files(opts: FilesOptions = {}) {
       }
       h.set("content-length", String(obj.size));
       return new Response(obj.body, { status: 200, headers: h });
-    },
-  });
+    }
+  }
 
   const upload = route.put(`${basePath}/:token`, {
     name: "files_upload_signed",
@@ -170,7 +206,7 @@ export function files(opts: FilesOptions = {}) {
     },
   });
 
-  const routes: RouteDef[] = [download, upload];
+  const routes: RouteDef[] = [download, downloadPrefixed, upload];
   if (opts.multipart !== false) routes.push(...multipartRoutes(basePath, rt, opts.multipart ?? {}));
 
   return definePlugin({
@@ -179,6 +215,24 @@ export function files(opts: FilesOptions = {}) {
     setup(app) {
       dev = app.dev;
       if (!configured && !dev) throw filesErrors.storeMissing();
+      const log = app.log.child({ plugin: "files" });
+      const make = (env: Env): FilesService => {
+        const pseudo = { env, log, state: {} } as unknown as Context;
+        const c = new Files(pseudo, rt);
+        return {
+          put: (k, b, o) => c.put(k, b, o),
+          get: (k, o) => c.get(k, o),
+          head: (k) => c.head(k),
+          delete: (k) => c.delete(k),
+          list: (o) => c.list(o),
+          signedUrl: (k, o) => c.signedUrl(k, o),
+          signedPrefixUrl: (p, o) => c.signedPrefixUrl(p, o),
+          handleUpload: (ctx, o) => c.handleUpload(ctx, o),
+          store: () => rt.storeFor(env),
+          forEnv: (e) => make(e),
+        };
+      };
+      app.provide("files", make(processEnv() as Env));
     },
     onRequest(ctx: Context) {
       ctx.files = new Files(ctx, rt);

@@ -13,6 +13,8 @@ export const MIN_SECRET = 32;
 /** The rooms plugin from @miujs/realtime (only `createRoom` is used). */
 export interface LiveRooms {
   createRoom(type: string, opts?: { data?: unknown; env?: Record<string, unknown> }): Promise<{ id: string; code: string }>;
+  /** Where the rooms plugin serves its browser client (content-hashed). */
+  clientPath?: string;
 }
 
 export interface ViewerAssetsSelfHosted {
@@ -24,8 +26,9 @@ export interface TourOptions {
   /** Default: `d1("DB")` on Workers, an in-memory SQLite database elsewhere. Pass the one you give db(). */
   database?: DatabaseSource;
   /**
-   * Where source files and processed tiles live. Pass the same store as files({ store }), so
-   * signed URLs and jobs see the same objects. Default: memoryStore() (development only).
+   * Where source files and processed tiles live. Default: the @miujs/files plugin's store
+   * (`app.service("files")`), so signed URLs and jobs see the same objects. Only pass it to use a
+   * different store than files() (then signed URLs will not find the files).
    */
   store?: FileStore;
   /** HMAC secret(s) for share links, unlock cookies and tile URLs. Default env TOUR_SECRET, FILES_SECRET, SESSION_SECRET. */
@@ -79,6 +82,8 @@ export interface TourRuntime {
   /** The store for this env, with migrations applied. */
   data(env: Env): Promise<TourStore>;
   files(env: Env): FileStore;
+  /** Set at startup from `app.service("files")`, used when no `store` option is given. */
+  filesService: { forEnv(env: Env): { store(): FileStore } } | null;
   secrets(env: Env, log?: Logger): string[];
 }
 
@@ -95,7 +100,7 @@ export function createRuntime(opts: TourOptions): TourRuntime {
     throw tourErrors.config("CONFIG", `Invalid basePath ${JSON.stringify(opts.basePath)}`, 'Use an absolute path without a trailing slash, e.g. "/tours".');
   }
   let source: DatabaseSource | undefined = opts.database;
-  const store = opts.store ?? memoryStore();
+  let fallback: FileStore | undefined;
   let devSecret: string | undefined;
   let warned = false;
   const rt: TourRuntime = {
@@ -111,7 +116,11 @@ export function createRuntime(opts: TourOptions): TourRuntime {
       await migrateOnce(db, tourMigrations);
       return new TourStore(db, rt.now);
     },
-    files: (env) => (store.forEnv ? store.forEnv(env) : store),
+    filesService: null,
+    files(env) {
+      const store = opts.store ?? (rt.filesService ? rt.filesService.forEnv(env).store() : (fallback ??= memoryStore()));
+      return store.forEnv ? store.forEnv(env) : store;
+    },
     secrets(env, log) {
       const raw = opts.secret ?? ((env?.TOUR_SECRET as string) || (env?.FILES_SECRET as string) || (env?.SESSION_SECRET as string) || undefined);
       const list = (Array.isArray(raw) ? raw : raw ? [raw] : []).filter((s) => typeof s === "string" && s !== "");

@@ -17,6 +17,8 @@ export interface JoinParams {
   /** Resume token from a previous `welcome`. */
   resume?: string;
   hostKey?: string;
+  /** Every join query parameter (first value of each), for `onJoinRequest`. */
+  params?: Record<string, string>;
   /** Wire encoding: `json` (default) or `msgpack`. */
   enc?: string;
 }
@@ -107,6 +109,27 @@ interface ErrorFrame {
 }
 
 const NAME_MAX = 32;
+const MAX_PARAMS = 32;
+const MAX_PARAM_LENGTH = 1024;
+
+/** Keeps string values only, at most 32 of them, each at most 1 KiB. */
+export function cleanParams(raw: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(raw)) {
+    const s = Array.isArray(v) ? v[0] : v;
+    if (typeof s !== "string" || s.length > MAX_PARAM_LENGTH || k.length > 64 || k === "__proto__") continue;
+    out[k] = s;
+    if (++n >= MAX_PARAMS) break;
+  }
+  return out;
+}
+
+function joinFrameParams(f: Record<string, unknown>): Record<string, string> {
+  const base = f.params && typeof f.params === "object" && !Array.isArray(f.params) ? cleanParams(f.params as Record<string, unknown>) : {};
+  for (const k of ["name", "role", "hostKey"]) if (typeof f[k] === "string") base[k] = f[k] as string;
+  return base;
+}
 const ROLES: Role[] = ["host", "player", "spectator"];
 
 function randomId(bytes: number): string {
@@ -317,7 +340,7 @@ export class RoomInstance<S = any, X = any> {
       case "join":
         if (conn.playerId) return this.error(socket, { code: "MIU_E_ROOM_ALREADY_JOINED", message: "This connection already joined", fix: "Send `msg` frames; open a new connection to join as someone else." });
         if (this.closed) return this.reject(socket, roomClosed(), 4004);
-        this.join(socket, { name: f.name, role: f.role, resume: f.resume, hostKey: f.hostKey });
+        this.join(socket, { name: f.name, role: f.role, resume: f.resume, hostKey: f.hostKey, params: joinFrameParams(f) });
         return;
       case "msg":
         return this.handle(conn, f, reqId);
@@ -509,6 +532,17 @@ export class RoomInstance<S = any, X = any> {
     }
 
     const player: Player = { id: `p_${randomId(6)}`, name, role, connected: true, joinedAt: this.clock.now() };
+    const admit = this.def.onJoinRequest;
+    if (admit) {
+      try {
+        admit({ params: { ...(p.params ?? {}) }, player, room: this.room, now: this.clock.now() });
+      } catch (err) {
+        if (isMiuError(err)) return this.reject(socket, { code: err.code, message: err.message, fix: err.fix, details: err.details }, 4003);
+        (this.hooks.onError ?? defaultOnError)(err, `${this.type}/${this.id} onJoinRequest`);
+        return this.reject(socket, { code: "MIU_E_ROOM_JOIN_REJECTED", message: "The room refused this join", fix: "Check the server log." }, 4003);
+      }
+      if (!ROLES.includes(player.role)) player.role = "spectator";
+    }
     const seat: Seat = { player, token: this.tokenPrefix + randomId(16), socket, graceUntil: null };
     this.seats.set(player.id, seat);
     this.tokens.set(seat.token, player.id);

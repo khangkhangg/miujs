@@ -1,7 +1,7 @@
 export { filesErrors } from "./errors.ts";
 export { checkKey } from "./keys.ts";
-export { files, MIN_SECRET, type FilesOptions } from "./plugin.ts";
-export type { FilesClient, GetOptions, PutOptions, SignedUrlOptions } from "./client.ts";
+export { files, MIN_SECRET, type FilesOptions, type FilesService } from "./plugin.ts";
+export type { FilesClient, GetOptions, PutOptions, SignedPrefixOptions, SignedUrlOptions } from "./client.ts";
 export type { HandleUploadOptions, UploadedFile } from "./upload.ts";
 export type { MultipartOptions } from "./multipart.ts";
 export { memoryStore } from "./memory.ts";

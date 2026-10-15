@@ -105,6 +105,9 @@ describe("tourPage", () => {
     expect(html).toContain('<script type="application/json" id="miu-tour-live" nonce=');
     expect(html).toContain('"code":"123456"');
     expect(html).toContain("raise");
+    // The rooms plugin's own client is used, not a private protocol implementation.
+    expect(html).toContain('"clientUrl":"/rooms/_client.js"');
+    expect(html).not.toContain("new WebSocket");
     expect(html).toContain("detach");
   });
 

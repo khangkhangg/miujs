@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { miu } from "miujs";
 import { sqlite } from "@miujs/db";
 import { files, memoryStore } from "@miujs/files";
-import { defineJob, memoryQueue, queue } from "@miujs/queue";
+import { defineJob, manualClock, memoryQueue, queue } from "@miujs/queue";
 import { t } from "miujs";
 import { tour } from "../src/index.ts";
 import { call, editor, fakeAccess, fakeProcessor, glbBytes, jpegBytes, json, reader, SECRET, seedTour, setup } from "./helpers.ts";
@@ -191,5 +191,20 @@ describe("wiring errors", () => {
     const { tour, s1 } = await seedTour(app);
     const r = await call(app, `/tours/${tour.id}/scenes/${s1.id}/upload`, upload(jpegBytes(), "image/jpeg"));
     expect(r.body.error.code).toBe("MIU_E_TOUR_FILES_MISSING");
+  });
+});
+
+describe("store from @miujs/files", () => {
+  test('without tour({ store }), jobs use app.service("files")', async () => {
+    const store = memoryStore();
+    const q = memoryQueue({ clock: manualClock(0) });
+    const plugin = tour({ database: sqlite(":memory:"), secret: SECRET, processors: [fakeProcessor()] });
+    const app = miu({ plugins: [fakeAccess(), files({ store, secret: SECRET }), queue({ adapter: q, jobs: plugin.jobs.all }), plugin], logLevel: "silent" });
+    const { tour: t1, s1 } = await seedTour(app);
+    await call(app, `/tours/${t1.id}/scenes/${s1.id}/upload`, upload(jpegBytes(), "image/jpeg"));
+    await q.drain();
+    const [a] = await assets(app, t1.id);
+    expect(a.status).toBe("ready");
+    expect(await store.head(`tours/${t1.id}/out/${a.id}/r1/0/f/0_0.jpg`)).not.toBeNull();
   });
 });

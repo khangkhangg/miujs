@@ -20,7 +20,7 @@ export interface TourPageOptions {
   /** "cdn" (default) or self-hosted files (see VIEWER_ASSETS and the README). */
   assets?: "cdn" | ViewerAssetsSelfHosted;
   /** Include the live guided tour client for this join code. */
-  live?: { code: string; roomsPath: string } | null;
+  live?: { code: string; roomsPath: string; clientUrl?: string } | null;
   /** Add `<meta name="robots" content="noindex">` (unlisted, private, shared). */
   noindex?: boolean;
   lang?: string;
@@ -132,7 +132,7 @@ ${opts.live
 </div>
 <script type="application/json" id="miu-tour-config" nonce="${nonce}">${scriptJson(config)}</script>
 ${m ? html`<script type="application/json" id="miu-tour-manifest" nonce="${nonce}">${scriptJson(m)}</script>` : ""}
-${opts.live ? html`<script type="application/json" id="miu-tour-live" nonce="${nonce}">${scriptJson({ code: opts.live.code, roomsPath: opts.live.roomsPath })}</script>` : ""}
+${opts.live ? html`<script type="application/json" id="miu-tour-live" nonce="${nonce}">${scriptJson({ code: opts.live.code, roomsPath: opts.live.roomsPath, clientUrl: opts.live.clientUrl ?? `${opts.live.roomsPath}/_client.js` })}</script>` : ""}
 <script type="module" nonce="${nonce}">${raw(VIEWER_JS)}</script>
 ${opts.live ? html`<script type="module" nonce="${nonce}">${raw(LIVE_JS)}</script>` : ""}
 </body>

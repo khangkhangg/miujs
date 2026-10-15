@@ -71,7 +71,6 @@ export const guidedTour = defineRoom("guidedTour", {
     followers: t.integer({ min: 0 }),
   }),
   client: {
-    claim: t.object({ token: t.string({ maxLength: 200 }) }),
     camera,
     pointer: point,
     raise: t.object({}),
@@ -85,12 +84,30 @@ export const guidedTour = defineRoom("guidedTour", {
   maxMessageBytes: 2048,
   init: ({ data }): LiveState => ({ tourId: String((data as { tourId?: string } | undefined)?.tourId ?? ""), guide: null, camera: null, hands: [], followers: 0 }),
   secret: ({ data }): LiveSecret => ({ token: (data as { guideToken?: string } | undefined)?.guideToken ?? null, lastCameraAt: 0, pending: null, scheduled: false }),
+  // The guide token is checked at join (?guide=<token>, or join-frame params): its holder becomes
+  // host and guide; everyone else watches as a spectator, so nobody else can take the host seat.
+  onJoinRequest: ({ params, player, room }) => {
+    const token = params.guide;
+    if (token === undefined) {
+      player.role = "spectator";
+      return;
+    }
+    const want = room.secret.token;
+    if (!want || !timingSafeEqual(enc.encode(token), enc.encode(want))) throw tourErrors.guideToken();
+    for (const p of room.players) if (p.role === "host") p.role = "spectator";
+    player.role = "host";
+    room.state.guide = { id: player.id, name: player.name };
+  },
   onJoin: ({ room, player }) => {
     countFollowers(room);
-    room.send(player.id, "guide", guideInfo(room));
+    if (isGuide(room, player)) {
+      room.broadcast("guide", guideInfo(room));
+      sendHands(room);
+    } else {
+      room.send(player.id, "guide", guideInfo(room));
+      if (room.state.guide) room.send(room.state.guide.id, "guide", guideInfo(room));
+    }
     if (room.state.camera) room.send(player.id, "camera", room.state.camera);
-    if (isGuide(room, player)) sendHands(room);
-    else if (room.state.guide) room.send(room.state.guide.id, "guide", guideInfo(room));
   },
   onLeave: ({ room, player }) => {
     room.state.hands = room.state.hands.filter((h) => h.id !== player.id);
@@ -105,16 +122,6 @@ export const guidedTour = defineRoom("guidedTour", {
     if (room.state.guide) room.send(room.state.guide.id, "guide", guideInfo(room));
   },
   on: {
-    claim: ({ room, sender, msg }) => {
-      const want = room.secret.token;
-      if (!want || !timingSafeEqual(enc.encode(msg.token), enc.encode(want))) throw tourErrors.guideToken();
-      for (const p of room.players) if (p.role === "host" && p.id !== sender.id) p.role = "spectator";
-      sender.role = "host";
-      room.state.guide = { id: sender.id, name: sender.name };
-      countFollowers(room);
-      room.broadcast("guide", guideInfo(room));
-      sendHands(room);
-    },
     camera: ({ room, sender, msg, now }) => {
       requireGuide(room, sender);
       const wait = room.secret.lastCameraAt + CAMERA_INTERVAL_MS - now;

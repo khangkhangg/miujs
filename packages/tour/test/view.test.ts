@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { rooms } from "@miujs/realtime";
 import { secureHeaders } from "@miujs/web";
+import { guidedTour } from "../src/index.ts";
 import { call, editor, json, seedTour, setup } from "./helpers.ts";
 
 async function published(over: Record<string, unknown> = {}, opts: Parameters<typeof setup>[0] = {}) {
@@ -48,6 +50,8 @@ describe("GET /tours/:tour/view", () => {
     expect(csp).toContain("frame-ancestors https://listings.example.com");
     expect(new Set(scriptNonces(r.text))).toEqual(new Set([cspNonce(csp)!]));
     expect(r.headers.get("x-content-type-options")).toBe("nosniff");
+    // secureHeaders' default would send X-Frame-Options: DENY; the page's own frame-ancestors wins.
+    expect(r.headers.get("x-frame-options")).toBeNull();
   });
 
   test('privacy "strict" refuses CDN assets until the viewer is self-hosted', async () => {
@@ -95,6 +99,11 @@ describe("GET /tours/:tour/view", () => {
     const { app } = await published({}, { live });
     const r = await call(app, "/tours/12-elm-st/view?live=123456");
     expect(r.text).toContain('"code":"123456","roomsPath":"/rooms"');
+    const real = rooms({ rooms: [guidedTour] });
+    const withRooms = await published({}, { live: real, plugins: [real] });
+    const page = await call(withRooms.app, "/tours/12-elm-st/view?live=123456");
+    expect(page.text).toContain(`"clientUrl":"${real.clientPath}"`);
+    expect((await withRooms.app.request(real.clientPath)).status).toBe(200);
     expect((await call(app, "/tours/12-elm-st/view?live=12x456")).text).not.toContain('id="miu-tour-live"');
     const off = await published();
     expect((await call(off.app, "/tours/12-elm-st/view?live=123456")).text).not.toContain('id="miu-tour-live"');

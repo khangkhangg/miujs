@@ -171,3 +171,59 @@ describe("secureHeaders inspect", () => {
     expect(info.hsts).toBe("max-age=31536000; includeSubDomains (https only)");
   });
 });
+
+describe("per-response embedding", () => {
+  const ownCsp = route.get("/embed-own", {
+    handler: ({ set }) => {
+      set.headers.set("content-security-policy", "default-src 'self'; frame-ancestors https://listings.example.com");
+      return "embeddable";
+    },
+  });
+  const cspNoFa = route.get("/csp-no-fa", {
+    handler: ({ set }) => {
+      set.headers.set("content-security-policy", "default-src 'none'");
+      return "x";
+    },
+  });
+  const override = (list: string[]) =>
+    route.get(`/override-${list.length}`, {
+      handler: (ctx) => {
+        ctx.state.frameAncestors = list;
+        return "x";
+      },
+    });
+  const app = (opts?: SecureHeadersOptions, extra: any[] = []) =>
+    miu({ routes: [ownCsp, cspNoFa, ...extra], plugins: [secureHeaders(opts)], logLevel: "silent" });
+
+  test("no X-Frame-Options when the response's own CSP sets frame-ancestors", async () => {
+    const res = await app().request("/embed-own");
+    expect(res.headers.get("x-frame-options")).toBeNull();
+    expect(res.headers.get("content-security-policy")).toBe("default-src 'self'; frame-ancestors https://listings.example.com");
+  });
+
+  test("a response CSP without frame-ancestors still gets X-Frame-Options", async () => {
+    expect((await app().request("/csp-no-fa")).headers.get("x-frame-options")).toBe("DENY");
+  });
+
+  test("ctx.state.frameAncestors overrides frame-ancestors for one request", async () => {
+    const r1 = await app({ csp: true }, [override(["https://listings.example.com"])]).request("/override-1");
+    expect(r1.headers.get("content-security-policy")).toContain("frame-ancestors https://listings.example.com");
+    expect(r1.headers.get("content-security-policy")).toContain("default-src 'self'");
+    expect(r1.headers.get("x-frame-options")).toBeNull();
+    const self = route.get("/self", {
+      handler: (ctx) => {
+        ctx.state.frameAncestors = ["'self'"];
+        return "x";
+      },
+    });
+    const r2 = await app({}, [self]).request("/self");
+    expect(r2.headers.get("x-frame-options")).toBe("SAMEORIGIN");
+    expect(r2.headers.get("content-security-policy")).toBe("frame-ancestors 'self'");
+  });
+
+  test("an invalid per-request value is a config error, never injected", async () => {
+    const res = await app({}, [override(["https://a.com; script-src *", "x"])]).request("/override-2");
+    expect(res.status).toBe(500);
+    expect(res.headers.get("content-security-policy") ?? "").not.toContain("script-src *");
+  });
+});

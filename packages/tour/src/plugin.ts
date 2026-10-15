@@ -15,12 +15,10 @@ import { VIEWER_VERSIONS } from "./viewer-assets.ts";
 const PROCESSING_NOTE =
   "Asset processing runs in queue jobs. Cloudflare Workers have tight CPU and memory limits, so tiling panoramas and compressing models cannot run inside a Worker: use externalProcessor() (your container/server) or cloudflareImagesProcessor() there; vipsProcessor() and gltfTransformProcessor() need a Bun/Node host with the tools installed.";
 
-/** Names of jobs the app's queue plugin runs, or null without a queue plugin. */
-function queuedJobs(app: App): string[] | null {
-  const q = app.plugins.find((p) => p.name === "queue");
-  if (!q) return null;
-  const info = q.inspect?.() as { jobs?: { name: string }[] } | undefined;
-  return (info?.jobs ?? []).map((j) => j.name);
+/** The app's queue plugin (`queue()` from @miujs/queue), if any. */
+function queuePlugin(app: App): { hasJob(name: string): boolean } | null {
+  const q = app.plugins.find((p) => p.name === "queue") as { hasJob?: (name: string) => boolean } | undefined;
+  return q && typeof q.hasJob === "function" ? (q as { hasJob(name: string): boolean }) : null;
 }
 
 /**
@@ -47,13 +45,14 @@ export function tour(opts: TourOptions = {}) {
     setup(app: App) {
       rt.dev = app.dev;
       rt.log = app.log.child({ plugin: "tour" });
+      if (app.hasService("files")) rt.filesService = app.service("files");
       if (targetRuntime() === "workerd") {
         const local = rt.processors.find((x) => x.needsProcess);
         if (local) throw tourErrors.processorUnavailable(local.name, "a local program", "Cloudflare Workers cannot spawn programs. Use externalProcessor() (a container or server you run) or cloudflareImagesProcessor() in the Worker, and run vipsProcessor()/gltfTransformProcessor() inside that service.");
       }
-      const registered = queuedJobs(app);
-      if (registered) {
-        const missing = jobs.all.map((j) => j.name).filter((n) => !registered.includes(n));
+      const q = queuePlugin(app);
+      if (q) {
+        const missing = jobs.all.map((j) => j.name).filter((n) => !q.hasJob(n));
         if (missing.length) throw tourErrors.jobsNotRegistered(missing);
       }
     },
@@ -62,7 +61,7 @@ export function tour(opts: TourOptions = {}) {
       return {
         basePath: rt.basePath,
         database: describeDatabase(rt.source()),
-        store: opts.store ? { kind: opts.store.kind, ...opts.store.inspect?.() } : { kind: "memory" },
+        store: opts.store ? { kind: opts.store.kind, ...opts.store.inspect?.() } : rt.filesService ? "files plugin" : { kind: "memory" },
         secret: opts.secret ? "(option)" : "env.TOUR_SECRET, FILES_SECRET or SESSION_SECRET",
         processors: rt.processors.map((x) => ({
           name: x.name,

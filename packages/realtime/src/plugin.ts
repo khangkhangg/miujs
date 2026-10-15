@@ -1,11 +1,12 @@
 import { definePlugin, errors, route, type CloudflareNeeds, type Context, type McpTool } from "miujs";
+import { CLIENT_JS, CLIENT_JS_HASH } from "./client-bundle.ts";
 import { systemClock, type Clock } from "./clock.ts";
 import { CODE_RE, KvCodeStore, MemoryCodeStore, allocateCode, createCode, type CodeStore, type CodeTarget, type KvLike } from "./codes.ts";
 import type { RoomType } from "./define.ts";
 import { KeyedLimiter } from "./limiter.ts";
 import { LocalRooms } from "./registry.ts";
 import { shardConfig, shardFromToken, shardId, type ShardConfig } from "./shard.ts";
-import type { JoinParams, RoomInstance } from "./room.ts";
+import { cleanParams, type JoinParams, type RoomInstance } from "./room.ts";
 
 export interface RoomsOptions {
   rooms: readonly RoomType<any, any, any>[];
@@ -53,7 +54,7 @@ function first(v: unknown): string | undefined {
 
 /** Reads `name`, `role`, `resume`, `hostKey`, `enc` from a query string object. */
 export function joinParamsFrom(query: Record<string, unknown>): JoinParams {
-  return { name: first(query.name), role: first(query.role), resume: first(query.resume), hostKey: first(query.hostKey), enc: first(query.enc) };
+  return { name: first(query.name), role: first(query.role), resume: first(query.resume), hostKey: first(query.hostKey), enc: first(query.enc), params: cleanParams(query) };
 }
 
 function nsFrom(env: Record<string, unknown> | undefined, binding: string): DurableObjectNamespaceLike | null {
@@ -176,6 +177,36 @@ function roomsPlugin(opts: RoomsOptions) {
     },
   });
 
+  // The browser client (src/client.ts, bundled): a stable URL that revalidates, and a hashed one
+  // that never changes, for <script type="module" src="..."> / import() without a build step.
+  const clientPath = `${prefix}/_client/${CLIENT_JS_HASH}.js`;
+  const etag = `"${CLIENT_JS_HASH}"`;
+  const js = (cacheControl: string) =>
+    new Response(CLIENT_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": cacheControl, etag, "x-content-type-options": "nosniff" } });
+  const clientStable = route.get(`${prefix}/_client.js`, {
+    name: "miu_rooms_client",
+    summary: "The rooms browser client as an ES module",
+    mcp: false,
+    internal: true,
+    handler: (ctx) => {
+      const inm = ctx.headers.get("if-none-match");
+      if (inm && inm.split(",").some((t) => t.trim().replace(/^W\//, "") === etag)) return new Response(null, { status: 304, headers: { etag, "cache-control": "no-cache" } });
+      return js("no-cache");
+    },
+  });
+  const clientHashed = route.get(`${prefix}/_client/:file`, {
+    name: "miu_rooms_client_hashed",
+    summary: "The rooms browser client at its content-hashed URL",
+    mcp: false,
+    internal: true,
+    handler: (ctx) => {
+      if (ctx.params.file !== `${CLIENT_JS_HASH}.js`) {
+        throw errors.custom({ code: "MIU_E_ROOM_CLIENT_NOT_FOUND", status: 404, message: "No such client build", fix: `Load ${clientPath} (rooms plugin .clientPath) or ${prefix}/_client.js.` });
+      }
+      return js("public, max-age=31536000, immutable");
+    },
+  });
+
   const tools: McpTool[] = [
     {
       name: "rooms_list",
@@ -215,7 +246,9 @@ function roomsPlugin(opts: RoomsOptions) {
 
   return definePlugin({
     name: "rooms",
-    routes: [connect, resolveCode],
+    routes: [connect, resolveCode, clientStable, clientHashed],
+    /** URL path of the browser client module (content-hashed, cached forever). */
+    clientPath,
     /** The in-process registry (Bun/Deno/Node). */
     registry,
     createRoom,

@@ -5,7 +5,9 @@ export type CspDirectives = Record<string, string[]>;
 
 export interface SecureHeadersOptions {
   /**
-   * Who may embed this site in a frame (CSP `frame-ancestors`). Default `["'none'"]`, which
+   * Who may embed this site in a frame (CSP `frame-ancestors`). A route can override it for one
+   * response with `ctx.state.frameAncestors = ["https://listings.example.com"]`; a response whose
+   * own CSP already has `frame-ancestors` gets no X-Frame-Options. Default `["'none'"]`, which
    * also sends `X-Frame-Options: DENY`. `["'self'"]` sends `SAMEORIGIN`; any other origin drops
    * X-Frame-Options (it cannot list origins) and relies on CSP.
    */
@@ -97,6 +99,12 @@ function buildPermissions(pp: Record<string, string[]>): string {
     .join(", ");
 }
 
+function xfoFor(list: string[]): string | null {
+  if (list.length === 1 && list[0] === "'none'") return "DENY";
+  if (list.length === 1 && list[0] === "'self'") return "SAMEORIGIN";
+  return null;
+}
+
 function newNonce(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   let s = "";
@@ -125,8 +133,24 @@ function isHttps(ctx: Context): boolean {
 export function secureHeaders(opts: SecureHeadersOptions = {}) {
   const frameAncestors = opts.frameAncestors ?? ["'none'"];
   checkSources("frameAncestors", frameAncestors);
-  const xfo = frameAncestors.length === 1 && frameAncestors[0] === "'none'" ? "DENY" : frameAncestors.length === 1 && frameAncestors[0] === "'self'" ? "SAMEORIGIN" : null;
+  const xfo = xfoFor(frameAncestors);
   const cspTemplate = buildCsp(opts.csp, frameAncestors);
+  // Per-request frameAncestors overrides, cached by value (routes use a handful of lists).
+  const overrides = new Map<string, { csp: string; xfo: string | null }>();
+  const forOverride = (list: unknown): { csp: string; xfo: string | null } => {
+    if (!Array.isArray(list) || list.length === 0) {
+      throw webErrors.config("ctx.state.frameAncestors must be a non-empty array of sources", `Set e.g. ctx.state.frameAncestors = ["https://listings.example.com"].`);
+    }
+    const key = list.join(" ");
+    let hit = overrides.get(key);
+    if (!hit) {
+      checkSources("ctx.state.frameAncestors", list as string[]);
+      hit = { csp: buildCsp(opts.csp, list as string[]), xfo: xfoFor(list as string[]) };
+      if (overrides.size > 64) overrides.clear();
+      overrides.set(key, hit);
+    }
+    return hit;
+  };
   const wantsNonce = !!opts.csp;
   const permissions = opts.permissionsPolicy === false ? null : buildPermissions({ ...DEFAULT_PERMISSIONS_POLICY, ...opts.permissionsPolicy });
   const hsts =
@@ -143,7 +167,6 @@ export function secureHeaders(opts: SecureHeadersOptions = {}) {
     ["x-content-type-options", "nosniff"],
     ["referrer-policy", opts.referrerPolicy ?? "strict-origin-when-cross-origin"],
   ];
-  if (xfo) fixed.push(["x-frame-options", xfo]);
   if (permissions) fixed.push(["permissions-policy", permissions]);
 
   return definePlugin({
@@ -152,13 +175,33 @@ export function secureHeaders(opts: SecureHeadersOptions = {}) {
       if (wantsNonce) ctx.state.cspNonce = newNonce();
     },
     onResponse(ctx: Context, res: Response) {
-      let csp = cspTemplate;
+      let template = cspTemplate;
+      let frameOptions = xfo;
+      if (ctx.state.frameAncestors !== undefined) {
+        try {
+          ({ csp: template, xfo: frameOptions } = forOverride(ctx.state.frameAncestors));
+        } catch (err) {
+          // A bad override never reaches the header: answer with the error under the defaults.
+          ctx.log.error("secureHeaders: invalid ctx.state.frameAncestors", { err });
+          ctx.state.frameAncestors = undefined;
+          const out = (err as { toResponse(): Response }).toResponse();
+          for (const [k, v] of fixed) out.headers.set(k, v);
+          if (xfo) out.headers.set("x-frame-options", xfo);
+          out.headers.set("content-security-policy", cspTemplate.replaceAll(NONCE_SLOT, String(ctx.state.cspNonce ?? "")));
+          return out;
+        }
+      }
+      let csp = template;
       if (wantsNonce) {
         // Normally set in onRequest; an earlier hook may have short-circuited before it ran.
         if (typeof ctx.state.cspNonce !== "string") ctx.state.cspNonce = newNonce();
-        csp = cspTemplate.replaceAll(NONCE_SLOT, ctx.state.cspNonce as string);
+        csp = template.replaceAll(NONCE_SLOT, ctx.state.cspNonce as string);
       }
       const add: [string, string][] = [...fixed];
+      // The response chose its own embedding policy: X-Frame-Options (which cannot list origins) would contradict it.
+      const own = res.headers.get("content-security-policy");
+      const ownFrame = own !== null && /(?:^|;)\s*frame-ancestors\b/i.test(own);
+      if (frameOptions && !ownFrame) add.push(["x-frame-options", frameOptions]);
       add.push(["content-security-policy", csp]);
       if (hsts && isHttps(ctx)) add.push(["strict-transport-security", hsts]);
       const missing = add.filter(([k]) => !res.headers.has(k));

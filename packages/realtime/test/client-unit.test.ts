@@ -16,3 +16,11 @@ for (const [code, why] of [
     expect(closes).toEqual([{ code, reason: "", willReconnect: false }]);
   });
 }
+
+test("params are sent as join query parameters (for onJoinRequest); built-in names cannot be overridden", () => {
+  connect("ws://x/rooms/x/1", { name: "Ann", WebSocket: FakeWS as any, params: { guide: "tok en", name: "Mallory", ticket: "7" } });
+  const u = new URL(FakeWS.last().url);
+  expect(u.searchParams.get("guide")).toBe("tok en");
+  expect(u.searchParams.get("ticket")).toBe("7");
+  expect(u.searchParams.get("name")).toBe("Ann");
+});

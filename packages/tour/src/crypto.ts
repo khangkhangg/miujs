@@ -7,9 +7,7 @@ export type TourTokenPayload =
   /** A share link: opens a private or password-protected tour until `e`. `v` = the tour's share version. */
   | { p: "share"; tour: string; v: number; e: number }
   /** Set after a correct password. `v` = the tour's password version (changing the password revokes it). */
-  | { p: "unlock"; tour: string; v: number; e: number }
-  /** Read any tile under `prefix` (one token covers a whole tile pyramid). `pub` = cacheable by CDNs. */
-  | { p: "tiles"; tour: string; prefix: string; e: number; pub?: 1 };
+  | { p: "unlock"; tour: string; v: number; e: number };
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();

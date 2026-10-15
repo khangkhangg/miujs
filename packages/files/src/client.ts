@@ -20,6 +20,17 @@ export interface GetOptions {
 export interface SignedUrlOptions {
   /** Seconds until the URL stops working. Default 900 (15 minutes), max 7 days. */
   expiresIn?: number;
+  /**
+   * When the URL stops working: a Date or whole seconds since the epoch (at most 7 days ahead).
+   * Instead of `expiresIn`; the same key, options and expiresAt always give the same URL.
+   */
+  expiresAt?: Date | number;
+  /**
+   * GET only. "public" serves the file with `Cache-Control: public`, so browsers and CDNs may
+   * cache it. Without `expiresAt`, the expiry is rounded up to the hour so repeated calls give
+   * the same (cacheable) URL. Default "private".
+   */
+  cache?: "private" | "public";
   /** "GET" to download (default), "PUT" to let a client upload to this exact key. */
   method?: "GET" | "PUT";
   /** PUT only: the upload must be sent with this content type. */
@@ -28,6 +39,12 @@ export interface SignedUrlOptions {
   maxSize?: number;
   /** GET only: serve as an attachment with this file name. */
   download?: string;
+}
+
+export interface SignedPrefixOptions {
+  expiresIn?: number;
+  expiresAt?: Date | number;
+  cache?: "private" | "public";
 }
 
 /** `ctx.files`. */
@@ -40,6 +57,11 @@ export interface FilesClient {
   list(opts?: { prefix?: string; cursor?: string; limit?: number }): Promise<ListResult>;
   /** A URL to this plugin's own route that grants one method on one key until it expires. */
   signedUrl(key: string, opts?: SignedUrlOptions): Promise<string>;
+  /**
+   * One signed base URL for every file under `prefix` (tile pyramids, video segments): GET
+   * `${base}/<rest of the key>`. Read-only, and nothing outside the prefix.
+   */
+  signedPrefixUrl(prefix: string, opts?: SignedPrefixOptions): Promise<string>;
   /**
    * Store the file(s) from this request (multipart/form-data or a raw body) after checking their
    * real type from their bytes. Use on routes without a `body` schema.
@@ -82,6 +104,33 @@ function checkMetadata(m: unknown): Record<string, string> | undefined {
     throw configError("File metadata is larger than 2 KB", "Keep metadata small (ids, names); store larger data in your database.");
   }
   return m as Record<string, string>;
+}
+
+function checkCache(cache: unknown): boolean {
+  if (cache === undefined || cache === "private") return false;
+  if (cache === "public") return true;
+  throw configError(`cache must be "private" or "public", got ${JSON.stringify(cache)}`, 'Pass cache: "public" for files anyone may cache, or leave it out.');
+}
+
+/** Expiry in seconds since the epoch, from expiresAt or expiresIn (rounded up to the hour for public URLs). */
+function expiryOf(opts: { expiresIn?: number; expiresAt?: Date | number }, publicCache: boolean): number {
+  const now = Math.floor(Date.now() / 1000);
+  if (opts.expiresAt !== undefined) {
+    if (opts.expiresIn !== undefined) throw configError("Pass expiresIn or expiresAt, not both", "Use expiresAt for a fixed expiry (stable URLs), or expiresIn for a relative one.");
+    const at = opts.expiresAt instanceof Date ? Math.floor(opts.expiresAt.getTime() / 1000) : opts.expiresAt;
+    if (typeof at !== "number" || !Number.isSafeInteger(at) || at <= now || at - now > MAX_EXPIRES_IN) {
+      throw configError(`expiresAt must be a Date or whole seconds since the epoch within the next ${MAX_EXPIRES_IN} seconds, got ${String(opts.expiresAt)}`, "Signed URLs are bearer credentials: keep them short-lived (max 7 days).");
+    }
+    return at;
+  }
+  const expiresIn = opts.expiresIn ?? 900;
+  if (!isPositiveInt(expiresIn) || expiresIn > MAX_EXPIRES_IN) {
+    throw configError(`expiresIn must be a whole number of seconds from 1 to ${MAX_EXPIRES_IN}, got ${String(expiresIn)}`, "Signed URLs are bearer credentials: keep them short-lived (default 900 = 15 minutes, max 7 days).");
+  }
+  const e = now + expiresIn;
+  if (!publicCache) return e;
+  const rounded = Math.ceil(e / 3600) * 3600;
+  return rounded - now <= MAX_EXPIRES_IN ? rounded : e;
 }
 
 export class Files implements FilesClient {
@@ -140,12 +189,11 @@ export class Files implements FilesClient {
   async signedUrl(key: string, opts: SignedUrlOptions = {}): Promise<string> {
     checkKey(key);
     const method = opts.method ?? "GET";
-    const expiresIn = opts.expiresIn ?? 900;
     if (method !== "GET" && method !== "PUT") throw configError(`signedUrl method must be "GET" or "PUT", got ${JSON.stringify(method)}`, 'Use method: "GET" to download or "PUT" to upload.');
-    if (!isPositiveInt(expiresIn) || expiresIn > MAX_EXPIRES_IN) {
-      throw configError(`expiresIn must be a whole number of seconds from 1 to ${MAX_EXPIRES_IN}, got ${String(expiresIn)}`, "Signed URLs are bearer credentials: keep them short-lived (default 900 = 15 minutes, max 7 days).");
-    }
-    const payload: TokenPayload = { p: "url", k: key, m: method, e: Math.floor(Date.now() / 1000) + expiresIn };
+    const publicCache = checkCache(opts.cache);
+    if (publicCache && method !== "GET") throw configError("cache only applies to GET URLs", "Remove `cache`, or sign a GET URL.");
+    const payload: TokenPayload = { p: "url", k: key, m: method, e: expiryOf(opts, publicCache) };
+    if (publicCache) payload.c = 1;
     if (method === "GET") {
       if (opts.contentType !== undefined || opts.maxSize !== undefined) throw configError("contentType and maxSize only apply to PUT URLs", 'Pass method: "PUT" to sign an upload URL.');
       if (opts.download !== undefined) {
@@ -162,8 +210,23 @@ export class Files implements FilesClient {
       }
     }
     const token = await signToken(this.rt.secretsFor(this.ctx), payload);
-    const origin = this.rt.publicUrl ?? this.ctx.url.origin;
-    return `${origin}${this.rt.basePath}/${token}`;
+    return `${this.origin()}${this.rt.basePath}/${token}`;
+  }
+
+  async signedPrefixUrl(prefix: string, opts: SignedPrefixOptions = {}): Promise<string> {
+    checkKey(prefix);
+    const publicCache = checkCache(opts.cache);
+    const payload: TokenPayload = { p: "pre", k: prefix, e: expiryOf(opts, publicCache) };
+    if (publicCache) payload.c = 1;
+    const token = await signToken(this.rt.secretsFor(this.ctx), payload);
+    return `${this.origin()}${this.rt.basePath}/p/${token}`;
+  }
+
+  /** publicUrl, else the request's origin; "" (relative URLs) outside a request. */
+  private origin(): string {
+    if (this.rt.publicUrl) return this.rt.publicUrl;
+    const url = (this.ctx as { url?: URL }).url;
+    return url ? url.origin : "";
   }
 
   handleUpload(ctx: Context, opts: HandleUploadOptions): Promise<UploadedFile[]> {

@@ -100,7 +100,7 @@ export function pageRoutes(rt: TourRuntime): RouteDef[] {
       }
       if (tour.privacy === "strict" && assets === "cdn") throw tourErrors.strictCdn();
       const lp = livePath(rt);
-      const live = lp && c.query.live && CODE_RE.test(c.query.live) ? { code: c.query.live, roomsPath: lp } : null;
+      const live = lp && c.query.live && CODE_RE.test(c.query.live) ? { code: c.query.live, roomsPath: lp, clientUrl: rt.opts.live?.clientPath ?? `${lp}/_client.js` } : null;
       const manifest = await buildManifest(rt, ctx, s, tour, access, lp, c.query.share);
       const manifestUrl = `${base}/${tour.slug}/manifest.json${c.query.share ? `?share=${encodeURIComponent(c.query.share)}` : ""}`;
       headers.set("content-security-policy", tourCsp({ nonce, assets, frameAncestors, assetOrigins: manifestOrigins(manifest, ctx.url.origin) }));

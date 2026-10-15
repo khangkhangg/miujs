@@ -327,10 +327,11 @@ dispatchEvent(new Event("miu-tour-ready"));
 if (manifest.tour.startSceneId) await go(manifest.tour.startSceneId);
 else statusEl.textContent = "This tour has no scenes yet.";
 `;
-
 /**
- * Live guided tours: joins the `guidedTour` room by join code. The guide (who has the
- * `#guide=<token>` link) broadcasts the camera; followers follow until they move the view
+ * Live guided tours: resolves the 6-digit join code and joins the `guidedTour` room with the
+ * rooms plugin's own browser client (served at /rooms/_client/<hash>.js). The guide's link
+ * carries `#guide=<token>` (never sent to servers in URLs it navigates to); it is passed as a
+ * join parameter and checked by the room at join. Followers follow until they move the view
  * themselves ("detach"), then can rejoin. Followers can raise a hand; the guide can point.
  */
 export const LIVE_JS = String.raw`
@@ -342,98 +343,71 @@ const handBtn = ui.querySelector("[data-live=raise]");
 const handsEl = ui.querySelector("[data-live=hands]");
 const endBtn = ui.querySelector("[data-live=end]");
 const guideToken = new URLSearchParams(location.hash.slice(1)).get("guide");
-let ws = null, me = null, guide = false, detached = false, hand = false, resume = null, retry = 0, ended = false;
-let lastSent = 0, pending = null;
+let guide = false, detached = false, hand = false, ended = false, lastSent = 0, pending = null;
 
 const tourReady = () => window.miuTour ? Promise.resolve(window.miuTour) : new Promise((r) => addEventListener("miu-tour-ready", () => r(window.miuTour), { once: true }));
-const send = (type, data) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: "msg", type, data: data || {} })); };
 
-function renderHands(list) {
-  handsEl.replaceChildren();
-  for (const h of list || []) {
-    const li = document.createElement("li");
-    li.textContent = h.name + " ";
-    if (guide) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = "Answer";
-      b.addEventListener("click", () => send("ack", { playerId: h.id }));
-      li.append(b);
-    }
-    handsEl.append(li);
-  }
-  handsEl.hidden = !guide || !(list && list.length);
-}
-
-function onFrame(tour, f) {
-  if (f.t === "welcome") {
-    me = f.me;
-    resume = f.resumeToken;
-    if (guideToken) send("claim", { token: guideToken });
-    return;
-  }
-  if (f.t === "error") { statusEl.textContent = f.message; return; }
-  if (f.t !== "event") return;
-  const d = f.data;
-  if (f.event === "guide") {
-    guide = !!(me && d && d.id === me.id);
-    ui.classList.toggle("is-guide", guide);
-    handBtn.hidden = guide;
-    endBtn.hidden = !guide;
-    statusEl.textContent = guide ? "You are guiding. " + d.followers + " following." : d ? "Following " + d.name + "." : "Waiting for the guide.";
-  } else if (f.event === "camera") {
-    if (guide || detached || !d) return;
-    if (tour.scene() !== d.scene) tour.go(d.scene, d);
-    else tour.look(d);
-  } else if (f.event === "pointer") {
-    if (!guide) tour.highlight(d);
-  } else if (f.event === "hands") {
-    renderHands(d);
-  } else if (f.event === "handAck") {
-    hand = false;
-    handBtn.setAttribute("aria-pressed", "false");
-  } else if (f.event === "ended") {
-    ended = true;
-    statusEl.textContent = "The guide ended this live tour.";
-    if (ws) ws.close();
-  }
-}
-
-async function connect() {
+async function start() {
   const r = await fetch(cfg.roomsPath + "/code/" + encodeURIComponent(cfg.code));
   if (!r.ok) { statusEl.textContent = "This live tour has ended, or the code is wrong."; return; }
   const target = await r.json();
   if (target.type !== "guidedTour") return;
-  const tour = await tourReady();
-  const name = guideToken ? "Guide" : "Guest";
-  const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + cfg.roomsPath + "/" + encodeURIComponent(target.type) + "/" + encodeURIComponent(target.id) +
-    "?name=" + encodeURIComponent(name) + "&role=" + (guideToken ? "player" : "spectator") + (resume ? "&resume=" + encodeURIComponent(resume) : "");
-  ws = new WebSocket(url);
-  ws.onopen = () => { retry = 0; };
-  ws.onmessage = (ev) => { try { onFrame(tour, JSON.parse(ev.data)); } catch (e) { console.error(e); } };
-  ws.onclose = () => {
-    if (ended) return;
-    statusEl.textContent = "Reconnecting...";
-    setTimeout(connect, Math.min(10000, 500 * 2 ** retry++));
-  };
-  if (!connect.wired) {
-    connect.wired = true;
-    // The guide sends the camera at most 10 times a second (the room enforces it too).
-    tour.on("change", () => {
-      if (!guide) return;
-      const sendNow = () => { const v = tour.view(); if (v) { lastSent = Date.now(); send("camera", v); } };
-      const wait = 100 - (Date.now() - lastSent);
-      if (wait <= 0) sendNow();
-      else if (!pending) pending = setTimeout(() => { pending = null; sendNow(); }, wait);
-    });
-    tour.on("point", (p) => { if (guide && p) send("pointer", p); });
-    // Followers detach as soon as they move the view themselves.
-    tour.on("input", () => { if (!guide && !detached) { detached = true; detachBtn.hidden = false; } });
+  const [{ connect }, tour] = await Promise.all([import(cfg.clientUrl), tourReady()]);
+  const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + cfg.roomsPath + "/" + encodeURIComponent(target.type) + "/" + encodeURIComponent(target.id);
+  const room = connect(url, { name: guideToken ? "Guide" : "Guest", role: "spectator", params: guideToken ? { guide: guideToken } : undefined });
+  const send = (type, data) => room.send(type, data || {});
+
+  function renderHands(list) {
+    handsEl.replaceChildren();
+    for (const h of list || []) {
+      const li = document.createElement("li");
+      li.textContent = h.name + " ";
+      if (guide) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = "Answer";
+        b.addEventListener("click", () => send("ack", { playerId: h.id }));
+        li.append(b);
+      }
+      handsEl.append(li);
+    }
+    handsEl.hidden = !guide || !(list && list.length);
   }
+
+  room.on("error", (e) => { statusEl.textContent = e.message; });
+  room.on("close", (e) => { statusEl.textContent = ended ? "The guide ended this live tour." : e.willReconnect ? "Reconnecting..." : "Disconnected from the live tour."; });
+  room.on("guide", (d) => {
+    guide = !!(room.me && d && d.id === room.me.id);
+    ui.classList.toggle("is-guide", guide);
+    handBtn.hidden = guide;
+    endBtn.hidden = !guide;
+    statusEl.textContent = guide ? "You are guiding. " + d.followers + " following." : d ? "Following " + d.name + "." : "Waiting for the guide.";
+  });
+  room.on("camera", (d) => {
+    if (guide || detached || !d) return;
+    if (tour.scene() !== d.scene) tour.go(d.scene, d);
+    else tour.look(d);
+  });
+  room.on("pointer", (d) => { if (!guide) tour.highlight(d); });
+  room.on("hands", renderHands);
+  room.on("handAck", () => { hand = false; handBtn.setAttribute("aria-pressed", "false"); });
+  room.on("ended", () => { ended = true; room.close(); });
+
+  // The guide sends the camera at most 10 times a second (the room enforces it too).
+  tour.on("change", () => {
+    if (!guide) return;
+    const sendNow = () => { const v = tour.view(); if (v) { lastSent = Date.now(); send("camera", v); } };
+    const wait = 100 - (Date.now() - lastSent);
+    if (wait <= 0) sendNow();
+    else if (!pending) pending = setTimeout(() => { pending = null; sendNow(); }, wait);
+  });
+  tour.on("point", (p) => { if (guide && p) send("pointer", p); });
+  // Followers detach as soon as they move the view themselves.
+  tour.on("input", () => { if (!guide && !detached) { detached = true; detachBtn.hidden = false; } });
+  detachBtn.addEventListener("click", () => { detached = false; detachBtn.hidden = true; send("sync"); });
+  handBtn.addEventListener("click", () => { hand = !hand; handBtn.setAttribute("aria-pressed", String(hand)); send(hand ? "raise" : "lower"); });
+  endBtn.addEventListener("click", () => send("end"));
 }
 
-detachBtn.addEventListener("click", () => { detached = false; detachBtn.hidden = true; send("sync"); });
-handBtn.addEventListener("click", () => { hand = !hand; handBtn.setAttribute("aria-pressed", String(hand)); send(hand ? "raise" : "lower"); });
-endBtn.addEventListener("click", () => send("end"));
-connect();
+start().catch((e) => { statusEl.textContent = "The live tour could not start."; console.error(e); });
 `;
