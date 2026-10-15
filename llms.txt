@@ -1,0 +1,40 @@
+# MiuJS
+
+> A TypeScript web framework that runs without a build step on Bun, Deno, Node and Cloudflare Workers, and serves every route to AI agents over MCP and OpenAPI.
+
+- One `t` schema per route gives types, validation, OpenAPI, the MCP tool schema and test helpers.
+- Errors are `MiuError`s with a stable `MIU_E_*` code, a message and a `fix`; the `docs` field links to the code's section in docs/errors.md.
+- Batteries are `@miujs/*` plugins with swappable adapters: memory or SQLite locally, Cloudflare bindings in production.
+- Code must be erasable TypeScript (no enums, namespaces, decorators) and use web-standard APIs. Status: 0.1, APIs may change.
+
+## Docs
+
+- [Getting started](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/docs/guide.md): new project, routes, schemas, errors, plugins, MCP, deploying to Cloudflare, testing
+- [AGENTS.md](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/AGENTS.md): rules and the core API on one screen, for coding agents changing a MiuJS app or MiuJS itself
+- [README](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/README.md): overview, core concepts, security defaults, roadmap and known limitations
+- [Error codes](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/docs/errors.md): every MIU_E_* and MIU_W_* code with its package, HTTP status, meaning and fix
+
+## Packages
+
+- [miujs](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/miujs/README.md): Core of MiuJS: a no-build TypeScript web framework with typed routes, `t` schemas, stable error codes, plugins, MCP and OpenAPI, for Bun, Deno, Node and Cloudflare Workers.
+- [@miujs/cli](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/cli/README.md): The `miu` command line: scaffold projects and files, run route tests, inspect apps, check for mistakes, manage SQLite/D1 migrations and deploy to Cloudflare Workers.
+- [@miujs/auth](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/auth/README.md): Email and password accounts, API tokens, roles, rate-limited sign-in and password hashing for MiuJS, on top of @miujs/session.
+- [@miujs/session](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/session/README.md): Signed-cookie or server-side sessions for MiuJS, with flash messages and same-origin CSRF protection.
+- [@miujs/db](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/db/README.md): D1-compatible SQL for MiuJS: one `Database` interface over Cloudflare D1 and local bun:sqlite, with migrations, introspection and optional Drizzle ORM.
+- [@miujs/cache](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/cache/README.md): Key/value cache for MiuJS with TTLs, tag invalidation and `remember()`, backed by memory, Cloudflare KV or Redis.
+- [@miujs/queue](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/queue/README.md): Background jobs and cron schedules for MiuJS, with retries, backoff and dead letters, on memory, SQLite, Redis or Cloudflare Queues.
+- [@miujs/ratelimit](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/ratelimit/README.md): Rules-based rate limiting for MiuJS with fixed, sliding and token-bucket algorithms, IETF RateLimit headers, and memory, KV, Durable Object, Cloudflare binding and Redis stores.
+- [@miujs/realtime](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/realtime/README.md): Server-authoritative realtime rooms over WebSockets for MiuJS, with state patches, timers, join codes, shards, Durable Objects and a client SDK.
+- [@miujs/files](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/files/README.md): File storage for MiuJS: `ctx.files` with memory, local disk, Cloudflare R2 and S3 stores, signed URLs, checked uploads and resumable multipart uploads.
+- [@miujs/web](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/web/README.md): Server-rendered web pages for MiuJS: escaped `html` templates and JSX without a build, static files, htmx helpers, Vite assets and security headers.
+- [@miujs/mail](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/mail/README.md): Transactional email for MiuJS: `ctx.mail.send()`, templates, Resend and generic HTTP transports, and a dev outbox preview at `/_miu/mail`.
+- [@miujs/access](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/access/README.md): Roles, wildcard permissions, row-level policies and multi-tenant organizations with members and email invitations for MiuJS.
+- [@miujs/audit](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/audit/README.md): A tamper-evident audit log for MiuJS: field-level diffs, secret redaction, an HMAC-SHA256 hash chain with key rotation, external anchoring, verification and retention.
+- [@miujs/workflows](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/workflows/README.md): Durable workflows for MiuJS: event, cron, webhook and manual triggers, journaled steps, sleeps, waits for events and approvals, JSON-defined workflows, routes and MCP tools.
+- [@miujs/ai](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/ai/README.md): Model calls for MiuJS: `ctx.ai` for generate, stream, typed objects, embeddings, a tool-use agent loop and RAG, over Anthropic, OpenAI-compatible APIs, Workers AI and Cloudflare AI Gateway.
+
+## Optional
+
+- [llms-full.txt](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/llms-full.txt): AGENTS.md, the README, the guide and every package README in one file
+- [Realtime wire protocol](https://raw.githubusercontent.com/khangkhangg/miujs/miujs-monorepo/packages/realtime/PROTOCOL.md): the WebSocket frames, for clients in other languages
+- [Examples](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/examples): a notes API using the batteries, and a Kahoot-style quiz on realtime rooms

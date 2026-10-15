@@ -1,6 +1,10 @@
 import type { Issue } from "./schema.ts";
 
-export const DOCS_BASE = "https://miujs.dev/errors/";
+/**
+ * Where error codes are documented. `docs` in an error body is DOCS_BASE + the code in lowercase,
+ * which is the anchor GitHub gives that code's heading in docs/errors.md.
+ */
+export const DOCS_BASE = "https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#";
 
 export interface MiuErrorInit {
   /** Stable machine-readable code, e.g. `MIU_E_NOT_FOUND`. Never reworded once released. */
@@ -35,7 +39,7 @@ export class MiuError extends Error {
   toJSON() {
     const error: Record<string, unknown> = { code: this.code, message: this.message };
     if (this.fix) error.fix = this.fix;
-    error.docs = DOCS_BASE + this.code;
+    error.docs = DOCS_BASE + this.code.toLowerCase();
     if (this.details !== undefined) error.details = this.details;
     return { error };
   }

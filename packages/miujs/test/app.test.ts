@@ -163,7 +163,7 @@ describe("errors", () => {
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.error).toMatchObject({ code: "MIU_E_NOT_FOUND", message: 'user "7" not found' });
-    expect(body.error.docs).toContain("MIU_E_NOT_FOUND");
+    expect(body.error.docs).toEndWith("#miu_e_not_found");
   });
 
   test("unexpected errors are 500 and hide the message in production", async () => {

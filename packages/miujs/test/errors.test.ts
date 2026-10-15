@@ -20,16 +20,21 @@ describe("MiuError", () => {
   test("toJSON shape with all fields, in order", () => {
     const e = new MiuError({ code: "MIU_E_X", status: 400, message: "m", fix: "f", details: [1] });
     const j = e.toJSON();
-    expect(j).toEqual({ error: { code: "MIU_E_X", message: "m", fix: "f", docs: DOCS_BASE + "MIU_E_X", details: [1] } });
+    expect(j).toEqual({ error: { code: "MIU_E_X", message: "m", fix: "f", docs: DOCS_BASE + "miu_e_x", details: [1] } });
     expect(Object.keys(j.error)).toEqual(["code", "message", "fix", "docs", "details"]);
     expect(JSON.stringify(e)).toBe(JSON.stringify(j));
   });
 
   test("toJSON omits fix and details when absent", () => {
     const j = new MiuError({ code: "MIU_E_Y", status: 500, message: "m" }).toJSON();
-    expect(j).toEqual({ error: { code: "MIU_E_Y", message: "m", docs: "https://miujs.dev/errors/MIU_E_Y" } });
+    expect(j).toEqual({ error: { code: "MIU_E_Y", message: "m", docs: "https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#miu_e_y" } });
     expect("fix" in j.error).toBe(false);
     expect("details" in j.error).toBe(false);
+  });
+
+  test("docs links to the lowercase GitHub heading anchor in docs/errors.md", () => {
+    expect(DOCS_BASE).toBe("https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md#");
+    expect(errors.notFound("user").toJSON().error.docs).toBe(DOCS_BASE + "miu_e_not_found");
   });
 
   test("toResponse sets status, JSON content-type and keeps extra headers", async () => {
