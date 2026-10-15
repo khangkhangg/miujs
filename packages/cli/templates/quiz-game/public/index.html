@@ -96,7 +96,10 @@ function home() {
       <button id="join">Join</button></div>`;
   document.getElementById("create").onclick = async () => {
     const res = await fetch("/api/games", { method: "POST" });
-    const { id, code } = await res.json();
+    if (!res.ok) { $err.textContent = (await res.json()).error?.message ?? "Could not create a game."; return; }
+    const { id, code, hostKey } = await res.json();
+    // The hostKey is what makes this browser the host (a player who joins first does not).
+    store.set(`hostKey:${id}`, hostKey);
     join(id, code, "Host", true);
   };
   document.getElementById("join").onclick = async () => {

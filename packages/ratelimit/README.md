@@ -42,7 +42,7 @@ Responses carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` f
 ## Rules
 
 - `match` takes `route` (route name), `path` (`/api/*` matches the path and everything below; `:param` and `*` match one segment), `method` and `tag`. Every given key must match; a list matches any of its entries. A rule without `match` applies to every request.
-- `by` is `"ip"`, `"user"` (signed-in user, else IP), `"apiKey"` (`x-api-key` or `Authorization: Bearer`, hashed; else IP) or `(ctx) => string | null`. Returning `null` exempts the request.
+- `by` is `"ip"`, `"user"` (signed-in user, else IP), `"apiKey"` (`x-api-key` or `Authorization: Bearer`, hashed; else IP; a key with no signed-in user behind it also counts against the client's IP, so made-up keys cannot buy a fresh bucket per request) or `(ctx) => string | null`. Returning `null` exempts the request.
 - `window` is seconds or `"10s"`, `"1m"`, `"15m"`, `"1h"`, `"1d"`.
 - Rules with `by: "user"` need `auth()` listed before `rateLimit()` in `plugins`; otherwise setup fails with `MIU_E_RATELIMIT_ORDER`.
 - Behind a proxy, set `trustProxyHeader` (e.g. `"x-forwarded-for"`). The rightmost address is used. Never name a header clients can set directly.

@@ -4,11 +4,11 @@ import { createLogger, type LogLevel, type Logger } from "./logger.ts";
 import { createMcpHandler, buildRouteTool, routeToolRequest, type McpOptions } from "./mcp.ts";
 import { generateOpenApi, type DescribedRoute, type OpenApiInfo } from "./openapi.ts";
 import type { CloudflareNeeds, McpTool, Plugin } from "./plugin.ts";
-import { isRoute, type AuthRequirement, type RouteDef } from "./route.ts";
+import { isAuthRequirement, isRoute, type AuthRequirement, type RouteDef } from "./route.ts";
 import { Router, normalizePath, pathParams } from "./router.ts";
 import { detectRuntime, processEnv, type Runtime } from "./runtime.ts";
 import { isPlainStringObject, type Issue, type Schema } from "./schema.ts";
-import { bunWebSocket } from "./websocket.ts";
+import { bunWebSocketHandler, resolveWebSocketLimits, type WebSocketLimits } from "./websocket.ts";
 
 export type RouteSource = RouteDef | readonly RouteSource[] | Record<string, unknown>;
 
@@ -30,6 +30,13 @@ export interface MiuOptions {
   maxBodySize?: number;
   /** The reverse proxy in front of the app, so `ctx.ip` is the real client. See TrustProxy. */
   trustProxy?: TrustProxy;
+  /**
+   * WebSocket limits in bytes. `maxPayloadLength`: largest client message (default 1 MiB; a
+   * bigger frame closes the socket with 1009). `backpressureLimit`: most bytes buffered for a
+   * client that stops reading before its socket is closed (default 1 MiB). Bun enforces both;
+   * on Deno and Workers `maxPayloadLength` is checked per message.
+   */
+  websocket?: WebSocketLimits;
 }
 
 export interface CallInput {
@@ -242,8 +249,11 @@ export class App {
   readonly log: Logger;
   readonly tests: RouteTest[] = [];
   readonly plugins: Plugin[];
-  /** Bun reads this from the default export to enable WebSockets. */
-  readonly websocket = bunWebSocket;
+  /**
+   * Bun reads this from the default export to enable WebSockets (listen() passes it too), with
+   * the limits from `miu({ websocket })`.
+   */
+  readonly websocket: ReturnType<typeof bunWebSocketHandler>;
 
   private options: MiuOptions;
   private routers = new Map<string, Router<Compiled>>();
@@ -289,9 +299,10 @@ export class App {
     this.log = createLogger(options.logLevel ?? (this.dev ? "info" : "warn"), { app: this.name });
     this.logRequests = options.logRequests ?? false;
     this.maxBodySize = options.maxBodySize ?? 10 * 1024 * 1024;
+    this.websocket = bunWebSocketHandler(resolveWebSocketLimits(options.websocket));
     this.plugins = options.plugins ?? [];
     this.staticEnv = this.runtime === "workerd" ? {} : processEnv();
-    this.basePlatform = { runtime: this.runtime, pending: this.background, trustProxy: options.trustProxy };
+    this.basePlatform = { runtime: this.runtime, pending: this.background, trustProxy: options.trustProxy, wsMaxPayload: this.websocket.maxPayloadLength };
     for (const src of options.routes ?? []) this.collect(src, undefined);
     for (const p of this.plugins) for (const r of p.routes ?? []) this.collect(r, undefined);
   }
@@ -366,6 +377,11 @@ export class App {
         }
         seen.set(tool, owner);
       }
+      for (const t of pluginTools) {
+        if (t.auth !== undefined && !isAuthRequirement(t.auth)) {
+          throw errors.config("MIU_E_AUTH_INVALID", `MCP tool ${t.name} has auth: ${JSON.stringify(t.auth)}, which is not a valid requirement`, 'Use auth: "required", "optional", false, or { role: "admin" } (a string or an array of roles).');
+        }
+      }
     }
     this.isReady = true;
   }
@@ -409,7 +425,7 @@ export class App {
 
     const auth = (cfg.auth ?? false) as AuthRequirement;
     // Fail closed: an unknown value (`true`, a typo, `{ roles }`) must never compile to a public route.
-    if (!(auth === false || auth === "optional" || auth === "required" || (typeof auth === "object" && auth !== null && Object.hasOwn(auth, "role")))) {
+    if (!isAuthRequirement(auth)) {
       throw errors.config(
         "MIU_E_AUTH_INVALID",
         `Route ${def.method} ${path} has auth: ${JSON.stringify(auth)}, which is not a valid requirement`,
@@ -602,7 +618,7 @@ export class App {
    */
   fetch = (req: Request, envOrServer?: any, executionContext?: any): Response | Promise<Response> => {
     if (this.runtime === "workerd") {
-      return this.dispatch(req, envOrServer ?? {}, { runtime: this.runtime, executionContext });
+      return this.dispatch(req, envOrServer ?? {}, { runtime: this.runtime, executionContext, wsMaxPayload: this.websocket.maxPayloadLength });
     }
     // Off Workers the platform object only varies with Bun's server, so it is reused, not
     // allocated per request. The same server as last time skips the checks below.
@@ -620,7 +636,7 @@ export class App {
       this.lastServerPlatform = platform;
     } else if (envOrServer && envOrServer.remoteAddr && typeof envOrServer.remoteAddr.hostname === "string") {
       // Deno.serve info, or the Node adapter: the client address for ctx.ip.
-      platform = { runtime: this.runtime, pending: this.background, remoteAddr: envOrServer.remoteAddr, trustProxy: this.options.trustProxy };
+      platform = { runtime: this.runtime, pending: this.background, remoteAddr: envOrServer.remoteAddr, trustProxy: this.options.trustProxy, wsMaxPayload: this.websocket.maxPayloadLength };
     }
     return this.dispatchCore(req, this.staticEnv, platform);
   };
@@ -799,7 +815,7 @@ export class App {
     const g = globalThis as any;
     let server: { port: number; url: string; stop(): Promise<void> };
     if (this.runtime === "bun") {
-      const s = g.Bun.serve({ port, hostname, fetch: this.fetch, websocket: bunWebSocket, maxRequestBodySize: this.maxRequestBodySize });
+      const s = g.Bun.serve({ port, hostname, fetch: this.fetch, websocket: this.websocket, maxRequestBodySize: this.maxRequestBodySize });
       server = { port: s.port, url: String(s.url), stop: async () => void s.stop(true) };
     } else if (this.runtime === "deno") {
       const s = g.Deno.serve({ port, hostname, onListen() {} }, (r: Request, info: unknown) => this.fetch(r, info));

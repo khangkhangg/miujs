@@ -222,6 +222,47 @@ async function callRouteTool(t: RouteTool, args: Record<string, unknown>, ctx: C
   return result;
 }
 
+/**
+ * A plugin tool's `auth` and `permission`, checked the way a route checks them: 401 without a
+ * user, 403 without a role, `ctx.authorize(permission)` for permissions (failing closed when no
+ * plugin provides it). Throws a MiuError.
+ */
+async function checkToolAccess(t: McpTool, ctx: Context): Promise<void> {
+  const auth = t.auth ?? false;
+  if (auth === "required" || (typeof auth === "object" && auth !== null)) {
+    const user = (ctx as { user?: { roles?: unknown } }).user;
+    if (!user) throw errors.unauthorized();
+    if (typeof auth === "object") {
+      const roles = ([] as string[]).concat(auth.role);
+      if (!roles.some((r) => Array.isArray(user.roles) && user.roles.includes(r))) {
+        throw errors.forbidden(`Requires role: ${roles.join(" or ")}`, "Sign in as a user with the required role.");
+      }
+    }
+  }
+  if (t.permission !== undefined) {
+    const authorize = (ctx as { authorize?: (p: string) => unknown }).authorize;
+    if (typeof authorize !== "function") {
+      throw errors.config(
+        "MIU_E_PERMISSION_UNCHECKED",
+        `MCP tool ${t.name} requires permission "${t.permission}", but no plugin provides ctx.authorize`,
+        "Add an access plugin such as access({ roles }) from @miujs/access, or remove `permission` from the tool.",
+      );
+    }
+    await authorize.call(ctx, t.permission);
+  }
+}
+
+/** Whether the caller passes the tool's auth and permission (tools/list shows only those). */
+async function mayCall(t: McpTool, ctx: Context): Promise<boolean> {
+  if (t.auth === undefined && t.permission === undefined) return true;
+  try {
+    await checkToolAccess(t, ctx);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Hosts a browser can only reach on this machine; DNS rebinding cannot produce them as an Origin. */
 function isLoopback(hostname: string): boolean {
   return hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
@@ -278,13 +319,15 @@ export function createMcpHandler(host: McpHost, opts: McpOptions) {
       }
       case "ping":
         return rpcResult(msg.id, {});
-      case "tools/list":
+      case "tools/list": {
+        const allowed = await Promise.all(pluginTools.map((t) => mayCall(t, ctx)));
         return rpcResult(msg.id, {
           tools: [
             ...routeTools.map((t) => t.tool),
-            ...pluginTools.map((t) => ({ name: t.name, description: t.description ?? t.name, inputSchema: t.inputSchema, ...(t.outputSchema ? { outputSchema: t.outputSchema } : {}) })),
+            ...pluginTools.filter((_, i) => allowed[i]).map((t) => ({ name: t.name, description: t.description ?? t.name, inputSchema: t.inputSchema, ...(t.outputSchema ? { outputSchema: t.outputSchema } : {}) })),
           ],
         });
+      }
       case "tools/call": {
         const name = msg.params?.name;
         const args = (msg.params?.arguments ?? {}) as Record<string, unknown>;
@@ -293,6 +336,7 @@ export function createMcpHandler(host: McpHost, opts: McpOptions) {
         const pt = pluginTools.find((t) => t.name === name);
         if (pt) {
           try {
+            await checkToolAccess(pt, ctx);
             const out = await pt.call(args, ctx);
             const text = typeof out === "string" ? out : JSON.stringify(out);
             return rpcResult(msg.id, { content: [{ type: "text", text }], isError: false, ...(isPlainObject(out) ? { structuredContent: out } : {}) });

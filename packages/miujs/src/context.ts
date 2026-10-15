@@ -113,6 +113,8 @@ export interface PlatformInfo {
   remoteAddr?: { hostname: string };
   /** Background work off Workers, so `app.drain()` can wait for it. */
   pending?: Set<Promise<unknown>>;
+  /** From `miu({ websocket })`: largest client message where the runtime does not enforce it (Deno, Workers). */
+  wsMaxPayload?: number;
   /** Set from `miu({ trustProxy })`: which forwarding header a proxy you control writes. */
   trustProxy?: TrustProxy;
 }

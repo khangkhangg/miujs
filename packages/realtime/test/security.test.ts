@@ -351,6 +351,31 @@ test("MCP rooms_list / room_state are operator tools: anonymous or non-admin cal
   open.stop();
 });
 
+test("the operator tools declare their access on the MCP tool (enforced and filtered by /mcp); mcpAccess is an alias", async () => {
+  const room = defineRoom("echo2", { state: t.object({ n: t.number() }), init: () => ({ n: 0 }) });
+  const byDefault = rooms({ rooms: [room] });
+  expect(byDefault.mcpTools().map((x) => [x.name, x.auth])).toEqual([
+    ["rooms_list", { role: "admin" }],
+    ["room_state", { role: "admin" }],
+  ]);
+  expect(rooms({ rooms: [room], mcpAccess: "public" }).mcpTools().map((x) => x.auth)).toEqual([false, false]);
+  const custom = rooms({ rooms: [room], mcpAuth: "required", mcpPermission: "rooms:inspect" }).mcpTools();
+  expect(custom.map((x) => [x.auth, x.permission])).toEqual([
+    ["required", "rooms:inspect"],
+    ["required", "rooms:inspect"],
+  ]);
+  // mcpAuth wins over the alias.
+  expect(rooms({ rooms: [room], mcpAccess: "public", mcpAuth: { role: "ops" } }).mcpTools()[0].auth).toEqual({ role: "ops" });
+
+  // Anonymous callers do not even see the operator tools.
+  const app = miu({ plugins: [byDefault], logLevel: "silent", mcp: true });
+  const res = await app.request("/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
+  const names = ((await res.json()).result.tools as { name: string }[]).map((x) => x.name);
+  expect(names).not.toContain("rooms_list");
+  expect(names).not.toContain("room_state");
+  byDefault.stop();
+});
+
 // ---- slow consumers ----------------------------------------------------------------------------
 
 test("a socket whose frames the server drops (Bun: send() → 0 past the backpressure limit) is closed, not silently desynced", () => {

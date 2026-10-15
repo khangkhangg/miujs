@@ -1,4 +1,4 @@
-import { definePlugin, errors, processEnv, route, type CloudflareNeeds, type Context, type McpTool } from "miujs";
+import { definePlugin, errors, processEnv, route, type AuthRequirement, type CloudflareNeeds, type Context, type McpTool } from "miujs";
 import { CLIENT_JS, CLIENT_JS_HASH } from "./client-bundle.ts";
 import { systemClock, type Clock } from "./clock.ts";
 import { CODE_RE, KvCodeStore, MemoryCodeStore, allocateCode, createCode, type CodeStore, type CodeTarget, type KvLike } from "./codes.ts";
@@ -41,6 +41,14 @@ export interface RoomsOptions {
    * needs a signed-in user with the `admin` role. `"public"`: anyone who can reach /mcp.
    */
   mcpAccess?: "admin" | "public";
+  /**
+   * Who may call `rooms_list` / `room_state`, as a route's `auth` ("required", { role }, false).
+   * Overrides `mcpAccess` ("admin" = { role: "admin" }, "public" = false). Enforced by /mcp,
+   * which also hides the tools from callers who may not use them.
+   */
+  mcpAuth?: AuthRequirement;
+  /** A permission the operator tools also require (checked with `ctx.authorize`, @miujs/access). */
+  mcpPermission?: string;
   /** Dispose local rooms after they stay empty this long. Default 30 000 ms. */
   emptyMs?: number;
   clock?: Clock;
@@ -279,21 +287,19 @@ function roomsPlugin(opts: RoomsOptions) {
     },
   });
 
-  const mcpAccess = opts.mcpAccess ?? "admin";
-  /** Operator tools: refuse callers without the admin role (unless opened with mcpAccess: "public"). */
-  const operator = (ctx: Context) => {
-    if (mcpAccess === "public") return;
-    const user = (ctx as { user?: { roles?: unknown } }).user;
-    if (!user) throw errors.unauthorized("Sign in as an operator to inspect rooms", "rooms_list and room_state need a user with the admin role (or rooms({ mcpAccess: \"public\" })).");
-    if (!Array.isArray(user.roles) || !user.roles.includes("admin")) throw errors.forbidden("Only operators (role admin) can inspect rooms", "Call it as a user with the admin role, or open the tools with rooms({ mcpAccess: \"public\" }).");
+  // Operator tools: they list every room id (which bypasses join codes) and show raw state (which
+  // bypasses `view`). /mcp enforces this access, as it does for routes, and hides them from others.
+  const operator: Pick<McpTool, "auth" | "permission"> = {
+    auth: opts.mcpAuth ?? (opts.mcpAccess === "public" ? false : { role: "admin" }),
+    permission: opts.mcpPermission,
   };
   const tools: McpTool[] = [
     {
+      ...operator,
       name: "rooms_list",
       description: "List active realtime rooms with player counts.",
       inputSchema: { type: "object", properties: {} },
       call: (_args, ctx) => {
-        operator(ctx);
         if (namespace(ctx, binding)) {
           return { rooms: [], note: "On Cloudflare each room is a Durable Object; use room_state with a known type and id." };
         }
@@ -301,6 +307,7 @@ function roomsPlugin(opts: RoomsOptions) {
       },
     },
     {
+      ...operator,
       name: "room_state",
       description: "Show a realtime room's current state and players (secret state is never shown).",
       inputSchema: {
@@ -309,7 +316,6 @@ function roomsPlugin(opts: RoomsOptions) {
         required: ["type", "id"],
       },
       call: async (args, ctx) => {
-        operator(ctx);
         const type = String(args.type ?? "");
         const id = String(args.id ?? "");
         checkRoute(registry, type, id, known);

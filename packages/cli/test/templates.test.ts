@@ -170,6 +170,34 @@ describe("generated apps end to end", () => {
     expect(JSON.stringify(runs.json)).toContain("contact-follow-up");
   }, 30_000);
 
+  test("quiz-game: only the creator's hostKey hosts, no create-on-join, games per IP are rate limited", async () => {
+    const { app } = await generate("quiz-game");
+    const call = client(app);
+    const game = await call("POST", "/api/games");
+    expect(game.status).toBe(200);
+    expect(game.json.hostKey).toEqual(expect.any(String));
+    // A made-up room id is not created by connecting to it.
+    expect((await app.fetch(new Request("http://localhost/rooms/quiz/madeup123?name=Eve", { headers: { upgrade: "websocket" } }))).status).toBe(404);
+    const s = await app.listen(0);
+    try {
+      const url = s.url.replace("http", "ws") + `rooms/quiz/${game.json.id}`;
+      // Joining first (even asking for host) does not make you host; the creator's key does.
+      const eve = connect(url, { name: "Eve", role: "host", reconnect: false });
+      await eve.ready.catch(() => {});
+      expect(eve.me?.role).not.toBe("host");
+      eve.close();
+      const host = connect(url, { name: "Host", role: "host", hostKey: game.json.hostKey, reconnect: false });
+      await host.ready;
+      expect(host.me?.role).toBe("host");
+      host.close();
+    } finally {
+      await s.stop();
+    }
+    const statuses: number[] = [];
+    for (let i = 0; i < 40; i++) statuses.push((await call("POST", "/api/games")).status);
+    expect(statuses).toContain(429);
+  }, 30_000);
+
   test("chat and game rooms work over real WebSockets", async () => {
     const chat = await generate("chat");
     const game = await generate("game");

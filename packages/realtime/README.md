@@ -213,7 +213,9 @@ Persistence is coalesced and split:
 | `codeTtlMs` | `number` | `21600000` (6 h) | How long a join code stays valid. |
 | `codeLookups` | `{ perMinute?, burst? }` | `{ perMinute: 30, burst: 10 }` | Per-IP limit on wrong join codes (only misses count, so a classroom behind one NAT can all look up the real code). |
 | `maxConnectionsPerIp` | `number` | `1000` | Open room sockets per client IP (Bun/Deno/Node); more get `429 MIU_E_ROOM_TOO_MANY_CONNECTIONS`. |
-| `mcpAccess` | `"admin" | "public"` | `"admin"` | Who may call the MCP tools `rooms_list` / `room_state` (they list every room id and show raw state, bypassing join codes and `view`). |
+| `mcpAuth` | `AuthRequirement` | `{ role: "admin" }` | Who may call the MCP tools `rooms_list` / `room_state` (they list every room id and show raw state, bypassing join codes and `view`). Set on the tools as `auth`: `/mcp` enforces it and hides them from other callers. |
+| `mcpPermission` | `string` | none | A permission the operator tools also require (`ctx.authorize`, `@miujs/access`). |
+| `mcpAccess` | `"admin" | "public"` | `"admin"` | Older alias for `mcpAuth`: `"admin"` = `{ role: "admin" }`, `"public"` = `false`. |
 | `emptyMs` | `number` | `30000` | Dispose local rooms after they stay empty this long. |
 | `clock` | `Clock` | `systemClock` | Time source (`FakeClock` in tests). |
 

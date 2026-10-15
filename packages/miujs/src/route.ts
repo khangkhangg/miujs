@@ -107,3 +107,8 @@ export const route = {
 export function isRoute(v: unknown): v is RouteDef {
   return typeof v === "object" && v !== null && (v as RouteDef).__miu === "route";
 }
+
+/** A valid `auth` value. Anything else (`true`, a typo, `{ roles }`) must fail closed, never mean public. */
+export function isAuthRequirement(auth: unknown): auth is AuthRequirement {
+  return auth === false || auth === "optional" || auth === "required" || (typeof auth === "object" && auth !== null && Object.hasOwn(auth, "role"));
+}

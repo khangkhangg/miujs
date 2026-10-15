@@ -123,7 +123,7 @@ const res = await app.fetch(new Request("http://localhost/"));
 console.log(res.headers.get("server-timing"));
 ```
 
-Plugin hooks: `setup(app)`, `routes`, `onRequest`, `onResponse`, `onError`, `mcpTools()`, `inspect()`, `cloudflare()`. In `setup`, plugins can call `app.add(...)`, `app.on("queue" | "scheduled", fn)` and `app.provide(name, value)`; code outside requests reads services with `app.service(name)`. Add typed context fields with `declare module "miujs" { interface Context { ... } }`, and typed per-route options with `declare module "miujs" { interface RouteExtensions { myOption?: ... } }`: routes then accept `myOption`, and hooks read it from `ctx.route.config.myOption` (the route's own config object; absent on internal `/_miu/*` and MCP routes).
+Plugin hooks: `setup(app)`, `routes`, `onRequest`, `onResponse`, `onError`, `mcpTools()`, `inspect()`, `cloudflare()`. In `setup`, plugins can call `app.add(...)`, `app.on("queue" | "scheduled", fn)` and `app.provide(name, value)`; code outside requests reads services with `app.service(name)`. Add typed context fields with `declare module "miujs" { interface Context { ... } }`, and typed per-route options with `declare module "miujs" { interface RouteExtensions { myOption?: ... } }`: routes then accept `myOption`, and hooks read it from `ctx.route.config.myOption` (the route's own config object; absent on internal `/_miu/*` and MCP routes). A plugin MCP tool can declare `auth` and `permission` like a route: `/mcp` refuses other callers (401/403 tool errors) and leaves the tool out of their `tools/list`.
 
 ## MCP, OpenAPI and inspect
 
@@ -191,6 +191,7 @@ await server.stop();
 | `logRequests` | `boolean` | `false` | One log line per request. |
 | `maxBodySize` | `number` | `10485760` (10 MiB) | Largest request body in bytes. Routes can override. |
 | `trustProxy` | `{ header: string; hops?: number }` | none | Your reverse proxy's header, so `ctx.ip` is the real client. |
+| `websocket` | `{ maxPayloadLength?: number; backpressureLimit?: number }` | 1 MiB each | WebSocket limits in bytes: largest client message (bigger closes the socket), and most bytes buffered for a client that stops reading before it is closed (1013). Bun enforces both; Deno and Workers check message size. |
 
 ## Errors
 

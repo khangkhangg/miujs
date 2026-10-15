@@ -275,9 +275,22 @@ sustained load over real HTTP and WebSockets on Bun, Node and Deno.
 - **OAuth and passkeys:** provider sign-in links only to accounts whose email is verified, never
   taking over an existing account; signed-in users link and unlink providers explicitly. Passkeys
   use single-use server-side challenges and sign-counter clone detection.
-- **Password reset** signs out other sessions and revokes API tokens.
-- **API tokens:** shown once and stored as SHA-256 hashes. Passwords use argon2id on Bun, otherwise
-  PBKDF2 (600k iterations). Legacy bcrypt and Django hashes are upgraded on the next login.
+- **Password reset** signs out other sessions, revokes API tokens, and removes passkeys and OAuth
+  links, so whoever took over the account keeps no way back in.
+- **API tokens:** created only from a signed-in browser session (a token cannot mint more tokens),
+  shown once and stored as SHA-256 hashes. Passwords use argon2id on Bun, otherwise PBKDF2 (600k
+  iterations). Legacy bcrypt and Django hashes are upgraded on the next login.
+- **WebSockets:** a cross-origin handshake that carries cookies is refused (403
+  `MIU_E_WS_ORIGIN`); list other sites with `ctx.upgrade({ origins: [...] })`. Client messages
+  are capped at 1 MiB and a client that stops reading is closed once 1 MiB waits for it:
+  `miu({ websocket: { maxPayloadLength, backpressureLimit } })`. Bun enforces both; Deno and
+  Workers check message size per message; the Node adapter has no WebSockets.
+- **MCP:** browser calls to `/mcp` from a non-loopback origin need `mcp: { allowedOrigins }`
+  (DNS rebinding). Route tools keep their route's `auth` and `permission`; plugin tools declare
+  `auth` / `permission` the same way, and `tools/list` shows each caller only what they may call.
+- **Realtime rooms:** with `requireHostKey` only the key from `createRoom()` makes a host;
+  `createOnJoin: false` means a random room URL is a 404, not a new room; `maxPlayers`,
+  `maxMembers` (default 5000) and `maxConnectionsPerIp` (default 1000) cap rooms and clients.
 
 ## Roadmap
 

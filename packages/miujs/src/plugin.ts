@@ -1,6 +1,6 @@
 import type { App } from "./app.ts";
 import type { Context } from "./context.ts";
-import type { RouteDef } from "./route.ts";
+import type { AuthRequirement, RouteDef } from "./route.ts";
 import type { ManageSection } from "./manage.ts";
 import type { JsonSchema } from "./schema.ts";
 
@@ -12,6 +12,14 @@ export interface McpTool {
   description?: string;
   inputSchema: JsonSchema;
   outputSchema?: JsonSchema;
+  /**
+   * Who may call the tool, as on a route: "required", { role: "admin" }, "optional" or false
+   * (default: anyone who can reach /mcp). Refused calls return a 401/403 tool error without
+   * running `call`, and tools/list hides the tool from callers who may not use it.
+   */
+  auth?: AuthRequirement;
+  /** Checked with `ctx.authorize(permission)` (an access plugin) before `call` runs, as on a route. */
+  permission?: string;
   call(args: Record<string, unknown>, ctx: Context): MaybePromise<unknown>;
 }
 
