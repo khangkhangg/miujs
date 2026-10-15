@@ -80,3 +80,12 @@ describe("notes API", () => {
     expect(app.inspect().mcp?.tools).toEqual(expect.arrayContaining(["listNotes", "createNote", "getNote", "deleteNote"]));
   });
 });
+
+test("the note-created job keeps only a bounded list of recent titles", async () => {
+  const { call, jobs } = setup();
+  await call("/auth/register", { method: "POST", body: { email: "bulk@example.com", password: "password-bulk" } });
+  for (let i = 0; i < 150; i++) await call("/notes", { method: "POST", body: { title: `n${i}` } });
+  await jobs.adapter.drain();
+  expect(jobs.ranFor.length).toBe(100);
+  expect(jobs.ranFor.at(-1)).toBe("n149");
+});

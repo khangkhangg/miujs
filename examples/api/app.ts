@@ -53,11 +53,14 @@ export function createApp(opts: CreateAppOptions = {}) {
   const source: DatabaseSource = targetRuntime() === "workerd" ? d1("DB") : sqlite(opts.dbPath ?? processEnv().DB_PATH ?? ":memory:");
 
   // A job that runs after a note is created (e.g. indexing or notifications).
+  // Recent titles, for tests and demos. Capped: an in-memory list that only grows is a leak.
   const ranFor: string[] = [];
+  const RECENT = 100;
   const noteCreated = defineJob("note-created", {
     input: t.object({ noteId: t.string(), title: t.string() }),
     run: async ({ input, log }) => {
       ranFor.push(input.title);
+      if (ranFor.length > RECENT) ranFor.splice(0, ranFor.length - RECENT);
       log.info("note created", { noteId: input.noteId });
     },
   });
