@@ -20,7 +20,17 @@ export type HandlerContext<P, Q, B, A> = Omit<Context, "params" | "query" | "bod
   body: InferOr<B, undefined>;
 } & UserFor<A>;
 
-export interface RouteConfig<P, Q, B, R, A> {
+/**
+ * Route options added by plugins. Augment it to give a plugin a typed per-route option, and read
+ * it in hooks from `ctx.route.config`:
+ *
+ * ```ts
+ * declare module "miujs" { interface RouteExtensions { bots?: false | BotsRouteOptions } }
+ * ```
+ */
+export interface RouteExtensions {}
+
+export interface RouteConfig<P, Q, B, R, A> extends RouteExtensions {
   /** Stable identifier used for the MCP tool name and OpenAPI operationId. Defaults to the export name. */
   name?: string;
   /** One line describing what the route does. Shown to agents as the tool description. */

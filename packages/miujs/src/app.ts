@@ -453,7 +453,7 @@ export class App {
       return validated(ctx);
     };
 
-    const info: RouteInfo = { name, method: def.method, path, auth, tags: cfg.tags ?? [] };
+    const info: RouteInfo = { name, method: def.method, path, auth, tags: cfg.tags ?? [], config: cfg };
     return { name, method: def.method, path, def, info, run };
   }
 

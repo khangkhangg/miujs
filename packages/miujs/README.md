@@ -123,7 +123,7 @@ const res = await app.fetch(new Request("http://localhost/"));
 console.log(res.headers.get("server-timing"));
 ```
 
-Plugin hooks: `setup(app)`, `routes`, `onRequest`, `onResponse`, `onError`, `mcpTools()`, `inspect()`, `cloudflare()`. In `setup`, plugins can call `app.add(...)`, `app.on("queue" | "scheduled", fn)` and `app.provide(name, value)`; code outside requests reads services with `app.service(name)`. Add typed context fields with `declare module "miujs" { interface Context { ... } }`.
+Plugin hooks: `setup(app)`, `routes`, `onRequest`, `onResponse`, `onError`, `mcpTools()`, `inspect()`, `cloudflare()`. In `setup`, plugins can call `app.add(...)`, `app.on("queue" | "scheduled", fn)` and `app.provide(name, value)`; code outside requests reads services with `app.service(name)`. Add typed context fields with `declare module "miujs" { interface Context { ... } }`, and typed per-route options with `declare module "miujs" { interface RouteExtensions { myOption?: ... } }`: routes then accept `myOption`, and hooks read it from `ctx.route.config.myOption` (the route's own config object; absent on internal `/_miu/*` and MCP routes).
 
 ## MCP, OpenAPI and inspect
 

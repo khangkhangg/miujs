@@ -1,5 +1,6 @@
 import { parseCookies, serializeCookie, type CookieOptions, type Cookies } from "./cookies.ts";
 import type { Logger } from "./logger.ts";
+import type { RouteConfig } from "./route.ts";
 import type { Runtime } from "./runtime.ts";
 import type { WebSocketHandlers } from "./websocket.ts";
 
@@ -40,6 +41,11 @@ export interface RouteInfo {
   path: string;
   auth: unknown;
   tags: string[];
+  /**
+   * The route's own config object (not a copy), including plugin options from RouteExtensions.
+   * Absent on MiuJS's internal routes (`/_miu/*`, MCP).
+   */
+  readonly config?: Readonly<RouteConfig<any, any, any, any, any>>;
 }
 
 /**

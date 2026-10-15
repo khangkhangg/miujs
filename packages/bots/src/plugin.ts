@@ -13,6 +13,13 @@ declare module "miujs" {
     /** Who is asking, and what they get. Set by `bots()` from @miujs/bots. */
     visitor: Visitor;
   }
+  interface RouteExtensions {
+    /**
+     * @miujs/bots settings for this route; `false` exempts it (every visitor gets full access).
+     * Wins over a matching `bots({ routes })` entry.
+     */
+    bots?: false | BotsRouteOptions;
+  }
 }
 
 type MaybePromise<T> = T | Promise<T>;
@@ -23,10 +30,8 @@ export interface BotRule {
   action: Access;
 }
 
-/** Per-route settings, matched like @miujs/ratelimit rules. The first matching entry applies. */
-export interface BotRouteRule {
-  /** All given keys must match; a list matches any entry. `path`: `/api/*` is the path and everything below. */
-  match: { route?: OneOrMany; path?: OneOrMany; method?: OneOrMany; tag?: OneOrMany };
+/** Per-route settings: the `bots` route option, or a `bots({ routes })` entry. */
+export interface BotsRouteOptions {
   /** Overrides the plugin policy for these routes, by kind. */
   policy?: Partial<Record<VisitorKind, Access>>;
   /** Every visitor gets full access (the route is outside bot handling). */
@@ -35,6 +40,12 @@ export interface BotRouteRule {
   partial?: string[] | ((data: unknown, ctx: Context) => unknown);
   /** Seconds a response stays fresh in the bot cache. Default: the plugin's `cache.ttl`. */
   ttl?: number;
+}
+
+/** Per-route settings matched like @miujs/ratelimit rules. The first matching entry applies. */
+export interface BotRouteRule extends BotsRouteOptions {
+  /** All given keys must match; a list matches any entry. `path`: `/api/*` is the path and everything below. */
+  match: { route?: OneOrMany; path?: OneOrMany; method?: OneOrMany; tag?: OneOrMany };
 }
 
 /** A @miujs/ratelimit `limiter()` (structural, so there is no dependency). */
@@ -98,7 +109,7 @@ export interface BotsOptions {
   /** Status for blocked requests. Default 403. */
   blockStatus?: 403 | 404 | 410 | 429 | 451;
   /** Default partial for routes without one. */
-  partial?: BotRouteRule["partial"];
+  partial?: BotsRouteOptions["partial"];
   /** Bot cache settings, or false to never cache (cached visitors then reach handlers). */
   cache?: BotsCacheOptions | false;
   /** Serve GET /robots.txt. `true` = `{ disallowAI: true }`. */
@@ -123,6 +134,7 @@ const ACTIONS: readonly Access[] = ["full", "partial", "cached", "block"];
 const DEFAULT_POLICY: Record<VisitorKind, Access> = { human: "full", search: "cached", ai: "cached", bot: "cached", unknown: "cached" };
 const BLOCK_STATUSES = new Set([403, 404, 410, 429, 451]);
 const MATCH_KEYS = new Set(["route", "path", "method", "tag"]);
+const MATCH_ONLY = new Set(["match"]);
 const COUNTRY = /^(?:[A-Z]{2}|T1)$/;
 const REVALIDATE_HEADER = "x-miu-bots-revalidate";
 const ROBOTS_ROUTE = "bots_robots_txt";
@@ -190,12 +202,34 @@ interface CompiledRoute extends BotRouteRule {
   matches(ctx: Context): boolean;
 }
 
+const ROUTE_OPTION_KEYS = new Set(["policy", "exempt", "partial", "ttl"]);
+
+function checkRouteOptions(r: BotsRouteOptions, where: string, extra: Set<string> | null): void {
+  for (const k of Object.keys(r)) if (!ROUTE_OPTION_KEYS.has(k) && !extra?.has(k)) throw cfg(`${where}: unknown option ${JSON.stringify(k)}`, `Use ${[...ROUTE_OPTION_KEYS].join(", ")}.`);
+  checkPolicy(r.policy, `${where}.policy`);
+  checkSeconds(r.ttl, `${where}.ttl`);
+  if (r.exempt !== undefined && typeof r.exempt !== "boolean") throw cfg(`${where}.exempt must be true or false`, "E.g. exempt: true.");
+  if (r.partial !== undefined && typeof r.partial !== "function" && !(Array.isArray(r.partial) && r.partial.every((f) => typeof f === "string"))) {
+    throw cfg(`${where}.partial must be a list of field names or a function`, 'E.g. partial: ["id", "title"].');
+  }
+}
+
+const EXEMPT: BotsRouteOptions = Object.freeze({ exempt: true });
+
+/** The `bots` route option, checked. `false` is exempt. */
+function compileRouteOption(o: unknown, route: string): BotsRouteOptions {
+  const where = `route "${route}" option bots`;
+  if (o === false) return EXEMPT;
+  if (!o || typeof o !== "object") throw cfg(`${where} must be false or an object`, 'E.g. bots: { policy: { ai: "block" } }, or bots: false to exempt the route.');
+  checkRouteOptions(o as BotsRouteOptions, where, null);
+  return o as BotsRouteOptions;
+}
+
 function compileRoute(r: BotRouteRule, i: number): CompiledRoute {
   const where = `bots routes[${i}]`;
   if (!r || typeof r !== "object" || !r.match || typeof r.match !== "object") throw cfg(`${where} needs a match`, 'E.g. { match: { route: "get_post" }, policy: { ai: "block" } }.');
   for (const k of Object.keys(r.match)) if (!MATCH_KEYS.has(k)) throw cfg(`${where}: unknown match key ${JSON.stringify(k)}`, "Match by route, path, method or tag.");
-  checkPolicy(r.policy, `${where}.policy`);
-  checkSeconds(r.ttl, `${where}.ttl`);
+  checkRouteOptions(r, where, MATCH_ONLY);
   const routes = list(r.match.route, `${where}.match.route`);
   const methods = list(r.match.method, `${where}.match.method`)?.map((m) => m.toUpperCase());
   const tags = list(r.match.tag, `${where}.match.tag`);
@@ -270,7 +304,7 @@ function deferred(): Deferred {
 
 /** Per-request bookkeeping, kept in ctx.state only for partial or cacheable requests. */
 interface State {
-  rule: CompiledRoute | undefined;
+  rule: BotsRouteOptions | undefined;
   key?: string;
   leader?: Deferred;
   /** The handler set a cookie: never store. */
@@ -371,7 +405,20 @@ export function bots(opts: BotsOptions = {}) {
     return name !== undefined && (name.startsWith("_miu") || name === ROBOTS_ROUTE);
   };
 
-  function decide(v: Visitor, ctx: Context, rule: CompiledRoute | undefined): Access {
+  // Checked route options, by the route's own config object (compiled once per route).
+  const fromRoute = new WeakMap<object, BotsRouteOptions>();
+  /** The route's `bots` option, else the first matching `routes` entry. */
+  function ruleFor(ctx: Context): BotsRouteOptions | undefined {
+    const config = ctx.route?.config;
+    if (config !== undefined && config.bots !== undefined) {
+      let r = fromRoute.get(config);
+      if (r === undefined) fromRoute.set(config, (r = compileRouteOption(config.bots, ctx.route!.name)));
+      return r;
+    }
+    return routeRules.length ? routeRules.find((r) => r.matches(ctx)) : undefined;
+  }
+
+  function decide(v: Visitor, ctx: Context, rule: BotsRouteOptions | undefined): Access {
     if (rule?.exempt) return "full";
     for (const r of rules) if (r.when(v, ctx)) return r.action;
     if (v.country !== undefined) {
@@ -459,7 +506,7 @@ export function bots(opts: BotsOptions = {}) {
       if (reval) {
         revalidations.delete(revId!);
         ctx.visitor = reval.visitor;
-        const st: State = { rule: routeRules.find((r) => r.matches(ctx)), key: reval.key };
+        const st: State = { rule: ruleFor(ctx), key: reval.key };
         if (!inflight.has(reval.key)) {
           st.leader = deferred();
           inflight.set(reval.key, st.leader.promise);
@@ -481,7 +528,7 @@ export function bots(opts: BotsOptions = {}) {
         counters.actions.full++;
         return;
       }
-      const rule = routeRules.length ? routeRules.find((r) => r.matches(ctx)) : undefined;
+      const rule = ruleFor(ctx);
       const action = decide(v, ctx, rule);
       v.access = action;
       counters.actions[action]++;
@@ -658,7 +705,7 @@ function watchCookies(ctx: Context, st: State): void {
   };
 }
 
-async function trim(res: Response, partial: NonNullable<BotRouteRule["partial"]>, ctx: Context): Promise<Response> {
+async function trim(res: Response, partial: NonNullable<BotsRouteOptions["partial"]>, ctx: Context): Promise<Response> {
   const text = await res.text();
   let data: unknown;
   try {

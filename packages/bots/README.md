@@ -129,7 +129,31 @@ miu({
 });
 ```
 
-Partial GET responses are cached too, under a key separate from `cached` ones. Route rules match like `@miujs/ratelimit` rules (`route`, `path`, `method`, `tag`; `/blog/*` is the path and everything below); the first match applies. A route rule can also set `policy` (e.g. `{ ai: "block" }` on one route), `exempt: true` (full access for everyone) and `ttl`.
+Partial GET responses are cached too, under a key separate from `cached` ones.
+
+### Per-route settings
+
+Set them on the route with the typed `bots` option (`false` exempts the route), or from the plugin with `routes` entries:
+
+<!-- test -->
+```ts
+import { miu, route } from "miujs";
+import { bots } from "@miujs/bots";
+
+export const members = route.get("/members", {
+  bots: { policy: { ai: "block", bot: "block" } },
+  handler: () => ({ members: [] }),
+});
+export const status = route.get("/status", { bots: false, handler: () => ({ up: true }) });
+export const card = route.get("/cards/:id", {
+  bots: { policy: { bot: "partial" }, partial: ["id", "title"], ttl: 600 },
+  handler: ({ params }) => ({ id: params.id, title: "Card", body: "..." }),
+});
+
+miu({ routes: [members, status, card], plugins: [bots({ routes: [{ match: { path: "/admin/*" }, policy: { ai: "block" } }] })] });
+```
+
+The route option takes `policy`, `exempt`, `partial` and `ttl`, and wins over any matching `routes` entry. An invalid one fails that route's requests with `MIU_E_BOTS_CONFIG`. Route rules match like `@miujs/ratelimit` rules (`route`, `path`, `method`, `tag`; `/blog/*` is the path and everything below); the first match applies. A route rule can also set `policy` (e.g. `{ ai: "block" }` on one route), `exempt: true` (full access for everyone) and `ttl`.
 
 ## Per-country rules
 
@@ -200,7 +224,7 @@ On Workers without `cache.store`, the plugin uses `ctx.cache` when `@miujs/cache
 | `rules` | `{ when(visitor, ctx), action }[]` | `[]` | Checked first; first match decides. |
 | `blockCountries` | `string[]` | none | Countries that are blocked. |
 | `allowCountries` | `string[]` | none | Only these countries (unknown country passes). |
-| `routes` | `BotRouteRule[]` | `[]` | Per-route `policy`, `exempt`, `partial`, `ttl`. |
+| `routes` | `BotRouteRule[]` | `[]` | Per-route `policy`, `exempt`, `partial`, `ttl` by `match`; the route's own `bots` option wins. |
 | `partial` | `string[] \| (data, ctx) => unknown` | none | Default trimming for partial visitors. |
 | `agents` | `AgentEntry[]` | `AGENTS` | Known agents: `{ token, kind, name? }`. |
 | `trustCloudflare` | `boolean` | `false` | Read `cf-*` headers off Workers. Only when all traffic comes through Cloudflare. |

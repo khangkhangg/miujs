@@ -510,3 +510,53 @@ describe("options and inspect", () => {
     expect(plugin.cloudflare()).toEqual({});
   });
 });
+
+describe("the bots route option", () => {
+  function app(extra: Partial<BotsOptions> = {}) {
+    let runs = 0;
+    const a = miu({
+      logLevel: "silent",
+      dev: false,
+      plugins: [bots({ cache: { store: memoryBotStore() }, ...extra })],
+      routes: [
+        route.get("/members", { bots: { policy: { ai: "block", bot: "block" } }, handler: () => (runs++, { ok: true }) }),
+        route.get("/live", { bots: false, handler: () => (runs++, { ok: true }) }),
+        route.get("/card/:id", { bots: { policy: { bot: "partial" }, partial: ["id", "title"] }, handler: (ctx) => (runs++, { id: ctx.params.id, title: "T", body: "b" }) }),
+        route.get("/plain", { handler: () => (runs++, { ok: true }) }),
+      ],
+    });
+    return { a, runs: () => runs };
+  }
+
+  test("sets the policy for one route", async () => {
+    const { a } = app();
+    expect((await get(a, "/members", GPT)).status).toBe(403);
+    expect((await get(a, "/plain", GPT)).status).toBe(200);
+  });
+
+  test("false exempts the route: every visitor reaches the handler", async () => {
+    const { a, runs } = app();
+    await get(a, "/live", CURL);
+    await a.drain();
+    expect((await get(a, "/live", CURL)).headers.get("x-miu-bot-cache")).toBeNull();
+    expect(runs()).toBe(2);
+  });
+
+  test("partial fields come from the route", async () => {
+    const { a } = app();
+    expect((await get(a, "/card/3", CURL)).body).toEqual({ id: "3", title: "T" });
+  });
+
+  test("wins over a matching routes[] entry", async () => {
+    const { a } = app({ routes: [{ match: { path: "/members" }, exempt: true }, { match: { path: "/live" }, policy: { bot: "block" } }] });
+    expect((await get(a, "/members", CURL)).status).toBe(403);
+    expect((await get(a, "/live", CURL)).status).toBe(200);
+  });
+
+  test("an invalid route option fails with MIU_E_BOTS_CONFIG", async () => {
+    const a = miu({ logLevel: "silent", dev: false, plugins: [bots()], routes: [route.get("/x", { bots: { policy: { ai: "nope" as never } }, handler: () => "x" })] });
+    const r = await get(a, "/x", GPT);
+    expect(r.status).toBe(500);
+    expect(r.body.error.code).toBe("MIU_E_BOTS_CONFIG");
+  });
+});
