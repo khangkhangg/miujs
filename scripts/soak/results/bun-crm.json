@@ -1,0 +1,721 @@
+{
+  "app": "crm",
+  "runtime": "bun",
+  "durationS": 60,
+  "concurrency": 24,
+  "drivers": 0,
+  "requests": 79750,
+  "rps": 1329.1666666666667,
+  "p50": 13.600000000000001,
+  "p95": 34.800000000000004,
+  "p99": 52.7,
+  "max": 392.97529999999097,
+  "errors": 1574,
+  "errorKinds": {
+    "POST /admin/login: HTTP 429 <!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><": 1574
+  },
+  "expected": {},
+  "wsFramesInPerS": 0,
+  "ops": {
+    "POST /admin/login": {
+      "n": 150,
+      "perS": 2.5,
+      "p50": 115,
+      "p95": 324,
+      "p99": 393,
+      "max": 392.97529999999097
+    },
+    "GET /api/contacts?stage=": {
+      "n": 11202,
+      "perS": 186.7,
+      "p50": 11.9,
+      "p95": 23.1,
+      "p99": 32.6,
+      "max": 73.1351999999606
+    },
+    "GET /api/tasks": {
+      "n": 5329,
+      "perS": 88.81666666666666,
+      "p50": 11.9,
+      "p95": 22.900000000000002,
+      "p99": 31.700000000000003,
+      "max": 49.556699999957345
+    },
+    "GET /admin/r/deals?view=pipeline": {
+      "n": 7423,
+      "perS": 123.71666666666667,
+      "p50": 12.200000000000001,
+      "p95": 23.700000000000003,
+      "p99": 31.900000000000002,
+      "max": 73.35070000000997
+    },
+    "GET /api/contacts?q=": {
+      "n": 7579,
+      "perS": 126.31666666666666,
+      "p50": 13.3,
+      "p95": 26.6,
+      "p99": 37,
+      "max": 63.87299999996321
+    },
+    "GET /admin": {
+      "n": 6024,
+      "perS": 100.4,
+      "p50": 11.8,
+      "p95": 23.200000000000003,
+      "p99": 32.6,
+      "max": 65.32360000000335
+    },
+    "GET /admin/r/contacts": {
+      "n": 9026,
+      "perS": 150.43333333333334,
+      "p50": 12.8,
+      "p95": 24.1,
+      "p99": 33.2,
+      "max": 65.81170000002021
+    },
+    "POST /api/contacts": {
+      "n": 7400,
+      "perS": 123.33333333333333,
+      "p50": 23.1,
+      "p95": 49.1,
+      "p99": 64.60000000000001,
+      "max": 94.84820000000764
+    },
+    "GET /api/deals?sort=": {
+      "n": 5929,
+      "perS": 98.81666666666666,
+      "p50": 11.9,
+      "p95": 23.1,
+      "p99": 32.4,
+      "max": 64.09459999995306
+    },
+    "PATCH /api/contacts/:id": {
+      "n": 7354,
+      "perS": 122.56666666666666,
+      "p50": 22.900000000000002,
+      "p95": 49,
+      "p99": 63.900000000000006,
+      "max": 90.31489999999758
+    },
+    "GET /admin/r/contacts/:id": {
+      "n": 7369,
+      "perS": 122.81666666666666,
+      "p50": 12.3,
+      "p95": 23.6,
+      "p99": 33.7,
+      "max": 64.86170000000857
+    },
+    "DELETE /api/contacts/:id": {
+      "n": 4965,
+      "perS": 82.75,
+      "p50": 18.1,
+      "p95": 45.1,
+      "p99": 63.1,
+      "max": 96.44660000002477
+    }
+  },
+  "rss": {
+    "idleBeforeLoad": 63086592,
+    "start": 63090688,
+    "peak": 483463168,
+    "end": 161128448,
+    "settled": 156934144
+  },
+  "heap": {
+    "idleBeforeLoad": 5344233,
+    "afterWarmup": 11054354,
+    "warmupAtMs": 12023,
+    "end": 10704407,
+    "settled": 9801768,
+    "growth": -0.03165693807164127,
+    "settledGrowth": -0.11331155126749153
+  },
+  "objects": {
+    "afterWarmup": 46527,
+    "end": 50827,
+    "settled": 50341
+  },
+  "suspectedLeak": false,
+  "typeGrowthEnd": [
+    {
+      "type": "Object",
+      "before": 7159,
+      "after": 10467,
+      "delta": 3308
+    },
+    {
+      "type": "string",
+      "before": 8717,
+      "after": 10950,
+      "delta": 2233
+    },
+    {
+      "type": "SparseArrayValueMap",
+      "before": 266,
+      "after": 272,
+      "delta": 6
+    },
+    {
+      "type": "TemplateObjectDescriptor",
+      "before": 133,
+      "after": 135,
+      "delta": 2
+    },
+    {
+      "type": "SQLStatement",
+      "before": 57,
+      "after": 59,
+      "delta": 2
+    },
+    {
+      "type": "FunctionRareData",
+      "before": 41,
+      "after": 42,
+      "delta": 1
+    },
+    {
+      "type": "StructureChain",
+      "before": 39,
+      "after": 40,
+      "delta": 1
+    },
+    {
+      "type": "Timeout",
+      "before": 2,
+      "after": 1,
+      "delta": -1
+    },
+    {
+      "type": "Headers",
+      "before": 6,
+      "after": 4,
+      "delta": -2
+    },
+    {
+      "type": "URL",
+      "before": 5,
+      "after": 3,
+      "delta": -2
+    },
+    {
+      "type": "Request",
+      "before": 4,
+      "after": 2,
+      "delta": -2
+    },
+    {
+      "type": "NativePromiseContext",
+      "before": 2,
+      "after": 0,
+      "delta": -2
+    }
+  ],
+  "typeGrowthSettled": [
+    {
+      "type": "Object",
+      "before": 7159,
+      "after": 10467,
+      "delta": 3308
+    },
+    {
+      "type": "string",
+      "before": 8717,
+      "after": 10855,
+      "delta": 2138
+    },
+    {
+      "type": "SparseArrayValueMap",
+      "before": 266,
+      "after": 272,
+      "delta": 6
+    },
+    {
+      "type": "SQLStatement",
+      "before": 57,
+      "after": 59,
+      "delta": 2
+    },
+    {
+      "type": "FunctionRareData",
+      "before": 41,
+      "after": 42,
+      "delta": 1
+    },
+    {
+      "type": "StructureChain",
+      "before": 39,
+      "after": 40,
+      "delta": 1
+    },
+    {
+      "type": "Timeout",
+      "before": 2,
+      "after": 1,
+      "delta": -1
+    },
+    {
+      "type": "Headers",
+      "before": 6,
+      "after": 4,
+      "delta": -2
+    },
+    {
+      "type": "URL",
+      "before": 5,
+      "after": 3,
+      "delta": -2
+    },
+    {
+      "type": "Request",
+      "before": 4,
+      "after": 2,
+      "delta": -2
+    },
+    {
+      "type": "NativePromiseContext",
+      "before": 2,
+      "after": 0,
+      "delta": -2
+    },
+    {
+      "type": "AsyncFunction",
+      "before": 534,
+      "after": 530,
+      "delta": -4
+    }
+  ],
+  "extras": {
+    "inflight": 0,
+    "maxInflight": 24,
+    "served": 81324,
+    "rooms": null,
+    "orgId": "61b14a58-c8d5-4632-b25f-37e854154c5c"
+  },
+  "settledExtras": {
+    "rooms": null,
+    "settleS": 5
+  },
+  "codeState": {
+    "head": "7df5ae6",
+    "dirtyPackages": " 14 files changed, 338 insertions(+), 73 deletions(-)",
+    "at": "2026-10-15T11:19:51.428Z"
+  },
+  "stuck": {
+    "midBodyAborts": 200,
+    "fetchAborts": 200,
+    "inflightAfter": 0,
+    "serverAnswersAfter": 200,
+    "servedDelta": 225
+  },
+  "shutdownAfterLoad": {
+    "exited": true,
+    "ms": 18.442500000004657,
+    "code": 0,
+    "eventualExitMs": 18.442500000004657
+  },
+  "stderrTail": [
+    "{\"level\":\"warn\",\"time\":\"2026-10-15T11:19:42.906Z\",\"msg\":\"auth rate limit hit\",\"app\":\"crm\",\"requestId\":\"mv9g5dmi-gfe\",\"method\":\"POST\",\"path\":\"/auth/login\",\"route\":\"auth_login\",\"ip\":\"10.0.18.11\"}",
+    "{\"level\":\"warn\",\"time\":\"2026-10-15T11:19:42.908Z\",\"msg\":\"auth rate limit hit\",\"app\":\"crm\",\"requestId\":\"mv9g5dmk-gff\",\"method\":\"POST\",\"path\":\"/auth/login\",\"route\":\"auth_login\",\"ip\":\"10.0.18.12\"}",
+    "{\"level\":\"warn\",\"time\":\"2026-10-15T11:19:42.909Z\",\"msg\":\"auth rate limit hit\",\"app\":\"crm\",\"requestId\":\"mv9g5dml-gfg\",\"method\":\"POST\",\"path\":\"/auth/login\",\"route\":\"auth_login\",\"ip\":\"10.0.18.13\"}",
+    "{\"level\":\"warn\",\"time\":\"2026-10-15T11:19:42.910Z\",\"msg\":\"auth rate limit hit\",\"app\":\"crm\",\"requestId\":\"mv9g5dmm-gfh\",\"method\":\"POST\",\"path\":\"/auth/login\",\"route\":\"auth_login\",\"ip\":\"10.0.18.14\"}",
+    "STOPPED 0"
+  ],
+  "samples": [
+    {
+      "t": 6,
+      "rss": 63090688,
+      "heap": 5344713,
+      "inflight": 0
+    },
+    {
+      "t": 1024,
+      "rss": 104050688,
+      "heap": 12858027,
+      "inflight": 0
+    },
+    {
+      "t": 2042,
+      "rss": 108924928,
+      "heap": 16759767,
+      "inflight": 5
+    },
+    {
+      "t": 3061,
+      "rss": 113848320,
+      "heap": 16422629,
+      "inflight": 0
+    },
+    {
+      "t": 4081,
+      "rss": 113446912,
+      "heap": 16831132,
+      "inflight": 4
+    },
+    {
+      "t": 5096,
+      "rss": 117850112,
+      "heap": 16563912,
+      "inflight": 8
+    },
+    {
+      "t": 6110,
+      "rss": 122036224,
+      "heap": 15170683,
+      "inflight": 1
+    },
+    {
+      "t": 7124,
+      "rss": 191836160,
+      "heap": 12719815,
+      "inflight": 13
+    },
+    {
+      "t": 8150,
+      "rss": 125452288,
+      "heap": 20973903,
+      "inflight": 3
+    },
+    {
+      "t": 9173,
+      "rss": 126734336,
+      "heap": 18727692,
+      "inflight": 2
+    },
+    {
+      "t": 10190,
+      "rss": 129007616,
+      "heap": 15168165,
+      "inflight": 1
+    },
+    {
+      "t": 11208,
+      "rss": 129941504,
+      "heap": 11809075,
+      "inflight": 1
+    },
+    {
+      "t": 12224,
+      "rss": 123527168,
+      "heap": 12602852,
+      "inflight": 0
+    },
+    {
+      "t": 13254,
+      "rss": 401014784,
+      "heap": 19753765,
+      "inflight": 7
+    },
+    {
+      "t": 14275,
+      "rss": 133890048,
+      "heap": 15854041,
+      "inflight": 1
+    },
+    {
+      "t": 15293,
+      "rss": 406847488,
+      "heap": 12129616,
+      "inflight": 4
+    },
+    {
+      "t": 16311,
+      "rss": 138137600,
+      "heap": 18515157,
+      "inflight": 1
+    },
+    {
+      "t": 17332,
+      "rss": 142553088,
+      "heap": 16436095,
+      "inflight": 3
+    },
+    {
+      "t": 18356,
+      "rss": 143032320,
+      "heap": 15287984,
+      "inflight": 6
+    },
+    {
+      "t": 19370,
+      "rss": 141488128,
+      "heap": 13290668,
+      "inflight": 6
+    },
+    {
+      "t": 20385,
+      "rss": 345645056,
+      "heap": 11218491,
+      "inflight": 8
+    },
+    {
+      "t": 21405,
+      "rss": 145174528,
+      "heap": 19062714,
+      "inflight": 5
+    },
+    {
+      "t": 22424,
+      "rss": 146726912,
+      "heap": 17794996,
+      "inflight": 8
+    },
+    {
+      "t": 23438,
+      "rss": 215117824,
+      "heap": 14607115,
+      "inflight": 10
+    },
+    {
+      "t": 24462,
+      "rss": 483463168,
+      "heap": 12609492,
+      "inflight": 12
+    },
+    {
+      "t": 25480,
+      "rss": 148598784,
+      "heap": 19253612,
+      "inflight": 7
+    },
+    {
+      "t": 26522,
+      "rss": 149155840,
+      "heap": 16246217,
+      "inflight": 2
+    },
+    {
+      "t": 27540,
+      "rss": 150577152,
+      "heap": 13708071,
+      "inflight": 3
+    },
+    {
+      "t": 28557,
+      "rss": 251088896,
+      "heap": 19536916,
+      "inflight": 1
+    },
+    {
+      "t": 29588,
+      "rss": 220082176,
+      "heap": 15130207,
+      "inflight": 7
+    },
+    {
+      "t": 30611,
+      "rss": 154574848,
+      "heap": 10722431,
+      "inflight": 4
+    },
+    {
+      "t": 31630,
+      "rss": 153862144,
+      "heap": 15591994,
+      "inflight": 0
+    },
+    {
+      "t": 32647,
+      "rss": 161366016,
+      "heap": 13200304,
+      "inflight": 4
+    },
+    {
+      "t": 33662,
+      "rss": 222433280,
+      "heap": 19798610,
+      "inflight": 7
+    },
+    {
+      "t": 34677,
+      "rss": 224239616,
+      "heap": 16658758,
+      "inflight": 14
+    },
+    {
+      "t": 35706,
+      "rss": 158908416,
+      "heap": 13774364,
+      "inflight": 6
+    },
+    {
+      "t": 36725,
+      "rss": 158830592,
+      "heap": 10580617,
+      "inflight": 1
+    },
+    {
+      "t": 37762,
+      "rss": 160075776,
+      "heap": 17377328,
+      "inflight": 2
+    },
+    {
+      "t": 38790,
+      "rss": 267452416,
+      "heap": 13697529,
+      "inflight": 0
+    },
+    {
+      "t": 39808,
+      "rss": 163110912,
+      "heap": 12248610,
+      "inflight": 8
+    },
+    {
+      "t": 40823,
+      "rss": 163287040,
+      "heap": 19697556,
+      "inflight": 8
+    },
+    {
+      "t": 41837,
+      "rss": 164749312,
+      "heap": 14262082,
+      "inflight": 11
+    },
+    {
+      "t": 42851,
+      "rss": 165400576,
+      "heap": 10664767,
+      "inflight": 9
+    },
+    {
+      "t": 43867,
+      "rss": 233426944,
+      "heap": 16738434,
+      "inflight": 6
+    },
+    {
+      "t": 44888,
+      "rss": 233861120,
+      "heap": 12740799,
+      "inflight": 10
+    },
+    {
+      "t": 45937,
+      "rss": 300294144,
+      "heap": 17515571,
+      "inflight": 5
+    },
+    {
+      "t": 46955,
+      "rss": 232734720,
+      "heap": 11755816,
+      "inflight": 8
+    },
+    {
+      "t": 47978,
+      "rss": 166350848,
+      "heap": 17499507,
+      "inflight": 3
+    },
+    {
+      "t": 48999,
+      "rss": 167030784,
+      "heap": 12049338,
+      "inflight": 1
+    },
+    {
+      "t": 50043,
+      "rss": 168222720,
+      "heap": 17771429,
+      "inflight": 6
+    },
+    {
+      "t": 51058,
+      "rss": 169639936,
+      "heap": 14323900,
+      "inflight": 3
+    },
+    {
+      "t": 52079,
+      "rss": 170721280,
+      "heap": 20243179,
+      "inflight": 0
+    },
+    {
+      "t": 53095,
+      "rss": 171692032,
+      "heap": 14211903,
+      "inflight": 0
+    },
+    {
+      "t": 54106,
+      "rss": 172933120,
+      "heap": 10554071,
+      "inflight": 5
+    },
+    {
+      "t": 55116,
+      "rss": 173342720,
+      "heap": 14790690,
+      "inflight": 0
+    },
+    {
+      "t": 56136,
+      "rss": 174649344,
+      "heap": 18968560,
+      "inflight": 1
+    },
+    {
+      "t": 57144,
+      "rss": 167469056,
+      "heap": 10636567,
+      "inflight": 0
+    },
+    {
+      "t": 58150,
+      "rss": 158765056,
+      "heap": 10808678,
+      "inflight": 0
+    },
+    {
+      "t": 59156,
+      "rss": 159019008,
+      "heap": 10986655,
+      "inflight": 0
+    },
+    {
+      "t": 60160,
+      "rss": 157536256,
+      "heap": 10704887,
+      "inflight": 0
+    },
+    {
+      "t": 61165,
+      "rss": 157229056,
+      "heap": 10705394,
+      "inflight": 0
+    },
+    {
+      "t": 62168,
+      "rss": 157229056,
+      "heap": 10705901,
+      "inflight": 0
+    },
+    {
+      "t": 63173,
+      "rss": 157229056,
+      "heap": 10706408,
+      "inflight": 0
+    },
+    {
+      "t": 64178,
+      "rss": 157229056,
+      "heap": 10706915,
+      "inflight": 0
+    }
+  ],
+  "cold": {
+    "readyMs": 63.1357999999891,
+    "firstResponseMs": 75.64280000003055,
+    "idleRss": 57913344,
+    "idleHeap": 4247457,
+    "shutdownIdle": {
+      "exited": true,
+      "ms": 11.345700000005309,
+      "code": 0,
+      "eventualExitMs": 11.345700000005309
+    }
+  }
+}

@@ -1,0 +1,10 @@
+
+== bun core: cold start
+   first response 46 ms, idle RSS 26.0 MB, idle stop → exit 17 ms
+== bun core: soak 60 s
+   69,612 ops/s, p50 0.90 / p95 1.24 / p99 1.73 ms, errors 0, heap warm 0.7 → end 0.6 → settled 0.6 MB (-10.9% / -18.8%)
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":null,"serverAnswersAfter":200,"servedDelta":0}; stop after load → exit in 16 ms
+
+| App (bun) | Conc | ops/s | p50 ms | p95 ms | p99 ms | Errors | RSS start / peak / end MB | Heap warm → end → settled MB | Growth end / settled | Leak? |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- |
+| core | 64 | 69,612 | 0.90 | 1.24 | 1.73 | 0 | 28.0 / 46.2 / 39.5 | 0.7 → 0.6 → 0.6 | -10.9% / -18.8% | no |

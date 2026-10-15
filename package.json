@@ -1,53 +1,21 @@
 {
-  "name": "miujs",
-  "version": "0.3.0",
-  "description": "About as fast as Elysia, runs anywhere like Hono, and every route is automatically an agent tool.",
+  "name": "miujs-monorepo",
+  "private": true,
   "type": "module",
-  "license": "AGPL-3.0-or-later",
-  "author": "khangkhangg",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/khangkhangg/miujs"
-  },
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
-  "bin": {
-    "miu": "./bin/miu.ts"
-  },
-  "exports": {
-    ".": "./src/index.ts",
-    "./client": "./src/client/index.ts",
-    "./cloudflare": "./src/adapters/cloudflare/index.ts",
-    "./migrate": "./src/migrate/index.ts",
-    "./node": "./src/adapters/node.ts",
-    "./realtime": "./src/realtime/index.ts",
-    "./sqlite": "./src/sqlite.ts"
-  },
-  "files": [
-    "src",
-    "bin",
-    "templates",
-    "README.md",
-    "LICENSE"
+  "workspaces": [
+    "packages/*",
+    "examples/*",
+    "bench"
   ],
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit",
-    "dev": "bun --watch examples/basic.ts",
-    "bench": "cd bench && bun run.ts",
-    "bench:micro": "cd bench && bun micro.ts"
+    "typecheck": "tsc --noEmit -p .",
+    "bench": "bun bench/run.ts",
+    "smoke": "bun scripts/runtime-smoke.ts && node scripts/runtime-smoke.ts && deno run -A scripts/runtime-smoke.ts",
+    "workerd": "bun scripts/workerd/run.ts"
   },
-  "keywords": [
-    "framework",
-    "bun",
-    "cloudflare-workers",
-    "mcp",
-    "openapi",
-    "ai",
-    "agents"
-  ],
   "devDependencies": {
-    "@types/bun": "latest",
-    "typescript": "^5.6.0"
+    "@types/bun": "^1.4.3",
+    "typescript": "^7.0.2"
   }
 }

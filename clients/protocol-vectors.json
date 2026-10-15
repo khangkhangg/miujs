@@ -1,0 +1,715 @@
+{
+  "version": 1,
+  "about": "Conformance vectors for MiuJS realtime clients (PROTOCOL.md v1). patch: apply ops to doc → expected. sessions: feed server frames in order; check the client's state/me/resumeToken/hostKey/events/errors/pongs. diff: server-produced ops between two states. reconnect: which close codes may reconnect with ?resume=<resumeToken>. clientFrames: the JSON a client sends.",
+  "patch": [
+    {
+      "name": "replace a top-level key",
+      "doc": {
+        "phase": "lobby",
+        "round": 0
+      },
+      "ops": [
+        {
+          "op": "replace",
+          "path": "/phase",
+          "value": "question"
+        }
+      ],
+      "expected": {
+        "phase": "question",
+        "round": 0
+      }
+    },
+    {
+      "name": "add a nested object",
+      "doc": {
+        "players": {}
+      },
+      "ops": [
+        {
+          "op": "add",
+          "path": "/players/p_1a2b",
+          "value": {
+            "name": "Ann",
+            "score": 0
+          }
+        }
+      ],
+      "expected": {
+        "players": {
+          "p_1a2b": {
+            "name": "Ann",
+            "score": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "remove a nested key",
+      "doc": {
+        "players": {
+          "p_1": {
+            "name": "A"
+          },
+          "p_2": {
+            "name": "B"
+          }
+        }
+      },
+      "ops": [
+        {
+          "op": "remove",
+          "path": "/players/p_2"
+        }
+      ],
+      "expected": {
+        "players": {
+          "p_1": {
+            "name": "A"
+          }
+        }
+      }
+    },
+    {
+      "name": "deep replace keeps siblings",
+      "doc": {
+        "a": {
+          "b": {
+            "c": 1,
+            "d": 2
+          },
+          "e": 3
+        }
+      },
+      "ops": [
+        {
+          "op": "replace",
+          "path": "/a/b/c",
+          "value": 9
+        }
+      ],
+      "expected": {
+        "a": {
+          "b": {
+            "c": 9,
+            "d": 2
+          },
+          "e": 3
+        }
+      }
+    },
+    {
+      "name": "arrays are replaced whole",
+      "doc": {
+        "answered": [
+          "p_1"
+        ],
+        "n": 1
+      },
+      "ops": [
+        {
+          "op": "replace",
+          "path": "/answered",
+          "value": [
+            "p_1",
+            "p_2"
+          ]
+        }
+      ],
+      "expected": {
+        "answered": [
+          "p_1",
+          "p_2"
+        ],
+        "n": 1
+      }
+    },
+    {
+      "name": "root replace",
+      "doc": {
+        "old": true
+      },
+      "ops": [
+        {
+          "op": "replace",
+          "path": "",
+          "value": {
+            "fresh": 1
+          }
+        }
+      ],
+      "expected": {
+        "fresh": 1
+      }
+    },
+    {
+      "name": "root remove is ignored",
+      "doc": {
+        "keep": 1
+      },
+      "ops": [
+        {
+          "op": "remove",
+          "path": ""
+        }
+      ],
+      "expected": {
+        "keep": 1
+      }
+    },
+    {
+      "name": "escaped slash in a key (~1)",
+      "doc": {
+        "units": {}
+      },
+      "ops": [
+        {
+          "op": "add",
+          "path": "/units/a~1b",
+          "value": 1
+        }
+      ],
+      "expected": {
+        "units": {
+          "a/b": 1
+        }
+      }
+    },
+    {
+      "name": "escaped tilde in a key (~0)",
+      "doc": {},
+      "ops": [
+        {
+          "op": "add",
+          "path": "/~0home",
+          "value": "x"
+        }
+      ],
+      "expected": {
+        "~home": "x"
+      }
+    },
+    {
+      "name": "~01 unescapes to ~1, not /",
+      "doc": {},
+      "ops": [
+        {
+          "op": "add",
+          "path": "/a~01b",
+          "value": true
+        }
+      ],
+      "expected": {
+        "a~1b": true
+      }
+    },
+    {
+      "name": "empty-string key",
+      "doc": {
+        "": 1
+      },
+      "ops": [
+        {
+          "op": "replace",
+          "path": "/",
+          "value": 2
+        }
+      ],
+      "expected": {
+        "": 2
+      }
+    },
+    {
+      "name": "value types: null, bool, float, negative, string, nested array",
+      "doc": {
+        "v": 0
+      },
+      "ops": [
+        {
+          "op": "add",
+          "path": "/n",
+          "value": null
+        },
+        {
+          "op": "add",
+          "path": "/b",
+          "value": false
+        },
+        {
+          "op": "add",
+          "path": "/f",
+          "value": 2.5
+        },
+        {
+          "op": "add",
+          "path": "/neg",
+          "value": -7
+        },
+        {
+          "op": "add",
+          "path": "/s",
+          "value": "héllo ✓"
+        },
+        {
+          "op": "add",
+          "path": "/arr",
+          "value": [
+            [
+              1,
+              2
+            ],
+            {
+              "x": 1
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "v": 0,
+        "n": null,
+        "b": false,
+        "f": 2.5,
+        "neg": -7,
+        "s": "héllo ✓",
+        "arr": [
+          [
+            1,
+            2
+          ],
+          {
+            "x": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "replace an object with a primitive and back",
+      "doc": {
+        "x": {
+          "y": 1
+        }
+      },
+      "ops": [
+        {
+          "op": "replace",
+          "path": "/x",
+          "value": 5
+        },
+        {
+          "op": "replace",
+          "path": "/x",
+          "value": {
+            "z": 2
+          }
+        }
+      ],
+      "expected": {
+        "x": {
+          "z": 2
+        }
+      }
+    },
+    {
+      "name": "ops apply in order (add then remove then add)",
+      "doc": {},
+      "ops": [
+        {
+          "op": "add",
+          "path": "/k",
+          "value": 1
+        },
+        {
+          "op": "remove",
+          "path": "/k"
+        },
+        {
+          "op": "add",
+          "path": "/k",
+          "value": 3
+        }
+      ],
+      "expected": {
+        "k": 3
+      }
+    },
+    {
+      "name": "unicode keys",
+      "doc": {
+        "ü": {
+          "名前": "a"
+        }
+      },
+      "ops": [
+        {
+          "op": "replace",
+          "path": "/ü/名前",
+          "value": "b"
+        }
+      ],
+      "expected": {
+        "ü": {
+          "名前": "b"
+        }
+      }
+    },
+    {
+      "name": "add replaces an existing key (same as replace)",
+      "doc": {
+        "a": 1
+      },
+      "ops": [
+        {
+          "op": "add",
+          "path": "/a",
+          "value": 2
+        }
+      ],
+      "expected": {
+        "a": 2
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "name": "welcome, state, patches",
+      "frames": [
+        "{\"t\":\"welcome\",\"me\":{\"id\":\"p_1a2b3c\",\"name\":\"Ann\",\"role\":\"host\"},\"room\":{\"type\":\"quiz\",\"id\":\"123456\"},\"resumeToken\":\"tok1\",\"resumed\":false,\"hostKey\":\"hk1\"}",
+        "{\"t\":\"state\",\"state\":{\"phase\":\"lobby\",\"players\":{}}}",
+        "{\"t\":\"patch\",\"ops\":[{\"op\":\"add\",\"path\":\"/players/p_1a2b3c\",\"value\":{\"name\":\"Ann\",\"score\":0}}]}",
+        "{\"t\":\"patch\",\"ops\":[{\"op\":\"replace\",\"path\":\"/phase\",\"value\":\"question\"}]}"
+      ],
+      "expect": {
+        "me": {
+          "id": "p_1a2b3c",
+          "name": "Ann",
+          "role": "host"
+        },
+        "resumeToken": "tok1",
+        "hostKey": "hk1",
+        "state": {
+          "phase": "question",
+          "players": {
+            "p_1a2b3c": {
+              "name": "Ann",
+              "score": 0
+            }
+          }
+        },
+        "welcomes": 1
+      }
+    },
+    {
+      "name": "events, errors and pong",
+      "frames": [
+        "{\"t\":\"welcome\",\"me\":{\"id\":\"p_1a2b3c\",\"name\":\"Ann\",\"role\":\"host\"},\"room\":{\"type\":\"quiz\",\"id\":\"123456\"},\"resumeToken\":\"tok1\",\"resumed\":false,\"hostKey\":\"hk1\"}",
+        "{\"t\":\"state\",\"state\":{}}",
+        "{\"t\":\"event\",\"event\":\"seated\",\"data\":{\"userId\":\"u1\",\"team\":0}}",
+        "{\"t\":\"error\",\"code\":\"MIU_E_GAME_TICKET_REQUIRED\",\"message\":\"Present your match ticket before playing\",\"fix\":\"...\",\"id\":3}",
+        "{\"t\":\"event\",\"event\":\"ping-less\"}",
+        "{\"t\":\"pong\"}"
+      ],
+      "expect": {
+        "events": [
+          {
+            "event": "seated",
+            "data": {
+              "userId": "u1",
+              "team": 0
+            }
+          },
+          {
+            "event": "ping-less",
+            "data": null
+          }
+        ],
+        "errors": [
+          "MIU_E_GAME_TICKET_REQUIRED"
+        ],
+        "pongs": 1
+      }
+    },
+    {
+      "name": "a resume welcome replaces state with the next full state",
+      "frames": [
+        "{\"t\":\"welcome\",\"me\":{\"id\":\"p_1a2b3c\",\"name\":\"Ann\",\"role\":\"host\"},\"room\":{\"type\":\"quiz\",\"id\":\"123456\"},\"resumeToken\":\"tok1\",\"resumed\":false,\"hostKey\":\"hk1\"}",
+        "{\"t\":\"state\",\"state\":{\"n\":1}}",
+        "{\"t\":\"patch\",\"ops\":[{\"op\":\"replace\",\"path\":\"/n\",\"value\":2}]}",
+        "{\"t\":\"welcome\",\"me\":{\"id\":\"p_1a2b3c\",\"name\":\"Ann\",\"role\":\"host\"},\"room\":{\"type\":\"quiz\",\"id\":\"123456\"},\"resumeToken\":\"tok1\",\"resumed\":true,\"hostKey\":\"hk1\"}",
+        "{\"t\":\"state\",\"state\":{\"n\":5,\"fresh\":true}}"
+      ],
+      "expect": {
+        "state": {
+          "n": 5,
+          "fresh": true
+        },
+        "resumeToken": "tok1",
+        "welcomes": 2
+      }
+    },
+    {
+      "name": "role change: a second welcome on the same socket updates me",
+      "frames": [
+        "{\"t\":\"welcome\",\"me\":{\"id\":\"p_1a2b3c\",\"name\":\"Ann\",\"role\":\"player\"},\"room\":{\"type\":\"quiz\",\"id\":\"123456\"},\"resumeToken\":\"tok1\",\"resumed\":false}",
+        "{\"t\":\"state\",\"state\":{}}",
+        "{\"t\":\"welcome\",\"me\":{\"id\":\"p_1a2b3c\",\"name\":\"Ann\",\"role\":\"host\"},\"room\":{\"type\":\"quiz\",\"id\":\"123456\"},\"resumeToken\":\"tok1\",\"resumed\":true,\"hostKey\":\"hk1\"}"
+      ],
+      "expect": {
+        "me": {
+          "id": "p_1a2b3c",
+          "name": "Ann",
+          "role": "host"
+        },
+        "hostKey": "hk1"
+      }
+    },
+    {
+      "name": "unknown frame types are ignored",
+      "frames": [
+        "{\"t\":\"welcome\",\"me\":{\"id\":\"p_1a2b3c\",\"name\":\"Ann\",\"role\":\"host\"},\"room\":{\"type\":\"quiz\",\"id\":\"123456\"},\"resumeToken\":\"tok1\",\"resumed\":false,\"hostKey\":\"hk1\"}",
+        "{\"t\":\"state\",\"state\":{\"a\":1}}",
+        "{\"t\":\"future-frame\",\"x\":1}",
+        "{\"t\":\"patch\",\"ops\":[]}"
+      ],
+      "expect": {
+        "state": {
+          "a": 1
+        }
+      }
+    }
+  ],
+  "diff": [
+    {
+      "from": {
+        "phase": "lobby",
+        "players": {}
+      },
+      "to": {
+        "phase": "question",
+        "players": {
+          "p_1": {
+            "name": "Ann",
+            "score": 0
+          }
+        }
+      },
+      "ops": [
+        {
+          "op": "replace",
+          "path": "/phase",
+          "value": "question"
+        },
+        {
+          "op": "add",
+          "path": "/players/p_1",
+          "value": {
+            "name": "Ann",
+            "score": 0
+          }
+        }
+      ]
+    },
+    {
+      "from": {
+        "a": {
+          "b": 1,
+          "c": 2
+        },
+        "list": [
+          1,
+          2
+        ]
+      },
+      "to": {
+        "a": {
+          "b": 1
+        },
+        "list": [
+          1,
+          2,
+          3
+        ]
+      },
+      "ops": [
+        {
+          "op": "remove",
+          "path": "/a/c"
+        },
+        {
+          "op": "replace",
+          "path": "/list",
+          "value": [
+            1,
+            2,
+            3
+          ]
+        }
+      ]
+    },
+    {
+      "from": {
+        "a/b": 1,
+        "~": 2
+      },
+      "to": {
+        "a/b": 3
+      },
+      "ops": [
+        {
+          "op": "replace",
+          "path": "/a~1b",
+          "value": 3
+        },
+        {
+          "op": "remove",
+          "path": "/~0"
+        }
+      ]
+    },
+    {
+      "from": {
+        "x": {
+          "y": {
+            "z": 1
+          }
+        }
+      },
+      "to": {
+        "x": 5
+      },
+      "ops": [
+        {
+          "op": "replace",
+          "path": "/x",
+          "value": 5
+        }
+      ]
+    },
+    {
+      "from": {
+        "n": null
+      },
+      "to": {
+        "n": {
+          "k": "v"
+        }
+      },
+      "ops": [
+        {
+          "op": "replace",
+          "path": "/n",
+          "value": {
+            "k": "v"
+          }
+        }
+      ]
+    }
+  ],
+  "reconnect": {
+    "terminal": [
+      1000,
+      1003,
+      1009,
+      4001,
+      4003,
+      4004,
+      4005,
+      4008,
+      4009
+    ],
+    "resumeQuery": "resume",
+    "cases": [
+      {
+        "code": 1000,
+        "reconnect": false
+      },
+      {
+        "code": 1001,
+        "reconnect": true
+      },
+      {
+        "code": 1006,
+        "reconnect": true
+      },
+      {
+        "code": 1011,
+        "reconnect": true
+      },
+      {
+        "code": 1003,
+        "reconnect": false
+      },
+      {
+        "code": 1009,
+        "reconnect": false
+      },
+      {
+        "code": 4001,
+        "reconnect": false
+      },
+      {
+        "code": 4003,
+        "reconnect": false
+      },
+      {
+        "code": 4004,
+        "reconnect": false
+      },
+      {
+        "code": 4005,
+        "reconnect": false
+      },
+      {
+        "code": 4008,
+        "reconnect": false
+      },
+      {
+        "code": 1012,
+        "reconnect": true
+      },
+      {
+        "code": 4009,
+        "reconnect": false
+      }
+    ]
+  },
+  "clientFrames": [
+    {
+      "name": "join (when the URL has no name)",
+      "json": "{\"t\":\"join\",\"name\":\"Ann\"}",
+      "frame": {
+        "t": "join",
+        "name": "Ann"
+      }
+    },
+    {
+      "name": "typed message with request id",
+      "json": "{\"t\":\"msg\",\"type\":\"answer\",\"data\":{\"choice\":2},\"id\":1}",
+      "frame": {
+        "t": "msg",
+        "type": "answer",
+        "data": {
+          "choice": 2
+        },
+        "id": 1
+      }
+    },
+    {
+      "name": "present a match ticket (game rooms)",
+      "json": "{\"t\":\"msg\",\"type\":\"ticket\",\"data\":{\"ticket\":\"eyJr.sig\"}}",
+      "frame": {
+        "t": "msg",
+        "type": "ticket",
+        "data": {
+          "ticket": "eyJr.sig"
+        }
+      }
+    },
+    {
+      "name": "keep-alive",
+      "json": "{\"t\":\"ping\"}",
+      "frame": {
+        "t": "ping"
+      }
+    }
+  ]
+}

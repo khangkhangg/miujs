@@ -1,0 +1,44 @@
+
+== bun core: cold start
+   first response 67 ms, idle RSS 38.2 MB, idle stop → exit 13 ms
+== bun core: soak 60 s
+   69,527 ops/s, p50 0.91 / p95 1.21 / p99 1.61 ms, errors 0, heap warm 0.8 → end 0.7 → settled 0.6 MB (-10.1% / -17.2%)
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":0,"serverAnswersAfter":200,"servedDelta":201}; stop after load → exit in 15 ms
+
+== bun api: cold start
+   first response 40 ms, idle RSS 44.6 MB, idle stop → exit 16 ms
+== bun api: soak 60 s
+   10,412 ops/s, p50 1.72 / p95 4.61 / p99 8.53 ms, errors 0, heap warm 3.7 → end 6.5 → settled 6.2 MB (76.5% / 68.2%)  SUSPECTED LEAK
+   growing types: string +92729, Object +4389, StructureRareData +5, Response +-1, Timeout +-1, RegExp +-3, Structure +-5, Cell Butterfly +-5
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":0,"serverAnswersAfter":401,"servedDelta":234}; stop after load → exit in 16 ms
+
+== bun quiz: cold start
+   first response 31 ms, idle RSS 42.3 MB, idle stop → exit 15 ms
+== bun quiz: soak 60 s
+   236 ops/s, p50 5.97 / p95 7.43 / p99 18.00 ms, errors 0, heap warm 3.7 → end 4.7 → settled 1.2 MB (27.5% / -66.5%)  SUSPECTED LEAK
+   growing types: StructureChain +-2, FunctionExecutable +-52, UnlinkedFunctionExecutable +-56, SymbolTable +-80, WeakSet +-120, UnlinkedFunctionCodeBlock +-165, Headers +-222, Request +-222
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":0,"serverAnswersAfter":200,"servedDelta":201,"wsAborts":50,"wsWelcomed":50,"roomsAfterWsAbort":{"rooms":50,"players":50,"connected":0}}; stop after load → exit in 13 ms
+
+== bun crm: cold start
+   first response 76 ms, idle RSS 55.2 MB, idle stop → exit 11 ms
+== bun crm: soak 60 s
+   1,329 ops/s, p50 13.60 / p95 34.80 / p99 52.70 ms, errors 1574, heap warm 10.5 → end 10.2 → settled 9.3 MB (-3.2% / -11.3%)
+   errors: {
+  "POST /admin/login: HTTP 429 <!doctype html><html lang="en"><head><meta charset="utf-8"><": 1574,
+}
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":0,"serverAnswersAfter":200,"servedDelta":225}; stop after load → exit in 18 ms
+
+== bun arena: cold start
+   first response 45 ms, idle RSS 50.4 MB, idle stop → exit 11 ms
+== bun arena: soak 60 s
+   9,672 ops/s, p50 6.20 / p95 66.00 / p99 106.00 ms, errors 0, heap warm 49.1 → end 131.8 → settled 2.8 MB (168.4% / -94.4%)  SUSPECTED LEAK
+   growing types: RegExp +-6, NativePromiseContext +-11, SlimPromiseReaction +-11, StrongRootBlock +-14, FullPromiseReaction +-22, ServerWebSocket +-41, AsyncFunctionGenerator +-41, Headers +-52
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":0,"serverAnswersAfter":200,"servedDelta":201,"longPollAborted":1,"inflightBefore":0,"inflight2sAfterAbort":1,"inflight21sAfterAbort":0}; stop after load → exit in 23 ms
+
+| App (bun) | Conc | ops/s | p50 ms | p95 ms | p99 ms | Errors | RSS start / peak / end MB | Heap warm → end → settled MB | Growth end / settled | Leak? |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- |
+| core | 64 | 69,527 | 0.91 | 1.21 | 1.61 | 0 | 39.1 / 53.7 / 46.9 | 0.8 → 0.7 → 0.6 | -10.1% / -17.2% | no |
+| api | 32 | 10,412 | 1.72 | 4.61 | 8.53 | 0 | 43.2 / 1353.0 / 67.1 | 3.7 → 6.5 → 6.2 | 76.5% / 68.2% | suspected |
+| quiz | 40 | 236 | 5.97 | 7.43 | 18.00 | 0 | 42.9 / 65.6 / 64.9 | 3.7 → 4.7 → 1.2 | 27.5% / -66.5% | suspected |
+| crm | 24 | 1,329 | 13.60 | 34.80 | 52.70 | 1574 | 60.2 / 461.1 / 153.7 | 10.5 → 10.2 → 9.3 | -3.2% / -11.3% | no |
+| arena | 80 | 9,672 | 6.20 | 66.00 | 106.00 | 0 | 49.1 / 444.2 / 393.0 | 49.1 → 131.8 → 2.8 | 168.4% / -94.4% | suspected |

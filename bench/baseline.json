@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "bun": "1.4.3",
+  "platform": "win32-x64",
+  "date": "2026-10-15T15:34:12.866Z",
+  "rounds": 5,
+  "durationMs": 1000,
+  "throughput": {
+    "GET / (text)": {
+      "miujs": 1583000,
+      "elysia": 1842000,
+      "hono": 1409000
+    },
+    "GET /users/:id (params → JSON)": {
+      "miujs": 1123000,
+      "elysia": 1117000,
+      "hono": 699000
+    },
+    "POST /json (body validation → JSON)": {
+      "miujs": 400000,
+      "elysia": 368000,
+      "hono": 381000
+    },
+    "GET / (text), server arg": {
+      "miujs": 1688000,
+      "elysia": 1730000,
+      "hono": 1196000
+    }
+  },
+  "memory": {
+    "GET / (text)": {
+      "miujs": {
+        "retained": -1465,
+        "peak": 661
+      },
+      "elysia": {
+        "retained": -1922.5,
+        "peak": 0
+      },
+      "hono": {
+        "retained": -1465,
+        "peak": 470
+      }
+    },
+    "GET /users/:id (params → JSON)": {
+      "miujs": {
+        "retained": -231,
+        "peak": 875
+      },
+      "elysia": {
+        "retained": 1344,
+        "peak": 772
+      },
+      "hono": {
+        "retained": 1344,
+        "peak": 3024
+      }
+    },
+    "POST /json (body validation → JSON)": {
+      "miujs": {
+        "retained": 1344,
+        "peak": 7722
+      },
+      "elysia": {
+        "retained": 1148,
+        "peak": 6484
+      },
+      "hono": {
+        "retained": 1344,
+        "peak": 9364
+      }
+    }
+  },
+  "coldStartMs": {
+    "miujs": 11.29,
+    "elysia": 51.06,
+    "hono": 13.12
+  }
+}

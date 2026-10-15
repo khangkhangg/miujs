@@ -1,0 +1,704 @@
+{
+  "app": "api",
+  "runtime": "bun",
+  "durationS": 60,
+  "concurrency": 32,
+  "drivers": 0,
+  "requests": 1061790,
+  "rps": 17696.5,
+  "p50": 1.46,
+  "p95": 2.97,
+  "p99": 4.42,
+  "max": 261.26690000000235,
+  "errors": 0,
+  "errorKinds": {},
+  "expected": {
+    "GET /notes/:id (missing) 404": 3445
+  },
+  "wsFramesInPerS": 0,
+  "ops": {
+    "POST /auth/register": {
+      "n": 2407,
+      "perS": 40.11666666666667,
+      "p50": 28.5,
+      "p95": 41,
+      "p99": 96.4,
+      "max": 244.07120000000577
+    },
+    "POST /auth/logout": {
+      "n": 4814,
+      "perS": 80.23333333333333,
+      "p50": 1.53,
+      "p95": 3.08,
+      "p99": 4.2,
+      "max": 15.771699999997509
+    },
+    "POST /auth/login": {
+      "n": 2407,
+      "perS": 40.11666666666667,
+      "p50": 28.200000000000003,
+      "p95": 40.800000000000004,
+      "p99": 235,
+      "max": 261.26690000000235
+    },
+    "GET /notes": {
+      "n": 430294,
+      "perS": 7171.566666666667,
+      "p50": 1.46,
+      "p95": 2.91,
+      "p99": 4,
+      "max": 15.844100000002072
+    },
+    "POST /notes": {
+      "n": 191712,
+      "perS": 3195.2,
+      "p50": 1.47,
+      "p95": 2.92,
+      "p99": 4.01,
+      "max": 15.791200000006938
+    },
+    "GET /notes/:id (missing)": {
+      "n": 3445,
+      "perS": 57.416666666666664,
+      "p50": 1.48,
+      "p95": 2.96,
+      "p99": 3.92,
+      "max": 6.139199999990524
+    },
+    "GET /auth/me": {
+      "n": 95550,
+      "perS": 1592.5,
+      "p50": 1.45,
+      "p95": 2.88,
+      "p99": 3.95,
+      "max": 15.822599999999511
+    },
+    "GET /notes/:id": {
+      "n": 139449,
+      "perS": 2324.15,
+      "p50": 1.45,
+      "p95": 2.9,
+      "p99": 3.99,
+      "max": 15.805799999987357
+    },
+    "DELETE /notes/:id": {
+      "n": 191712,
+      "perS": 3195.2,
+      "p50": 1.46,
+      "p95": 2.9,
+      "p99": 3.99,
+      "max": 15.814200000007986
+    }
+  },
+  "rss": {
+    "idleBeforeLoad": 39538688,
+    "start": 39559168,
+    "peak": 186056704,
+    "end": 66527232,
+    "settled": 59482112
+  },
+  "heap": {
+    "idleBeforeLoad": 933531,
+    "afterWarmup": 3466031,
+    "warmupAtMs": 12020,
+    "end": 4465381,
+    "settled": 4037625,
+    "growth": 0.28832690763585206,
+    "settledGrowth": 0.16491312397379018
+  },
+  "objects": {
+    "afterWarmup": 16287,
+    "end": 30705,
+    "settled": 30460
+  },
+  "suspectedLeak": true,
+  "typeGrowthEnd": [
+    {
+      "type": "Object",
+      "before": 2664,
+      "after": 10290,
+      "delta": 7626
+    },
+    {
+      "type": "string",
+      "before": 3942,
+      "after": 11213,
+      "delta": 7271
+    },
+    {
+      "type": "StructureRareData",
+      "before": 248,
+      "after": 253,
+      "delta": 5
+    },
+    {
+      "type": "Response",
+      "before": 2,
+      "after": 1,
+      "delta": -1
+    },
+    {
+      "type": "Timeout",
+      "before": 2,
+      "after": 1,
+      "delta": -1
+    },
+    {
+      "type": "Headers",
+      "before": 6,
+      "after": 4,
+      "delta": -2
+    },
+    {
+      "type": "URL",
+      "before": 5,
+      "after": 3,
+      "delta": -2
+    },
+    {
+      "type": "Request",
+      "before": 4,
+      "after": 2,
+      "delta": -2
+    },
+    {
+      "type": "NativePromiseContext",
+      "before": 2,
+      "after": 0,
+      "delta": -2
+    },
+    {
+      "type": "SlimPromiseReaction",
+      "before": 2,
+      "after": 0,
+      "delta": -2
+    },
+    {
+      "type": "RegExp",
+      "before": 52,
+      "after": 49,
+      "delta": -3
+    },
+    {
+      "type": "FullPromiseReaction",
+      "before": 4,
+      "after": 0,
+      "delta": -4
+    }
+  ],
+  "typeGrowthSettled": [
+    {
+      "type": "Object",
+      "before": 2664,
+      "after": 10290,
+      "delta": 7626
+    },
+    {
+      "type": "string",
+      "before": 3942,
+      "after": 11142,
+      "delta": 7200
+    },
+    {
+      "type": "StructureRareData",
+      "before": 248,
+      "after": 253,
+      "delta": 5
+    },
+    {
+      "type": "Timeout",
+      "before": 2,
+      "after": 1,
+      "delta": -1
+    },
+    {
+      "type": "Headers",
+      "before": 6,
+      "after": 4,
+      "delta": -2
+    },
+    {
+      "type": "URL",
+      "before": 5,
+      "after": 3,
+      "delta": -2
+    },
+    {
+      "type": "Request",
+      "before": 4,
+      "after": 2,
+      "delta": -2
+    },
+    {
+      "type": "NativePromiseContext",
+      "before": 2,
+      "after": 0,
+      "delta": -2
+    },
+    {
+      "type": "SlimPromiseReaction",
+      "before": 2,
+      "after": 0,
+      "delta": -2
+    },
+    {
+      "type": "RegExp",
+      "before": 52,
+      "after": 49,
+      "delta": -3
+    },
+    {
+      "type": "FullPromiseReaction",
+      "before": 4,
+      "after": 0,
+      "delta": -4
+    },
+    {
+      "type": "Array",
+      "before": 232,
+      "after": 227,
+      "delta": -5
+    }
+  ],
+  "extras": {
+    "inflight": 0,
+    "maxInflight": 32,
+    "served": 1061790,
+    "rooms": null,
+    "jobsRan": 100
+  },
+  "settledExtras": {
+    "rooms": null,
+    "settleS": 5
+  },
+  "codeState": {
+    "head": "2891f99",
+    "dirtyPackages": " 1 file changed, 31 insertions(+), 4 deletions(-)",
+    "at": "2026-10-15T11:51:35.271Z"
+  },
+  "stuck": {
+    "midBodyAborts": 200,
+    "fetchAborts": 200,
+    "inflightAfter": 0,
+    "serverAnswersAfter": 401,
+    "servedDelta": 233
+  },
+  "shutdownAfterLoad": {
+    "exited": true,
+    "ms": 19.533499999990454,
+    "code": 0,
+    "eventualExitMs": 19.533499999990454
+  },
+  "stderrTail": [
+    "{\"level\":\"error\",\"time\":\"2026-10-15T11:51:33.161Z\",\"msg\":\"unhandled error\",\"app\":\"notes-api\",\"requestId\":\"mv9habl5-5h\",\"method\":\"POST\",\"path\":\"/auth/login\",\"err\":{\"name\":\"AbortError\",\"message\":\"The connection was closed.\",\"stack\":\"\"},\"route\":\"auth_login\"}",
+    "{\"level\":\"error\",\"time\":\"2026-10-15T11:51:33.169Z\",\"msg\":\"unhandled error\",\"app\":\"notes-api\",\"requestId\":\"mv9habld-5i\",\"method\":\"POST\",\"path\":\"/auth/login\",\"err\":{\"name\":\"AbortError\",\"message\":\"The connection was closed.\",\"stack\":\"\"},\"route\":\"auth_login\"}",
+    "{\"level\":\"error\",\"time\":\"2026-10-15T11:51:33.176Z\",\"msg\":\"unhandled error\",\"app\":\"notes-api\",\"requestId\":\"mv9hablk-5j\",\"method\":\"POST\",\"path\":\"/auth/login\",\"err\":{\"name\":\"AbortError\",\"message\":\"The connection was closed.\",\"stack\":\"\"},\"route\":\"auth_login\"}",
+    "{\"level\":\"error\",\"time\":\"2026-10-15T11:51:33.184Z\",\"msg\":\"unhandled error\",\"app\":\"notes-api\",\"requestId\":\"mv9habls-5k\",\"method\":\"POST\",\"path\":\"/auth/login\",\"err\":{\"name\":\"AbortError\",\"message\":\"The connection was closed.\",\"stack\":\"\"},\"route\":\"auth_login\"}",
+    "STOPPED 1"
+  ],
+  "samples": [
+    {
+      "t": 4,
+      "rss": 39559168,
+      "heap": 934011,
+      "inflight": 0
+    },
+    {
+      "t": 1009,
+      "rss": 155779072,
+      "heap": 4670269,
+      "inflight": 4
+    },
+    {
+      "t": 2015,
+      "rss": 153362432,
+      "heap": 9251348,
+      "inflight": 2
+    },
+    {
+      "t": 3024,
+      "rss": 171937792,
+      "heap": 7169360,
+      "inflight": 4
+    },
+    {
+      "t": 4029,
+      "rss": 69599232,
+      "heap": 6808858,
+      "inflight": 0
+    },
+    {
+      "t": 5035,
+      "rss": 169627648,
+      "heap": 8345638,
+      "inflight": 3
+    },
+    {
+      "t": 6042,
+      "rss": 169701376,
+      "heap": 8963881,
+      "inflight": 4
+    },
+    {
+      "t": 7046,
+      "rss": 170389504,
+      "heap": 3808765,
+      "inflight": 0
+    },
+    {
+      "t": 8051,
+      "rss": 129593344,
+      "heap": 6450530,
+      "inflight": 2
+    },
+    {
+      "t": 9057,
+      "rss": 150081536,
+      "heap": 8336489,
+      "inflight": 3
+    },
+    {
+      "t": 10063,
+      "rss": 170164224,
+      "heap": 3951130,
+      "inflight": 7
+    },
+    {
+      "t": 11067,
+      "rss": 69918720,
+      "heap": 7267425,
+      "inflight": 0
+    },
+    {
+      "t": 12071,
+      "rss": 123015168,
+      "heap": 4353092,
+      "inflight": 2
+    },
+    {
+      "t": 13076,
+      "rss": 164450304,
+      "heap": 7402084,
+      "inflight": 6
+    },
+    {
+      "t": 14080,
+      "rss": 144437248,
+      "heap": 4657447,
+      "inflight": 3
+    },
+    {
+      "t": 15088,
+      "rss": 165228544,
+      "heap": 5601643,
+      "inflight": 3
+    },
+    {
+      "t": 16092,
+      "rss": 145448960,
+      "heap": 6424817,
+      "inflight": 3
+    },
+    {
+      "t": 17097,
+      "rss": 165580800,
+      "heap": 7998500,
+      "inflight": 1
+    },
+    {
+      "t": 18104,
+      "rss": 154513408,
+      "heap": 9598301,
+      "inflight": 2
+    },
+    {
+      "t": 19108,
+      "rss": 126427136,
+      "heap": 4625622,
+      "inflight": 1
+    },
+    {
+      "t": 20112,
+      "rss": 165617664,
+      "heap": 5727027,
+      "inflight": 3
+    },
+    {
+      "t": 21117,
+      "rss": 165138432,
+      "heap": 6235707,
+      "inflight": 5
+    },
+    {
+      "t": 22122,
+      "rss": 145842176,
+      "heap": 8458507,
+      "inflight": 2
+    },
+    {
+      "t": 23127,
+      "rss": 121053184,
+      "heap": 4795764,
+      "inflight": 3
+    },
+    {
+      "t": 24131,
+      "rss": 165003264,
+      "heap": 6178235,
+      "inflight": 1
+    },
+    {
+      "t": 25137,
+      "rss": 145997824,
+      "heap": 8477540,
+      "inflight": 1
+    },
+    {
+      "t": 26141,
+      "rss": 146321408,
+      "heap": 3959384,
+      "inflight": 2
+    },
+    {
+      "t": 27145,
+      "rss": 125706240,
+      "heap": 6238771,
+      "inflight": 1
+    },
+    {
+      "t": 28151,
+      "rss": 166375424,
+      "heap": 4015006,
+      "inflight": 2
+    },
+    {
+      "t": 29156,
+      "rss": 165793792,
+      "heap": 6402617,
+      "inflight": 2
+    },
+    {
+      "t": 30163,
+      "rss": 165572608,
+      "heap": 5838447,
+      "inflight": 1
+    },
+    {
+      "t": 31168,
+      "rss": 166342656,
+      "heap": 4139671,
+      "inflight": 3
+    },
+    {
+      "t": 32174,
+      "rss": 145842176,
+      "heap": 6698113,
+      "inflight": 3
+    },
+    {
+      "t": 33181,
+      "rss": 165482496,
+      "heap": 5659376,
+      "inflight": 4
+    },
+    {
+      "t": 34185,
+      "rss": 146063360,
+      "heap": 5238956,
+      "inflight": 3
+    },
+    {
+      "t": 35190,
+      "rss": 146251776,
+      "heap": 5231266,
+      "inflight": 3
+    },
+    {
+      "t": 36195,
+      "rss": 166268928,
+      "heap": 4179619,
+      "inflight": 2
+    },
+    {
+      "t": 37201,
+      "rss": 146178048,
+      "heap": 7484748,
+      "inflight": 3
+    },
+    {
+      "t": 38206,
+      "rss": 166158336,
+      "heap": 8128084,
+      "inflight": 4
+    },
+    {
+      "t": 39210,
+      "rss": 125825024,
+      "heap": 5987167,
+      "inflight": 2
+    },
+    {
+      "t": 40215,
+      "rss": 165928960,
+      "heap": 6062447,
+      "inflight": 2
+    },
+    {
+      "t": 41221,
+      "rss": 165769216,
+      "heap": 6804164,
+      "inflight": 1
+    },
+    {
+      "t": 42225,
+      "rss": 146698240,
+      "heap": 7511885,
+      "inflight": 0
+    },
+    {
+      "t": 43232,
+      "rss": 146292736,
+      "heap": 8239927,
+      "inflight": 2
+    },
+    {
+      "t": 44237,
+      "rss": 86413312,
+      "heap": 7952631,
+      "inflight": 1
+    },
+    {
+      "t": 45242,
+      "rss": 166293504,
+      "heap": 4290556,
+      "inflight": 1
+    },
+    {
+      "t": 46246,
+      "rss": 166260736,
+      "heap": 4666060,
+      "inflight": 1
+    },
+    {
+      "t": 47251,
+      "rss": 166486016,
+      "heap": 5119800,
+      "inflight": 2
+    },
+    {
+      "t": 48255,
+      "rss": 146128896,
+      "heap": 5508801,
+      "inflight": 1
+    },
+    {
+      "t": 49259,
+      "rss": 145793024,
+      "heap": 5854492,
+      "inflight": 6
+    },
+    {
+      "t": 50264,
+      "rss": 145960960,
+      "heap": 6103920,
+      "inflight": 2
+    },
+    {
+      "t": 51268,
+      "rss": 146092032,
+      "heap": 6567277,
+      "inflight": 2
+    },
+    {
+      "t": 52273,
+      "rss": 166100992,
+      "heap": 5981995,
+      "inflight": 0
+    },
+    {
+      "t": 53279,
+      "rss": 146481152,
+      "heap": 7077215,
+      "inflight": 2
+    },
+    {
+      "t": 54284,
+      "rss": 186056704,
+      "heap": 6376474,
+      "inflight": 2
+    },
+    {
+      "t": 55288,
+      "rss": 166805504,
+      "heap": 5242997,
+      "inflight": 1
+    },
+    {
+      "t": 56294,
+      "rss": 146583552,
+      "heap": 5775150,
+      "inflight": 3
+    },
+    {
+      "t": 57299,
+      "rss": 147746816,
+      "heap": 5342320,
+      "inflight": 3
+    },
+    {
+      "t": 58304,
+      "rss": 166924288,
+      "heap": 4618325,
+      "inflight": 1
+    },
+    {
+      "t": 59308,
+      "rss": 147116032,
+      "heap": 4507494,
+      "inflight": 1
+    },
+    {
+      "t": 60311,
+      "rss": 59416576,
+      "heap": 4465861,
+      "inflight": 0
+    },
+    {
+      "t": 61318,
+      "rss": 59277312,
+      "heap": 4466341,
+      "inflight": 0
+    },
+    {
+      "t": 62323,
+      "rss": 59383808,
+      "heap": 4466821,
+      "inflight": 0
+    },
+    {
+      "t": 63325,
+      "rss": 59326464,
+      "heap": 4467301,
+      "inflight": 0
+    },
+    {
+      "t": 64334,
+      "rss": 59420672,
+      "heap": 4467781,
+      "inflight": 0
+    }
+  ],
+  "cold": {
+    "readyMs": 46.84519999999611,
+    "firstResponseMs": 53.92139999999199,
+    "idleRss": 41721856,
+    "idleHeap": 1194681,
+    "shutdownIdle": {
+      "exited": true,
+      "ms": 15.703099999998813,
+      "code": 0,
+      "eventualExitMs": 15.703099999998813
+    }
+  },
+  "machineBusyBeforePct": 9
+}

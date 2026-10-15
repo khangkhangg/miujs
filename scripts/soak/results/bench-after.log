@@ -1,0 +1,22 @@
+=== bench after fixes 2026-10-15T19:07:40+07:00 2891f99 (dirty: 4 files in packages/ + bench/ by other agents)
+Bun 1.4.3 · in-process fetch() · 3 rounds × 2000 ms, best round kept
+
+scenario                                    miujs     elysia       hono   miujs vs best other
+GET / (text)                            1,434,000  2,007,000  1,567,000   71%
+GET /users/:id (params → JSON)          1,018,500  1,159,500    681,000   88%
+POST /json (body validation → JSON)       408,500    373,000    393,500   104%
+
+req/s, higher is better.
+
+In-process, fetch(req, bunServer) as Bun.serve calls it (best of 3)
+GET / (text), server arg                1,598,500  1,881,000  1,406,500   85%
+
+Heap per 10k requests, in-process (best of 2): retained after GC / peak above baseline
+scenario                                                 miujs                  elysia                    hono
+GET / (text)                                  -1.4 KB / 1.1 KB        -1.9 KB / 0.0 KB        -1.4 KB / 1.3 KB
+GET /users/:id (params → JSON)                -0.2 KB / 1.3 KB         1.3 KB / 0.8 KB         1.3 KB / 2.6 KB
+POST /json (body validation → JSON)           -1.4 KB / 7.8 KB         1.1 KB / 5.8 KB        1.3 KB / 11.7 KB
+
+Cold start (process start → first response, median of 7, ms)
+                                            miujs     elysia       hono
+cold start                                   11.3       50.0       12.4

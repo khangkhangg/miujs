@@ -1,0 +1,1 @@
+{ "name": "example-quiz", "private": true, "type": "module", "dependencies": { "miujs": "workspace:*", "@miujs/realtime": "workspace:*" } }

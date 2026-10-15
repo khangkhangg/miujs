@@ -1,0 +1,14 @@
+# Cloudflare Workers config for the Postgres example. `miu deploy cloudflare` writes the same blocks
+# from the app's plugins. Replace the Hyperdrive id with yours:
+#   bunx wrangler hyperdrive create todos --connection-string="postgres://user:pass@host:5432/todos"
+name = "postgres-todos"
+main = "app.ts"
+compatibility_date = "2026-10-15"
+# postgres.js needs Node.js APIs (sockets via cloudflare:sockets, Buffer) on Workers.
+compatibility_flags = ["nodejs_compat"]
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "<your-hyperdrive-id>"
+# `wrangler dev` connects here instead of Hyperdrive.
+localConnectionString = "postgres://postgres:postgres@localhost:5432/todos"

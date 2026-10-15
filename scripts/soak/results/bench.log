@@ -1,0 +1,58 @@
+=== run 1 2026-10-15T18:04:18+07:00
+Bun 1.4.3 · in-process fetch() · 3 rounds × 2000 ms, best round kept
+
+scenario                                    miujs     elysia       hono   miujs vs best other
+GET / (text)                            1,481,500  1,880,000  1,469,000   79%
+GET /users/:id (params → JSON)          1,021,500  1,204,500    720,000   85%
+POST /json (body validation → JSON)       339,500    384,000    406,500   84%
+
+req/s, higher is better.
+
+Heap per 10k requests, in-process (best of 2): retained after GC / peak above baseline
+scenario                                                 miujs                  elysia                    hono
+GET / (text)                                   7.6 KB / 1.0 KB         7.2 KB / 0.0 KB         7.6 KB / 6.7 KB
+GET /users/:id (params → JSON)                 7.6 KB / 1.0 KB         7.6 KB / 1.2 KB         1.3 KB / 4.6 KB
+POST /json (body validation → JSON)          7.2 KB / 288.1 KB        7.4 KB / 10.7 KB        7.6 KB / 11.3 KB
+
+Cold start (process start → first response, median of 7, ms)
+                                            miujs     elysia       hono
+cold start                                   11.0       49.0       12.3
+=== run 2 2026-10-15T18:05:17+07:00
+Bun 1.4.3 · in-process fetch() · 3 rounds × 2000 ms, best round kept
+
+scenario                                    miujs     elysia       hono   miujs vs best other
+GET / (text)                            1,489,000  1,993,500  1,493,000   75%
+GET /users/:id (params → JSON)            945,500  1,143,500    671,000   83%
+POST /json (body validation → JSON)       343,000    370,000    375,500   91%
+
+req/s, higher is better.
+
+Heap per 10k requests, in-process (best of 2): retained after GC / peak above baseline
+scenario                                                 miujs                  elysia                    hono
+GET / (text)                                   7.6 KB / 1.0 KB         7.2 KB / 0.0 KB         7.6 KB / 2.2 KB
+GET /users/:id (params → JSON)                 7.6 KB / 0.9 KB         7.6 KB / 1.2 KB         1.3 KB / 4.7 KB
+POST /json (body validation → JSON)          7.6 KB / 288.1 KB         7.4 KB / 4.4 KB        7.6 KB / 12.9 KB
+
+Cold start (process start → first response, median of 7, ms)
+                                            miujs     elysia       hono
+cold start                                   11.4       50.3       12.9
+0
+=== run 3 (idle machine) 2026-10-15T18:07:02+07:00 3d837b1
+Bun 1.4.3 · in-process fetch() · 3 rounds × 2000 ms, best round kept
+
+scenario                                    miujs     elysia       hono   miujs vs best other
+GET / (text)                            1,340,500  1,896,500  1,622,500   71%
+GET /users/:id (params → JSON)            983,500  1,164,000    672,000   84%
+POST /json (body validation → JSON)       347,000    370,000    376,000   92%
+
+req/s, higher is better.
+
+Heap per 10k requests, in-process (best of 2): retained after GC / peak above baseline
+scenario                                                 miujs                  elysia                    hono
+GET / (text)                                   7.3 KB / 1.0 KB         7.2 KB / 0.0 KB         7.6 KB / 2.0 KB
+GET /users/:id (params → JSON)                 7.6 KB / 0.9 KB         7.6 KB / 1.2 KB         1.3 KB / 3.9 KB
+POST /json (body validation → JSON)          7.6 KB / 288.1 KB         7.4 KB / 6.9 KB        7.6 KB / 13.9 KB
+
+Cold start (process start → first response, median of 7, ms)
+                                            miujs     elysia       hono
+cold start                                   10.9       50.0       12.5

@@ -1,0 +1,35 @@
+{
+  "src/main.ts": {
+    "file": "assets/main-BxY12abc.js",
+    "name": "main",
+    "src": "src/main.ts",
+    "isEntry": true,
+    "imports": ["_shared-Cq3x9kLm.js"],
+    "dynamicImports": ["src/tour.ts"],
+    "css": ["assets/main-Dk2j3l4m.css"]
+  },
+  "_shared-Cq3x9kLm.js": {
+    "file": "assets/shared-Cq3x9kLm.js",
+    "name": "shared",
+    "imports": ["_vendor-Zz9y8x7w.js"],
+    "css": ["assets/shared-Aa1b2c3d.css"]
+  },
+  "_vendor-Zz9y8x7w.js": {
+    "file": "assets/vendor-Zz9y8x7w.js",
+    "name": "vendor",
+    "imports": ["_shared-Cq3x9kLm.js"]
+  },
+  "src/tour.ts": {
+    "file": "assets/tour-Qq1w2e3r.js",
+    "name": "tour",
+    "src": "src/tour.ts",
+    "isDynamicEntry": true,
+    "css": ["assets/tour-Hh5j6k7l.css"]
+  },
+  "src/admin.ts": {
+    "file": "assets/admin-Pp0o9i8u.js",
+    "name": "admin",
+    "src": "src/admin.ts",
+    "isEntry": true
+  }
+}

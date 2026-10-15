@@ -1,8 +1,11 @@
 node_modules/
-dist/
+.wrangler/
 *.sqlite
 *.sqlite-*
 .env
 .env.*
-.wrangler/
-.DS_Store
+!.env.example
+dist/
+.tmp/
+packages/cli/.tmp/
+.tmp-exit-*/

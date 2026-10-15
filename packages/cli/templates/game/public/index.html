@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__APP_NAME__</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 30rem; margin: 2rem auto; padding: 0 1rem; text-align: center; }
+  #board { display: grid; grid-template-columns: repeat(3, 5rem); gap: .3rem; justify-content: center; margin: 1rem 0; }
+  #board button { width: 5rem; height: 5rem; font-size: 2.5rem; }
+  #err { color: #b00; }
+</style>
+</head>
+<body>
+<h1>__APP_NAME__</h1>
+<p id="status">Connecting…</p>
+<div id="board"></div>
+<button id="reset">New game</button>
+<p id="share"></p>
+<p id="err"></p>
+<script type="module">
+// A dependency-free client for the MiuJS rooms wire protocol (see @miujs/realtime PROTOCOL.md).
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const room = params.get("room") || "table1";
+const name = sessionStorage.getItem("name") || prompt("Your name?") || "player";
+sessionStorage.setItem("name", name);
+let state = null, me = null, ws = null;
+$("share").textContent = `Invite a friend: ${location.origin}/?room=${room}`;
+
+function applyPatch(doc, ops) {
+  for (const op of ops) {
+    if (op.path === "") { if (op.op !== "remove") doc = op.value; continue; }
+    const segs = op.path.slice(1).split("/").map((s) => s.replace(/~1/g, "/").replace(/~0/g, "~"));
+    const last = segs.pop();
+    let p = doc;
+    for (const s of segs) p = p[s];
+    if (Array.isArray(p)) {
+      const i = last === "-" ? p.length : Number(last);
+      if (op.op === "add") p.splice(i, 0, op.value);
+      else if (op.op === "remove") p.splice(i, 1);
+      else p[i] = op.value;
+    } else if (op.op === "remove") delete p[last];
+    else p[last] = op.value;
+  }
+  return doc;
+}
+
+const send = (type, data = {}) => ws?.readyState === 1 && ws.send(JSON.stringify({ t: "msg", type, data }));
+
+function render() {
+  if (!state || !me) return;
+  const seat = state.seats.X === me.id ? "X" : state.seats.O === me.id ? "O" : null;
+  const nameOf = (s) => (state.seats[s] ? state.names[state.seats[s]] : "(empty seat)");
+  $("status").textContent = state.winner
+    ? state.winner === "draw" ? "Draw!" : `${nameOf(state.winner)} (${state.winner}) wins!`
+    : `${nameOf("X")} (X) vs ${nameOf("O")} (O) · ${seat ? (state.turn === seat ? "your turn" : "their turn") : "watching"}`;
+  $("board").innerHTML = "";
+  state.board.forEach((cell, i) => {
+    const b = document.createElement("button");
+    b.textContent = cell;
+    b.disabled = Boolean(cell || state.winner || state.turn !== seat);
+    b.onclick = () => send("move", { cell: i });
+    $("board").append(b);
+  });
+}
+
+function connect() {
+  const u = new URL(`/rooms/tictactoe/${encodeURIComponent(room)}`, location.href);
+  u.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  u.searchParams.set("name", name);
+  const resume = sessionStorage.getItem(`resume:${room}`);
+  if (resume) u.searchParams.set("resume", resume);
+  ws = new WebSocket(u);
+  ws.onmessage = (e) => {
+    const f = JSON.parse(e.data);
+    if (f.t === "welcome") { me = f.me; sessionStorage.setItem(`resume:${room}`, f.resumeToken); $("err").textContent = ""; }
+    else if (f.t === "state") state = f.state;
+    else if (f.t === "patch") state = applyPatch(state, f.ops);
+    else if (f.t === "error") $("err").textContent = `${f.message}${f.fix ? " — " + f.fix : ""}`;
+    render();
+  };
+  ws.onclose = (e) => {
+    if ([1000, 1003, 1009, 4003, 4004, 4005, 4008].includes(e.code)) return;
+    $("err").textContent = "Connection lost, reconnecting…";
+    setTimeout(connect, 1000);
+  };
+}
+
+$("reset").onclick = () => send("reset");
+connect();
+</script>
+</body>
+</html>

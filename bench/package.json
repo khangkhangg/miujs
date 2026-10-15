@@ -2,11 +2,9 @@
   "name": "miujs-bench",
   "private": true,
   "type": "module",
-  "scripts": {
-    "bench": "bun run.ts"
-  },
-  "devDependencies": {
-    "elysia": "^1.2.0",
-    "hono": "^4.6.0"
+  "dependencies": {
+    "elysia": "^1.4.30",
+    "hono": "^4.13.13",
+    "miujs": "workspace:*"
   }
 }

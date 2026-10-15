@@ -1,0 +1,77 @@
+name: Release
+
+# Publishes miujs and @miujs/* to npm when a v* tag is pushed (create it with
+# `bun scripts/release/version.ts <patch|minor|major>`; see RELEASING.md).
+# Run it by hand (Actions -> Release -> Run workflow) for a dry run: everything except the upload.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (npm publish --dry-run). Real publishes only happen from a v* tag."
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write # npm --provenance signs with the workflow's OIDC token
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: "1.4.3"
+
+jobs:
+  release:
+    name: Test, build, verify, publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      # registry-url writes an .npmrc that reads NODE_AUTH_TOKEN.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Test
+        run: bun test
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Build packages
+        run: bun scripts/build-packages.ts
+
+      # Packs the tarballs and runs them on Node 24, Deno 2, Bun, a Workers bundle and strict tsc.
+      - name: Verify packed tarballs
+        run: bun scripts/release/verify.ts --no-build
+
+      - name: Publish (dry run)
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        run: bun scripts/release/publish.ts --dry-run
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish
+        if: github.event_name == 'push' || !inputs.dry_run
+        run: bun scripts/release/publish.ts --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"

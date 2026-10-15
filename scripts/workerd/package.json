@@ -1,0 +1,9 @@
+{
+  "name": "miujs-workerd-harness",
+  "private": true,
+  "type": "module",
+  "description": "Runs the example apps on Cloudflare's local runtime (workerd via wrangler dev --local). Not a workspace.",
+  "devDependencies": {
+    "wrangler": "4.143.1"
+  }
+}

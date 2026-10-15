@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__APP_NAME__ chat</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+  #log { list-style: none; padding: 0; min-height: 12rem; }
+  #log b { margin-right: .5rem; }
+  form { display: flex; gap: .5rem; }
+  input { flex: 1; font: inherit; padding: .4rem; }
+  #err { color: #b00; }
+</style>
+</head>
+<body>
+<h1>__APP_NAME__ chat</h1>
+<p id="who"></p>
+<ul id="log"></ul>
+<form id="form"><input id="text" autocomplete="off" placeholder="Say something" maxlength="500"><button>Send</button></form>
+<p id="err"></p>
+<script type="module">
+// A dependency-free client for the MiuJS rooms wire protocol (see @miujs/realtime PROTOCOL.md).
+// In a bundled app you can use `connect()` from "@miujs/realtime/client" instead.
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const room = new URLSearchParams(location.search).get("room") || "lobby";
+const name = sessionStorage.getItem("name") || prompt("Your name?") || "guest";
+sessionStorage.setItem("name", name);
+let state = null, ws = null;
+
+function applyPatch(doc, ops) {
+  for (const op of ops) {
+    if (op.path === "") { if (op.op !== "remove") doc = op.value; continue; }
+    const segs = op.path.slice(1).split("/").map((s) => s.replace(/~1/g, "/").replace(/~0/g, "~"));
+    const last = segs.pop();
+    let p = doc;
+    for (const s of segs) p = p[s];
+    if (Array.isArray(p)) {
+      const i = last === "-" ? p.length : Number(last);
+      if (op.op === "add") p.splice(i, 0, op.value);
+      else if (op.op === "remove") p.splice(i, 1);
+      else p[i] = op.value;
+    } else if (op.op === "remove") delete p[last];
+    else p[last] = op.value;
+  }
+  return doc;
+}
+
+function render() {
+  if (!state) return;
+  $("who").textContent = `Room ${room} · online: ${Object.values(state.online).map((p) => p.name).join(", ")}`;
+  $("log").innerHTML = state.messages.map((m) => `<li><b>${esc(m.from)}</b>${esc(m.text)}</li>`).join("");
+}
+
+function connect() {
+  const u = new URL(`/rooms/chat/${encodeURIComponent(room)}`, location.href);
+  u.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  u.searchParams.set("name", name);
+  const resume = sessionStorage.getItem(`resume:${room}`);
+  if (resume) u.searchParams.set("resume", resume);
+  ws = new WebSocket(u);
+  ws.onmessage = (e) => {
+    const f = JSON.parse(e.data);
+    if (f.t === "welcome") { sessionStorage.setItem(`resume:${room}`, f.resumeToken); $("err").textContent = ""; }
+    else if (f.t === "state") state = f.state;
+    else if (f.t === "patch") state = applyPatch(state, f.ops);
+    else if (f.t === "error") $("err").textContent = `${f.message}${f.fix ? " — " + f.fix : ""}`;
+    render();
+  };
+  ws.onclose = (e) => {
+    if ([1000, 1003, 1009, 4003, 4004, 4005, 4008].includes(e.code)) return;
+    $("err").textContent = "Connection lost, reconnecting…";
+    setTimeout(connect, 1000);
+  };
+}
+
+$("form").onsubmit = (e) => {
+  e.preventDefault();
+  const text = $("text").value.trim();
+  if (text && ws?.readyState === 1) ws.send(JSON.stringify({ t: "msg", type: "say", data: { text } }));
+  $("text").value = "";
+};
+
+connect();
+</script>
+</body>
+</html>

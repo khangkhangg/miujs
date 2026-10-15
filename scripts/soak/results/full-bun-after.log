@@ -1,0 +1,26 @@
+
+== bun core: cold start (machine CPU busy before start: 10%)
+   first response 34 ms, idle RSS 26.7 MB, idle stop → exit 13 ms
+== bun core: soak 60 s
+   68,016 ops/s, p50 0.91 / p95 1.33 / p99 2.20 ms, errors 0, heap warm 0.8 → end 0.7 → settled 0.6 MB (-10.4% / -17.1%)
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":0,"serverAnswersAfter":200,"servedDelta":201}; stop after load → exit in 17 ms
+
+== bun api: cold start (machine CPU busy before start: 9%)
+   first response 54 ms, idle RSS 39.8 MB, idle stop → exit 16 ms
+== bun api: soak 60 s
+   17,697 ops/s, p50 1.46 / p95 2.97 / p99 4.42 ms, errors 0, heap warm 3.3 → end 4.3 → settled 3.9 MB (28.8% / 16.5%)  SUSPECTED LEAK
+   growing types: Object +7626, string +7200, StructureRareData +5, Timeout +-1, Headers +-2, URL +-2, Request +-2, NativePromiseContext +-2
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":0,"serverAnswersAfter":401,"servedDelta":233}; stop after load → exit in 20 ms
+
+== bun quiz: cold start (machine CPU busy before start: 7%)
+   first response 45 ms, idle RSS 37.6 MB, idle stop → exit 11 ms
+== bun quiz: soak 60 s
+   240 ops/s, p50 6.24 / p95 22.30 / p99 32.20 ms, errors 0, heap warm 3.7 → end 4.8 → settled 1.2 MB (27.3% / -67.2%)  SUSPECTED LEAK
+   growing types: RegExp +-1, StructureChain +-1, FunctionExecutable +-52, UnlinkedFunctionExecutable +-56, SymbolTable +-80, WeakSet +-120, UnlinkedFunctionCodeBlock +-161, Headers +-227
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":0,"serverAnswersAfter":200,"servedDelta":201,"wsAborts":50,"wsWelcomed":50,"roomsAfterWsAbort":{"rooms":50,"players":50,"connected":0}}; stop after load → exit in 18 ms
+
+== bun arena: cold start (machine CPU busy before start: 5%)
+   first response 57 ms, idle RSS 47.9 MB, idle stop → exit 15 ms
+== bun arena: soak 60 s
+   9,896 ops/s, p50 6.45 / p95 66.60 / p99 89.50 ms, errors 0, heap warm 24.3 → end 3.2 → settled 3.0 MB (-86.7% / -87.5%)
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":0,"serverAnswersAfter":200,"servedDelta":203,"longPollAborted":1,"inflightBefore":0,"inflight2sAfterAbort":0,"inflight21sAfterAbort":0}; stop after load → exit in 22 ms

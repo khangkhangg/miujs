@@ -1,0 +1,1425 @@
+{
+  "app": "quiz",
+  "runtime": "bun",
+  "durationS": 60,
+  "concurrency": 40,
+  "drivers": 0,
+  "requests": 14013,
+  "rps": 233.55,
+  "p50": 6.08,
+  "p95": 9.53,
+  "p99": 34.4,
+  "max": 44.17380000000003,
+  "errors": 0,
+  "errorKinds": {},
+  "expected": {},
+  "wsFramesInPerS": 1437.0833333333333,
+  "ops": {
+    "POST /api/games": {
+      "n": 360,
+      "perS": 6,
+      "p50": 1.54,
+      "p95": 10.3,
+      "p99": 11.100000000000001,
+      "max": 12.989699999998265
+    },
+    "GET /rooms/code/:code": {
+      "n": 80,
+      "perS": 1.3333333333333333,
+      "p50": 3.48,
+      "p95": 8.01,
+      "p99": 8.39,
+      "max": 8.387899999999718
+    },
+    "ws join (host)": {
+      "n": 360,
+      "perS": 6,
+      "p50": 2.85,
+      "p95": 23.400000000000002,
+      "p99": 35.2,
+      "max": 38.30879999999979
+    },
+    "ws join (player)": {
+      "n": 1952,
+      "perS": 32.53333333333333,
+      "p50": 3.14,
+      "p95": 36.800000000000004,
+      "p99": 43.2,
+      "max": 44.17380000000003
+    },
+    "ws broadcast (start/next → question)": {
+      "n": 1800,
+      "perS": 30,
+      "p50": 6.13,
+      "p95": 8.06,
+      "p99": 14,
+      "max": 21.683199999999488
+    },
+    "ws answer → ack": {
+      "n": 9461,
+      "perS": 157.68333333333334,
+      "p50": 6.15,
+      "p95": 7.71,
+      "p99": 12.3,
+      "max": 28.800199999997858
+    }
+  },
+  "rss": {
+    "idleBeforeLoad": 42631168,
+    "start": 42651648,
+    "peak": 66224128,
+    "end": 66129920,
+    "settled": 58294272
+  },
+  "heap": {
+    "idleBeforeLoad": 723656,
+    "afterWarmup": 3848864,
+    "warmupAtMs": 12017,
+    "end": 4940517,
+    "settled": 1264436,
+    "growth": 0.2836299230110495,
+    "settledGrowth": -0.671478129650723
+  },
+  "objects": {
+    "afterWarmup": 36812,
+    "end": 55614,
+    "settled": 9243
+  },
+  "suspectedLeak": true,
+  "typeGrowthEnd": [
+    {
+      "type": "string",
+      "before": 7754,
+      "after": 13050,
+      "delta": 5296
+    },
+    {
+      "type": "Cell Butterfly",
+      "before": 1313,
+      "after": 3736,
+      "delta": 2423
+    },
+    {
+      "type": "Structure",
+      "before": 2448,
+      "after": 4809,
+      "delta": 2361
+    },
+    {
+      "type": "Object",
+      "before": 9160,
+      "after": 11294,
+      "delta": 2134
+    },
+    {
+      "type": "StructureRareData",
+      "before": 944,
+      "after": 2750,
+      "delta": 1806
+    },
+    {
+      "type": "Function",
+      "before": 4785,
+      "after": 6310,
+      "delta": 1525
+    },
+    {
+      "type": "Array",
+      "before": 816,
+      "after": 1776,
+      "delta": 960
+    },
+    {
+      "type": "Map",
+      "before": 739,
+      "after": 1699,
+      "delta": 960
+    },
+    {
+      "type": "GetterSetter",
+      "before": 424,
+      "after": 904,
+      "delta": 480
+    },
+    {
+      "type": "Set",
+      "before": 254,
+      "after": 574,
+      "delta": 320
+    },
+    {
+      "type": "JSLexicalEnvironment",
+      "before": 1975,
+      "after": 2192,
+      "delta": 217
+    },
+    {
+      "type": "Timeout",
+      "before": 241,
+      "after": 402,
+      "delta": 161
+    }
+  ],
+  "typeGrowthSettled": [
+    {
+      "type": "RegExp",
+      "before": 33,
+      "after": 32,
+      "delta": -1
+    },
+    {
+      "type": "StructureChain",
+      "before": 11,
+      "after": 9,
+      "delta": -2
+    },
+    {
+      "type": "FunctionExecutable",
+      "before": 547,
+      "after": 495,
+      "delta": -52
+    },
+    {
+      "type": "UnlinkedFunctionExecutable",
+      "before": 611,
+      "after": 555,
+      "delta": -56
+    },
+    {
+      "type": "SymbolTable",
+      "before": 318,
+      "after": 238,
+      "delta": -80
+    },
+    {
+      "type": "WeakSet",
+      "before": 121,
+      "after": 1,
+      "delta": -120
+    },
+    {
+      "type": "UnlinkedFunctionCodeBlock",
+      "before": 237,
+      "after": 70,
+      "delta": -167
+    },
+    {
+      "type": "Headers",
+      "before": 230,
+      "after": 4,
+      "delta": -226
+    },
+    {
+      "type": "Request",
+      "before": 228,
+      "after": 2,
+      "delta": -226
+    },
+    {
+      "type": "ServerWebSocket",
+      "before": 227,
+      "after": 1,
+      "delta": -226
+    },
+    {
+      "type": "FunctionCodeBlock",
+      "before": 362,
+      "after": 122,
+      "delta": -240
+    },
+    {
+      "type": "Set",
+      "before": 254,
+      "after": 14,
+      "delta": -240
+    }
+  ],
+  "extras": {
+    "inflight": 0,
+    "maxInflight": 1,
+    "served": 2752,
+    "rooms": {
+      "rooms": 280,
+      "players": 980,
+      "connected": 0
+    }
+  },
+  "settledExtras": {
+    "rooms": {
+      "rooms": 0,
+      "players": 0,
+      "connected": 0
+    },
+    "settleS": 65
+  },
+  "codeState": {
+    "head": "2891f99",
+    "dirtyPackages": " 1 file changed, 31 insertions(+), 4 deletions(-)",
+    "at": "2026-10-15T12:07:21.094Z"
+  },
+  "stuck": {
+    "midBodyAborts": 200,
+    "fetchAborts": 200,
+    "inflightAfter": 0,
+    "serverAnswersAfter": 200,
+    "servedDelta": 201,
+    "wsAborts": 50,
+    "wsWelcomed": 50,
+    "roomsAfterWsAbort": {
+      "rooms": 50,
+      "players": 50,
+      "connected": 0
+    }
+  },
+  "shutdownAfterLoad": {
+    "exited": true,
+    "ms": 17.458599999983562,
+    "code": 0,
+    "eventualExitMs": 17.458599999983562
+  },
+  "stderrTail": [
+    "STOPPED 0"
+  ],
+  "machineCpuDuringLoad": {
+    "mean": 10,
+    "max": 100
+  },
+  "samples": [
+    {
+      "t": 3,
+      "rss": 42651648,
+      "heap": 724136,
+      "inflight": 0,
+      "rooms": 0,
+      "connected": 0,
+      "cpu": 100
+    },
+    {
+      "t": 1010,
+      "rss": 62939136,
+      "heap": 5484554,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 27
+    },
+    {
+      "t": 2017,
+      "rss": 62713856,
+      "heap": 5496632,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 17
+    },
+    {
+      "t": 3022,
+      "rss": 62750720,
+      "heap": 5499316,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 9
+    },
+    {
+      "t": 4028,
+      "rss": 62750720,
+      "heap": 5499919,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 16
+    },
+    {
+      "t": 5036,
+      "rss": 62750720,
+      "heap": 5500426,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 28
+    },
+    {
+      "t": 6044,
+      "rss": 62750720,
+      "heap": 5500933,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 7
+    },
+    {
+      "t": 7050,
+      "rss": 62750720,
+      "heap": 5501440,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 8
+    },
+    {
+      "t": 8058,
+      "rss": 62763008,
+      "heap": 5501947,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 7
+    },
+    {
+      "t": 9066,
+      "rss": 62750720,
+      "heap": 5502454,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 7
+    },
+    {
+      "t": 10074,
+      "rss": 62824448,
+      "heap": 5512437,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 15
+    },
+    {
+      "t": 11080,
+      "rss": 62734336,
+      "heap": 3846761,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 13
+    },
+    {
+      "t": 12091,
+      "rss": 62394368,
+      "heap": 3849344,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 13
+    },
+    {
+      "t": 13099,
+      "rss": 62005248,
+      "heap": 3849851,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 6
+    },
+    {
+      "t": 14109,
+      "rss": 62005248,
+      "heap": 3850358,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 5
+    },
+    {
+      "t": 15120,
+      "rss": 62005248,
+      "heap": 3850865,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 4
+    },
+    {
+      "t": 16129,
+      "rss": 62005248,
+      "heap": 3851372,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 8
+    },
+    {
+      "t": 17138,
+      "rss": 62038016,
+      "heap": 3851879,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 5
+    },
+    {
+      "t": 18146,
+      "rss": 62038016,
+      "heap": 3852386,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 4
+    },
+    {
+      "t": 19154,
+      "rss": 61898752,
+      "heap": 3852893,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 7
+    },
+    {
+      "t": 20162,
+      "rss": 61739008,
+      "heap": 3853400,
+      "inflight": 0,
+      "rooms": 120,
+      "connected": 226,
+      "cpu": 7
+    },
+    {
+      "t": 21169,
+      "rss": 66224128,
+      "heap": 6249096,
+      "inflight": 0,
+      "rooms": 203,
+      "connected": 227,
+      "cpu": 9
+    },
+    {
+      "t": 22175,
+      "rss": 64700416,
+      "heap": 7600763,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 12
+    },
+    {
+      "t": 23183,
+      "rss": 64483328,
+      "heap": 7601270,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 16
+    },
+    {
+      "t": 24195,
+      "rss": 64495616,
+      "heap": 7601777,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 5
+    },
+    {
+      "t": 25208,
+      "rss": 64475136,
+      "heap": 7602284,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 5
+    },
+    {
+      "t": 26221,
+      "rss": 64475136,
+      "heap": 7602791,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 5
+    },
+    {
+      "t": 27235,
+      "rss": 64475136,
+      "heap": 7603298,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 4
+    },
+    {
+      "t": 28253,
+      "rss": 64536576,
+      "heap": 7603805,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 7
+    },
+    {
+      "t": 29268,
+      "rss": 64499712,
+      "heap": 7605172,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 4
+    },
+    {
+      "t": 30282,
+      "rss": 64528384,
+      "heap": 7606909,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 4
+    },
+    {
+      "t": 31293,
+      "rss": 65200128,
+      "heap": 8010860,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 5
+    },
+    {
+      "t": 32305,
+      "rss": 65228800,
+      "heap": 8011367,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 3
+    },
+    {
+      "t": 33319,
+      "rss": 65200128,
+      "heap": 8012983,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 8
+    },
+    {
+      "t": 34333,
+      "rss": 65200128,
+      "heap": 8013490,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 3
+    },
+    {
+      "t": 35345,
+      "rss": 65200128,
+      "heap": 8013997,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 5
+    },
+    {
+      "t": 36354,
+      "rss": 65200128,
+      "heap": 8014504,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 4
+    },
+    {
+      "t": 37362,
+      "rss": 65200128,
+      "heap": 8015011,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 12
+    },
+    {
+      "t": 38367,
+      "rss": 65200128,
+      "heap": 8015518,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 8
+    },
+    {
+      "t": 39374,
+      "rss": 65200128,
+      "heap": 8016025,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 13
+    },
+    {
+      "t": 40384,
+      "rss": 65150976,
+      "heap": 8016532,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 212,
+      "cpu": 8
+    },
+    {
+      "t": 41397,
+      "rss": 65155072,
+      "heap": 8020879,
+      "inflight": 0,
+      "rooms": 248,
+      "connected": 182,
+      "cpu": 7
+    },
+    {
+      "t": 42412,
+      "rss": 65781760,
+      "heap": 7733816,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 12
+    },
+    {
+      "t": 43425,
+      "rss": 65593344,
+      "heap": 7831343,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 5
+    },
+    {
+      "t": 44438,
+      "rss": 65658880,
+      "heap": 7831823,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 4
+    },
+    {
+      "t": 45449,
+      "rss": 65667072,
+      "heap": 7832303,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 3
+    },
+    {
+      "t": 46460,
+      "rss": 65716224,
+      "heap": 7832783,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 3
+    },
+    {
+      "t": 47474,
+      "rss": 65728512,
+      "heap": 7833263,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 4
+    },
+    {
+      "t": 48481,
+      "rss": 65765376,
+      "heap": 7833743,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 4
+    },
+    {
+      "t": 49496,
+      "rss": 65867776,
+      "heap": 6259147,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 8
+    },
+    {
+      "t": 50510,
+      "rss": 65339392,
+      "heap": 6259627,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 5
+    },
+    {
+      "t": 51523,
+      "rss": 66056192,
+      "heap": 6512205,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 7
+    },
+    {
+      "t": 52538,
+      "rss": 65794048,
+      "heap": 6512685,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 4
+    },
+    {
+      "t": 53550,
+      "rss": 65806336,
+      "heap": 6513165,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 5
+    },
+    {
+      "t": 54560,
+      "rss": 65826816,
+      "heap": 6817353,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 4
+    },
+    {
+      "t": 55568,
+      "rss": 65789952,
+      "heap": 6817833,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 6
+    },
+    {
+      "t": 56574,
+      "rss": 65789952,
+      "heap": 6818313,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 9
+    },
+    {
+      "t": 57581,
+      "rss": 65806336,
+      "heap": 6818793,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 13
+    },
+    {
+      "t": 58593,
+      "rss": 65806336,
+      "heap": 6819273,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 8
+    },
+    {
+      "t": 59604,
+      "rss": 65855488,
+      "heap": 6819753,
+      "inflight": 0,
+      "rooms": 360,
+      "connected": 203,
+      "cpu": 7
+    },
+    {
+      "t": 60619,
+      "rss": 65896448,
+      "heap": 6820233,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 203,
+      "cpu": 3
+    },
+    {
+      "t": 61632,
+      "rss": 65896448,
+      "heap": 6820713,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 203,
+      "cpu": 4
+    },
+    {
+      "t": 62643,
+      "rss": 64499712,
+      "heap": 4940997,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 5
+    },
+    {
+      "t": 63654,
+      "rss": 64434176,
+      "heap": 4941477,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 8
+    },
+    {
+      "t": 64667,
+      "rss": 64434176,
+      "heap": 4941957,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 65673,
+      "rss": 64454656,
+      "heap": 4942437,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 4
+    },
+    {
+      "t": 66685,
+      "rss": 64458752,
+      "heap": 4942917,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 14
+    },
+    {
+      "t": 67694,
+      "rss": 64483328,
+      "heap": 4943397,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 23
+    },
+    {
+      "t": 68700,
+      "rss": 64487424,
+      "heap": 4943877,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 7
+    },
+    {
+      "t": 69713,
+      "rss": 64495616,
+      "heap": 4944357,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 70726,
+      "rss": 64536576,
+      "heap": 4944837,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 71736,
+      "rss": 65482752,
+      "heap": 4945456,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 72748,
+      "rss": 64765952,
+      "heap": 4945936,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 73761,
+      "rss": 64704512,
+      "heap": 4946416,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 74774,
+      "rss": 64688128,
+      "heap": 5370534,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 75786,
+      "rss": 64413696,
+      "heap": 5371014,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 4
+    },
+    {
+      "t": 76798,
+      "rss": 64425984,
+      "heap": 5371494,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 77808,
+      "rss": 64425984,
+      "heap": 5371974,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 7
+    },
+    {
+      "t": 78818,
+      "rss": 64430080,
+      "heap": 5372454,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 79829,
+      "rss": 64442368,
+      "heap": 5372934,
+      "inflight": 0,
+      "rooms": 280,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 80842,
+      "rss": 64483328,
+      "heap": 5373414,
+      "inflight": 0,
+      "rooms": 240,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 81854,
+      "rss": 64524288,
+      "heap": 5373894,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 82865,
+      "rss": 64544768,
+      "heap": 5374374,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 83875,
+      "rss": 64581632,
+      "heap": 5374854,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 84886,
+      "rss": 64278528,
+      "heap": 5375334,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 1
+    },
+    {
+      "t": 85896,
+      "rss": 64487424,
+      "heap": 5463165,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 11
+    },
+    {
+      "t": 86907,
+      "rss": 64376832,
+      "heap": 5463645,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 5
+    },
+    {
+      "t": 87919,
+      "rss": 64385024,
+      "heap": 5464125,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 4
+    },
+    {
+      "t": 88930,
+      "rss": 64385024,
+      "heap": 5464605,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 89943,
+      "rss": 64385024,
+      "heap": 5465085,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 90955,
+      "rss": 64389120,
+      "heap": 5465565,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 4
+    },
+    {
+      "t": 91969,
+      "rss": 64286720,
+      "heap": 5466045,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 5
+    },
+    {
+      "t": 92981,
+      "rss": 64438272,
+      "heap": 5466525,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 93993,
+      "rss": 64405504,
+      "heap": 5467005,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 5
+    },
+    {
+      "t": 95006,
+      "rss": 64307200,
+      "heap": 5467485,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 96017,
+      "rss": 63930368,
+      "heap": 5467965,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 4
+    },
+    {
+      "t": 97031,
+      "rss": 63938560,
+      "heap": 5468445,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 98043,
+      "rss": 64081920,
+      "heap": 5468925,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 99056,
+      "rss": 64090112,
+      "heap": 5469405,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 100069,
+      "rss": 64118784,
+      "heap": 5469885,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 101081,
+      "rss": 64790528,
+      "heap": 5581012,
+      "inflight": 0,
+      "rooms": 160,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 102094,
+      "rss": 64573440,
+      "heap": 5581492,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 103106,
+      "rss": 64573440,
+      "heap": 5581972,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 6
+    },
+    {
+      "t": 104117,
+      "rss": 64573440,
+      "heap": 5582452,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 105126,
+      "rss": 64573440,
+      "heap": 5582932,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 106137,
+      "rss": 64573440,
+      "heap": 5583412,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 4
+    },
+    {
+      "t": 107148,
+      "rss": 64512000,
+      "heap": 5583892,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 108160,
+      "rss": 64466944,
+      "heap": 5584372,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 109172,
+      "rss": 64471040,
+      "heap": 5584852,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 110185,
+      "rss": 64471040,
+      "heap": 5585332,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 111197,
+      "rss": 64229376,
+      "heap": 5585812,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 112209,
+      "rss": 64012288,
+      "heap": 5586292,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 113221,
+      "rss": 64012288,
+      "heap": 5586772,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 6
+    },
+    {
+      "t": 114234,
+      "rss": 64016384,
+      "heap": 5587252,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 115247,
+      "rss": 64024576,
+      "heap": 5587732,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 116257,
+      "rss": 64040960,
+      "heap": 5588212,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 117269,
+      "rss": 64049152,
+      "heap": 5588692,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 118282,
+      "rss": 64053248,
+      "heap": 5589172,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 5
+    },
+    {
+      "t": 119295,
+      "rss": 64057344,
+      "heap": 5589652,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 120308,
+      "rss": 64065536,
+      "heap": 5590132,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 121322,
+      "rss": 58421248,
+      "heap": 1721873,
+      "inflight": 0,
+      "rooms": 40,
+      "connected": 0,
+      "cpu": 5
+    },
+    {
+      "t": 122330,
+      "rss": 58306560,
+      "heap": 1724172,
+      "inflight": 0,
+      "rooms": 0,
+      "connected": 0,
+      "cpu": 5
+    },
+    {
+      "t": 123338,
+      "rss": 58302464,
+      "heap": 1752775,
+      "inflight": 0,
+      "rooms": 0,
+      "connected": 0,
+      "cpu": 2
+    },
+    {
+      "t": 124346,
+      "rss": 58298368,
+      "heap": 1753282,
+      "inflight": 0,
+      "rooms": 0,
+      "connected": 0,
+      "cpu": 10
+    },
+    {
+      "t": 125355,
+      "rss": 58298368,
+      "heap": 1753789,
+      "inflight": 0,
+      "rooms": 0,
+      "connected": 0,
+      "cpu": 3
+    },
+    {
+      "t": 126363,
+      "rss": 58298368,
+      "heap": 1754296,
+      "inflight": 0,
+      "rooms": 0,
+      "connected": 0,
+      "cpu": 2
+    }
+  ],
+  "cold": null,
+  "machineBusyBeforePct": 7
+}
