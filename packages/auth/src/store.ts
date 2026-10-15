@@ -75,6 +75,10 @@ export interface UserStore {
   findOAuthAccount?(provider: string, subject: string, env: Env): Promise<OAuthAccountRecord | null>;
   /** Returns false when (provider, subject) is already linked. */
   createOAuthAccount?(account: OAuthAccountRecord, env: Env): Promise<boolean>;
+  /** The user's linked identities, oldest first. */
+  listOAuthAccounts?(userId: string, env: Env): Promise<OAuthAccountRecord[]>;
+  /** Unlinks the user's identity at `provider`. Returns false when there was none. */
+  deleteOAuthAccount?(userId: string, provider: string, env: Env): Promise<boolean>;
 
   // Needed for passkeys (built-in stores have them).
   /** Returns false when the credential id is already registered. */
@@ -221,6 +225,14 @@ export function memoryUserStore(): UserStore {
       if (oauth.has(key)) return false;
       oauth.set(key, structuredClone(a));
       return true;
+    },
+    async listOAuthAccounts(userId) {
+      return [...oauth.values()].filter((a) => a.userId === userId).sort((x, y) => x.createdAt - y.createdAt).map((a) => structuredClone(a));
+    },
+    async deleteOAuthAccount(userId, provider) {
+      let deleted = false;
+      for (const [k, a] of oauth) if (a.userId === userId && a.provider === provider) deleted = oauth.delete(k) || deleted;
+      return deleted;
     },
     async createPasskey(p) {
       if (passkeys.has(p.credentialId)) return false;
@@ -516,6 +528,16 @@ export function dbUserStore(database: DatabaseSource, opts: DbUserStoreOptions =
         .bind(a.id, a.provider, a.subject, a.userId, a.email, a.createdAt)
         .run();
       return r.meta.changes === 1;
+    },
+    async listOAuthAccounts(userId, env) {
+      const d = await get(env);
+      const { results } = await d.prepare(`SELECT ${OAUTH_COLS} FROM oauth_accounts WHERE user_id = ? ORDER BY created_at`).bind(userId).all<OAuthRow>();
+      return results.map((r) => toOAuth(r)!);
+    },
+    async deleteOAuthAccount(userId, provider, env) {
+      const d = await get(env);
+      const r = await d.prepare("DELETE FROM oauth_accounts WHERE user_id = ? AND provider = ?").bind(userId, provider).run();
+      return r.meta.changes > 0;
     },
     async createPasskey(p, env) {
       const d = await get(env);

@@ -4,7 +4,7 @@
 import { errors, route, t, type Context, type Env, type RouteDef } from "miujs";
 import { base64urlDecode, base64urlEncode, hex, randomBytes, randomId, sha256, sign, timingSafeEqual, unsign, utf8 } from "@miujs/session";
 import { importEs256PrivateKey, signJwt, verifyJws, type JwsHeader } from "./jose.ts";
-import { unusablePasswordHash } from "./password.ts";
+import { UNUSABLE_PASSWORD, unusablePasswordHash } from "./password.ts";
 import type { StoredUser, UserStore } from "./store.ts";
 
 export interface OAuthClientOptions {
@@ -107,6 +107,8 @@ interface StatePayload {
   r: string;
   /** expires, epoch ms */
   e: number;
+  /** link mode: the signed-in user who started it */
+  l?: string;
 }
 
 const COOKIE = "miu_oauth";
@@ -267,7 +269,7 @@ function buildProviders(o: OAuthOptions): Provider[] {
 function validate(o: OAuthOptions, providers: Provider[]) {
   const seen = new Set<string>();
   for (const p of providers) {
-    if (!ID_RE.test(p.id)) throw configError(`OAuth provider id ${JSON.stringify(p.id)} is not valid`, "Use lowercase letters, digits, - and _ (max 32), e.g. { id: \"okta\" }.");
+    if (!ID_RE.test(p.id) || p.id === "accounts") throw configError(`OAuth provider id ${JSON.stringify(p.id)} is not valid`, "Use lowercase letters, digits, - and _ (max 32), e.g. { id: \"okta\" }.");
     if (seen.has(p.id)) throw configError(`OAuth provider "${p.id}" is configured twice`, "Give each oidc provider a unique id that is not google, github, apple or discord.");
     seen.add(p.id);
     if (typeof p.clientId !== "string" || !p.clientId) throw configError(`OAuth provider "${p.id}" has no clientId`, `Pass the client id from the provider's console: auth({ oauth: { ${p.id}: { clientId } } }).`);
@@ -279,7 +281,7 @@ function validate(o: OAuthOptions, providers: Provider[]) {
 }
 
 /** Store methods OAuth sign-in needs. */
-export const OAUTH_STORE_METHODS = ["findOAuthAccount", "createOAuthAccount", "markEmailVerified", "changePassword", "deleteUserTokens", "deleteOneTimeTokens"] as const;
+export const OAUTH_STORE_METHODS = ["findOAuthAccount", "createOAuthAccount", "listOAuthAccounts", "deleteOAuthAccount", "markEmailVerified"] as const;
 
 export function oauth(o: OAuthOptions, deps: OAuthDeps) {
   const providers = buildProviders(o);
@@ -408,7 +410,7 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
     } catch {
       throw stateError("the state cookie is invalid");
     }
-    if (!s || typeof s.s !== "string" || typeof s.v !== "string" || typeof s.n !== "string" || typeof s.r !== "string" || typeof s.e !== "number") throw stateError("the state cookie is invalid");
+    if (!s || typeof s.s !== "string" || typeof s.v !== "string" || typeof s.n !== "string" || typeof s.r !== "string" || typeof s.e !== "number" || (s.l !== undefined && typeof s.l !== "string")) throw stateError("the state cookie is invalid");
     if (s.e <= Date.now()) throw stateError("sign-in took too long");
     if (s.p !== p.id) throw stateError("it was started for another provider");
     return s;
@@ -499,8 +501,11 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
   // --- accounts --------------------------------------------------------------------------------
 
   /**
-   * The account for this identity. Links to an existing user only when the provider vouches for the
-   * email (verified) and it equals the user's email. Never links on an unverified email.
+   * The account for this identity. Auto-links to an existing user only when BOTH sides have verified
+   * the same email: the provider asserts it verified, and the account confirmed it too. An account
+   * whose email was never confirmed may have been registered by someone squatting the address
+   * (pre-hijacking), so it is never auto-linked; its owner signs in and links explicitly instead.
+   * Nothing about an existing account (password, sessions, tokens, passkeys) is ever changed here.
    */
   async function resolveUser(p: Provider, profile: Profile, env: Env, attempt = 0): Promise<StoredUser> {
     const linked = await users.findOAuthAccount(p.id, profile.subject, env);
@@ -517,7 +522,15 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
     const verified = profile.emailVerified && profile.email !== null;
     if (verified) {
       const existing = await users.findUserByEmail(profile.email!, env);
-      if (existing) return link(existing.emailVerifiedAt == null ? await takeOver(existing, env) : existing);
+      if (existing) {
+        if (existing.emailVerifiedAt != null) return link(existing);
+        throw oauthError(
+          "ACCOUNT_EXISTS",
+          409,
+          `An account with the email ${p.id} reported already exists`,
+          `An account with this email already exists. Sign in with your password, then link ${p.id} from your account settings.`,
+        );
+      }
     } else if (deps.verification === "required") {
       throw oauthError(
         "EMAIL_UNVERIFIED",
@@ -542,22 +555,26 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
     return link(created);
   }
 
-  /**
-   * The provider proved who owns this email, but the account's own email was never confirmed: whoever
-   * made it may have been an attacker squatting the address (account pre-hijacking). Their password,
-   * API tokens, passkeys and sessions are removed before the owner gets the account.
-   */
-  async function takeOver(u: StoredUser, env: Env): Promise<StoredUser> {
-    const passwordHash = unusablePasswordHash();
-    const sessionVersion = await users.changePassword(u.id, passwordHash, env);
-    await users.deleteUserTokens(u.id, env);
-    await users.deleteUserPasskeys?.(u.id, env);
-    await users.deleteOneTimeTokens(u.id, "reset", env);
-    await users.deleteOneTimeTokens(u.id, "verify", env);
-    const at = Date.now();
-    await users.markEmailVerified(u.id, at, env);
-    return { ...u, passwordHash, sessionVersion, emailVerifiedAt: at };
+  /** Links this identity to the signed-in user who started `?link=1` (emails need not match). */
+  async function linkToCurrent(p: Provider, profile: Profile, userId: string, env: Env) {
+    const taken = () =>
+      oauthError(
+        "ALREADY_LINKED",
+        409,
+        `This ${p.id} account is already linked, or you already have another ${p.id} account linked`,
+        `Unlink it first with DELETE ${deps.base}/oauth/accounts/${p.id} from the account that has it, then link again.`,
+      );
+    const existing = await users.findOAuthAccount(p.id, profile.subject, env);
+    if (existing) {
+      if (existing.userId !== userId) throw taken();
+      return;
+    }
+    if ((await users.listOAuthAccounts(userId, env)).some((a) => a.provider === p.id)) throw taken();
+    if (!(await users.createOAuthAccount({ id: randomId(12), provider: p.id, subject: profile.subject, userId, email: profile.email, createdAt: Date.now() }, env))) throw taken();
   }
+
+  const sessionRequired = () =>
+    oauthError("SESSION_REQUIRED", 403, "Linking a sign-in provider needs a signed-in browser session", "Sign in in the browser (not with an API token), then open the link from your account settings.");
 
   // --- routes ----------------------------------------------------------------------------------
 
@@ -569,10 +586,16 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
     tags: ["auth"],
     mcp: false,
     params: t.object({ provider: t.string({ maxLength: 64 }) }),
-    query: t.object({ returnTo: t.optional(t.string({ maxLength: 8192 })) }),
+    query: t.object({ returnTo: t.optional(t.string({ maxLength: 8192 })), link: t.optional(t.string({ maxLength: 8 })) }),
     handler: async (ctx) => {
       const c = ctx as unknown as Context;
       const p = provider(ctx.params.provider);
+      let linkUser: string | undefined;
+      if (ctx.query.link !== undefined && ctx.query.link !== "" && ctx.query.link !== "0") {
+        if (!ctx.user) throw errors.unauthorized();
+        if (ctx.state.authMethod !== "session") throw sessionRequired();
+        linkUser = ctx.user.id;
+      }
       const returnTo = safeReturnTo(ctx.query.returnTo);
       if (returnTo === null) {
         throw oauthError("RETURN_TO", 400, "returnTo must be a path on this site", 'Pass a relative path such as "/dashboard" (starting with a single "/").');
@@ -592,7 +615,7 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
       q.set("code_challenge_method", "S256");
       if (nonce) q.set("nonce", nonce);
       if (p.responseMode === "form_post") q.set("response_mode", "form_post");
-      await writeState(c, p, { p: p.id, s: state, v: verifier, n: nonce, r: returnTo, e: Date.now() + STATE_TTL });
+      await writeState(c, p, { p: p.id, s: state, v: verifier, n: nonce, r: returnTo, e: Date.now() + STATE_TTL, ...(linkUser ? { l: linkUser } : {}) });
       return new Response(null, { status: 302, headers: { location: url.toString(), "cache-control": "no-store" } });
     },
   });
@@ -614,6 +637,10 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
       throw oauthError("DENIED", 400, `${p.id} did not complete sign-in (${reason})`, "Try again and approve access at the provider.");
     }
     if (!input.code) throw stateError("the provider sent no code");
+    // Linking: the browser must still be signed in, by session, as the user who started it.
+    if (saved.l !== undefined && (ctx.user?.id !== saved.l || ctx.state.authMethod !== "session")) {
+      throw stateError("linking was started by a user who is no longer signed in here");
+    }
     const d = p.kind === "oidc" ? await discover(p) : null;
     const token = await exchange(ctx, p, input.code, saved.v, redirectUri(ctx, p), d);
     const profile = p.kind === "oidc" ? await oidcProfile(p, d!, token, saved.n) : p.kind === "github" ? await githubProfile(p, token) : await discordProfile(p, token);
@@ -623,6 +650,10 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
         const n = (JSON.parse(input.user) as { name?: { firstName?: unknown; lastName?: unknown } }).name;
         profile.name = cleanName([n?.firstName, n?.lastName].filter((x) => typeof x === "string").join(" "));
       } catch {}
+    }
+    if (saved.l !== undefined) {
+      await linkToCurrent(p, profile, saved.l, ctx.env);
+      return new Response(null, { status: 302, headers: { location: saved.r, "cache-control": "no-store" } });
     }
     const user = await resolveUser(p, profile, ctx.env);
     if (deps.verification === "required" && user.emailVerifiedAt == null) {
@@ -653,7 +684,47 @@ export function oauth(o: OAuthOptions, deps: OAuthDeps) {
     handler: (ctx) => finish(ctx as unknown as Context, ctx.params.provider, ctx.body, true),
   });
 
-  const routes: RouteDef[] = [startRoute, callbackRoute];
+  const listAccountsRoute = route.get(`${deps.base}/oauth/accounts`, {
+    name: "auth_oauth_accounts",
+    summary: "List the sign-in providers linked to your account",
+    tags: ["auth"],
+    mcp: false,
+    auth: "required",
+    handler: async (ctx) => {
+      const list = await users.listOAuthAccounts(ctx.user.id, ctx.env);
+      return { accounts: list.map((a) => ({ provider: a.provider, email: a.email, createdAt: a.createdAt })) };
+    },
+  });
+
+  const unlinkRoute = route.delete(`${deps.base}/oauth/accounts/:provider`, {
+    name: "auth_oauth_unlink",
+    summary: "Unlink a sign-in provider from your account (not your last way to sign in)",
+    tags: ["auth"],
+    mcp: false,
+    auth: "required",
+    params: t.object({ provider: t.string({ maxLength: 64 }) }),
+    handler: async (ctx) => {
+      const links = await users.listOAuthAccounts(ctx.user.id, ctx.env);
+      if (!links.some((a) => a.provider === ctx.params.provider)) throw errors.notFound("Linked provider", ctx.params.provider);
+      const user = await users.findUserById(ctx.user.id, ctx.env);
+      if (!user) throw errors.unauthorized();
+      const hasPassword = !user.passwordHash.startsWith(UNUSABLE_PASSWORD);
+      const passkeys = users.listPasskeys ? (await users.listPasskeys(user.id, ctx.env)).length : 0;
+      const otherProviders = links.filter((a) => a.provider !== ctx.params.provider).length;
+      if (!hasPassword && passkeys === 0 && otherProviders === 0) {
+        throw oauthError(
+          "LAST_METHOD",
+          409,
+          `${ctx.params.provider} is your only way to sign in`,
+          `Add another way to sign in first: set a password (POST ${deps.base}/password/forgot), add a passkey, or link another provider. Then unlink ${ctx.params.provider}.`,
+        );
+      }
+      await users.deleteOAuthAccount(user.id, ctx.params.provider, ctx.env);
+    },
+  });
+
+  // The static /oauth/accounts routes come first so they win over /oauth/:provider.
+  const routes: RouteDef[] = [listAccountsRoute, unlinkRoute, startRoute, callbackRoute];
   if (providers.some((p) => p.responseMode === "form_post")) routes.push(postCallbackRoute);
 
   return {

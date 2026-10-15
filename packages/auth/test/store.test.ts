@@ -255,6 +255,23 @@ describe("OAuth accounts, passkeys, challenges and token revocation", () => {
     });
   }
 
+  for (const [name, make] of stores) {
+    test(`${name}: list and unlink OAuth accounts (only your own)`, async () => {
+      const s = make();
+      const a = (await s.createUser({ email: "a@b.co", roles: [], passwordHash: "h" }, env))!;
+      const b = (await s.createUser({ email: "b@b.co", roles: [], passwordHash: "h" }, env))!;
+      await s.createOAuthAccount!({ id: "o1", provider: "google", subject: "1", userId: a.id, email: "a@b.co", createdAt: 1 }, env);
+      await s.createOAuthAccount!({ id: "o2", provider: "github", subject: "2", userId: a.id, email: null, createdAt: 2 }, env);
+      await s.createOAuthAccount!({ id: "o3", provider: "google", subject: "3", userId: b.id, email: null, createdAt: 3 }, env);
+      expect((await s.listOAuthAccounts!(a.id, env)).map((x) => x.id)).toEqual(["o1", "o2"]);
+      expect(await s.deleteOAuthAccount!(b.id, "github", env)).toBe(false);
+      expect(await s.deleteOAuthAccount!(a.id, "google", env)).toBe(true);
+      expect(await s.findOAuthAccount!("google", "1", env)).toBeNull();
+      expect(await s.findOAuthAccount!("google", "3", env)).not.toBeNull();
+      expect((await s.listOAuthAccounts!(a.id, env)).map((x) => x.id)).toEqual(["o2"]);
+    });
+  }
+
   test("migration 003 is appended and upgrades a 002 database in place", async () => {
     expect(authMigrations.map((m) => m.id)).toEqual(["miu_auth_001_users_tokens", "miu_auth_002_verify_reset", "miu_auth_003_oauth_passkeys"]);
     const database = sqlite();

@@ -97,7 +97,12 @@ describe("wiring", () => {
     await s.app.ready();
     const info = s.app.inspect();
     const oauth = info.routes.filter((r) => r.path.includes("/oauth/"));
-    expect(oauth.map((r) => `${r.method} ${r.path}`).sort()).toEqual(["GET /auth/oauth/:provider", "GET /auth/oauth/:provider/callback"]);
+    expect(oauth.map((r) => `${r.method} ${r.path}`).sort()).toEqual([
+      "DELETE /auth/oauth/accounts/:provider",
+      "GET /auth/oauth/:provider",
+      "GET /auth/oauth/:provider/callback",
+      "GET /auth/oauth/accounts",
+    ]);
     for (const r of oauth) expect(info.mcp!.tools.some((t) => t.includes(r.name))).toBe(false);
   });
 
@@ -293,24 +298,43 @@ describe("callback: sign-in and accounts", () => {
     expect((await me(s, jar)).body!.email).toBe("cat@example.com");
   });
 
-  test("linking a verified provider email to an account whose email was never confirmed removes credentials set before (pre-hijack)", async () => {
+  test("an existing account whose email is NOT verified is never auto-linked (pre-hijack): 409 MIU_E_AUTH_OAUTH_ACCOUNT_EXISTS, nothing wiped", async () => {
     const s = await setup();
-    // An attacker registers the victim's address first and keeps a session, an API token and the password.
-    const attacker = new Jar();
-    await send(s, attacker, "/auth/register", { email: "ann@example.com", password: "attacker password" });
-    const token = (await (await send(s, attacker, "/auth/tokens", { name: "persist" })).json()).token as string;
+    // Someone (maybe an attacker squatting the address) registered first; verification is "off".
+    const owner = new Jar();
+    await send(s, owner, "/auth/register", { email: "ann@example.com", password: PW });
+    const token = (await (await send(s, owner, "/auth/tokens", { name: "persist" })).json()).token as string;
     const user = (await s.users.findUserByEmail("ann@example.com", {}))!;
     expect(user.emailVerifiedAt).toBeNull();
-    // The real owner signs in with the provider.
-    const { jar } = await signInWith(s, ANN);
-    expect((await me(s, jar)).body!.id).toBe(user.id);
-    expect((await me(s, attacker)).status).toBe(401);
-    expect((await send(s, new Jar(), "/auth/login", { email: "ann@example.com", password: "attacker password" })).status).toBe(401);
+    const { res, jar } = await signInWith(s, ANN);
+    expect(res.status).toBe(409);
+    const e = await errCode(res);
+    expect(e.code).toBe("MIU_E_AUTH_OAUTH_ACCOUNT_EXISTS");
+    expect(e.fix).toBe("An account with this email already exists. Sign in with your password, then link idp from your account settings.");
+    expect((await me(s, jar)).status).toBe(401);
+    expect(await s.users.findOAuthAccount!("idp", "ann-1", {})).toBeNull();
+    // Nothing about the existing account changed.
+    const after = (await s.users.findUserById(user.id, {}))!;
+    expect(after).toEqual(user);
+    expect((await me(s, owner)).status).toBe(200);
+    expect((await send(s, new Jar(), "/auth/login", { email: "ann@example.com", password: PW })).status).toBe(200);
     const viaToken = await s.app.fetch(new Request(`${BASE}/auth/me`, { headers: { authorization: `Bearer ${token}` } }));
-    expect(viaToken.status).toBe(401);
-    expect((await s.users.findUserById(user.id, {}))!.emailVerifiedAt).not.toBeNull();
-    // The owner's own session survives.
-    expect((await me(s, jar)).status).toBe(200);
+    expect(viaToken.status).toBe(200);
+  });
+
+  test("auto-linking to a verified account never touches its password, sessions or tokens", async () => {
+    const s = await setup();
+    const owner = new Jar();
+    await send(s, owner, "/auth/register", { email: "ann@example.com", password: PW });
+    const token = (await (await send(s, owner, "/auth/tokens", { name: "t" })).json()).token as string;
+    const user = (await s.users.findUserByEmail("ann@example.com", {}))!;
+    await s.users.markEmailVerified!(user.id, 123, {});
+    const before = (await s.users.findUserById(user.id, {}))!;
+    const { res } = await signInWith(s, ANN);
+    expect(res.status).toBe(302);
+    expect(await s.users.findUserById(user.id, {})).toEqual(before);
+    expect((await me(s, owner)).status).toBe(200);
+    expect((await s.app.fetch(new Request(`${BASE}/auth/me`, { headers: { authorization: `Bearer ${token}` } }))).status).toBe(200);
   });
 
   test("emailVerification: required refuses an unverified provider email (403) and creates nobody", async () => {
@@ -705,5 +729,165 @@ describe("Apple", () => {
     const s = await setup();
     const res = await s.app.fetch(new Request(`${BASE}/auth/oauth/idp/callback`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "code=x&state=y" }));
     expect([404, 405]).toContain(res.status);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+
+describe("linking providers to the signed-in account", () => {
+  async function registered(s: S, email = "ann@example.com") {
+    const jar = new Jar();
+    expect((await send(s, jar, "/auth/register", { email, password: PW })).status).toBe(201);
+    return jar;
+  }
+  /** Starts with ?link=1 in `jar` and completes the provider round trip. */
+  async function linkWith(s: S, jar: Jar, claims: Record<string, unknown>, provider = "idp") {
+    const st = await s.app.fetch(jar.request(`${BASE}/auth/oauth/${provider}?link=1&returnTo=/settings`));
+    jar.store(st);
+    if (st.status !== 302) return { res: st };
+    const url = new URL(st.headers.get("location")!);
+    const code = (provider === "google" ? s.google : s.idp).authorize(url, claims);
+    return { res: await callback(s, jar, provider, { code, state: url.searchParams.get("state")! }), url };
+  }
+  const accounts = async (s: S, jar: Jar) => {
+    const r = await s.app.fetch(jar.request(`${BASE}/auth/oauth/accounts`));
+    return { status: r.status, body: r.status === 200 ? ((await r.json()) as { accounts: Record<string, unknown>[] }).accounts : null };
+  };
+  const unlink = (s: S, jar: Jar, provider: string) => s.app.fetch(jar.request(`${BASE}/auth/oauth/accounts/${provider}`, { method: "DELETE" }));
+
+  test("a signed-in user links a provider identity even when the emails differ; it then signs in to that user", async () => {
+    const s = await setup();
+    const jar = await registered(s);
+    const ann = (await me(s, jar)).body!;
+    const { res } = await linkWith(s, jar, { sub: "work-1", email: "ann@work.example", email_verified: false });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/settings");
+    expect((await me(s, jar)).body!.id).toBe(ann.id);
+    expect((await s.users.findOAuthAccount!("idp", "work-1", {}))!.userId).toBe(ann.id as string);
+    const again = await signInWith(s, { sub: "work-1", email: "ann@work.example", email_verified: false });
+    expect((await me(s, again.jar)).body!.id).toBe(ann.id);
+    const list = await accounts(s, jar);
+    expect(list.status).toBe(200);
+    expect(list.body).toEqual([{ provider: "idp", email: "ann@work.example", createdAt: expect.any(Number) }]);
+  });
+
+  test("link=1 needs a signed-in browser session: 401 signed out, 403 with an API token", async () => {
+    const s = await setup();
+    const signedOut = await s.app.fetch(new Jar().request(`${BASE}/auth/oauth/idp?link=1`));
+    expect(signedOut.status).toBe(401);
+    const jar = await registered(s);
+    const token = (await (await send(s, jar, "/auth/tokens", { name: "t" })).json()).token as string;
+    const viaToken = await s.app.fetch(new Request(`${BASE}/auth/oauth/idp?link=1`, { headers: { authorization: `Bearer ${token}` } }));
+    expect(viaToken.status).toBe(403);
+    expect((await errCode(viaToken)).code).toBe("MIU_E_AUTH_OAUTH_SESSION_REQUIRED");
+  });
+
+  test("a subject already linked to another user cannot be linked again (409), nothing changes", async () => {
+    const s = await setup();
+    const first = await signInWith(s, { sub: "shared", email: "x@example.com", email_verified: true });
+    const owner = (await me(s, first.jar)).body!.id;
+    const jar = await registered(s, "bob@example.com");
+    const { res } = await linkWith(s, jar, { sub: "shared", email: "x@example.com", email_verified: true });
+    expect(res.status).toBe(409);
+    expect((await errCode(res)).code).toBe("MIU_E_AUTH_OAUTH_ALREADY_LINKED");
+    expect((await s.users.findOAuthAccount!("idp", "shared", {}))!.userId).toBe(owner as string);
+    expect((await accounts(s, jar)).body).toEqual([]);
+  });
+
+  test("relinking the same subject to the same user is fine; a second subject of the same provider is refused", async () => {
+    const s = await setup();
+    const jar = await registered(s);
+    expect((await linkWith(s, jar, { sub: "a1" })).res.status).toBe(302);
+    expect((await linkWith(s, jar, { sub: "a1" })).res.status).toBe(302);
+    const other = await linkWith(s, jar, { sub: "a2" });
+    expect(other.res.status).toBe(409);
+    expect((await errCode(other.res)).code).toBe("MIU_E_AUTH_OAUTH_ALREADY_LINKED");
+  });
+
+  test("a link started by one user cannot complete for another user signed in later in the same browser", async () => {
+    const s = await setup();
+    const jar = await registered(s);
+    await registered(s, "bob@example.com");
+    const st = await s.app.fetch(jar.request(`${BASE}/auth/oauth/idp?link=1`));
+    jar.store(st);
+    const url = new URL(st.headers.get("location")!);
+    await send(s, jar, "/auth/login", { email: "bob@example.com", password: PW });
+    const res = await callback(s, jar, "idp", { code: s.idp.authorize(url, { sub: "z" }), state: url.searchParams.get("state")! });
+    expect(res.status).toBe(400);
+    expect((await errCode(res)).code).toBe("MIU_E_AUTH_OAUTH_STATE");
+    expect(await s.users.findOAuthAccount!("idp", "z", {})).toBeNull();
+  });
+
+  test("a link started while signed in fails if the session is gone at the callback", async () => {
+    const s = await setup();
+    const jar = await registered(s);
+    const st = await s.app.fetch(jar.request(`${BASE}/auth/oauth/idp?link=1`));
+    jar.store(st);
+    const url = new URL(st.headers.get("location")!);
+    await send(s, jar, "/auth/logout", {});
+    const res = await callback(s, jar, "idp", { code: s.idp.authorize(url, { sub: "z" }), state: url.searchParams.get("state")! });
+    expect(res.status).toBe(400);
+    expect(await s.users.findOAuthAccount!("idp", "z", {})).toBeNull();
+  });
+
+  test("the unverified-account 409 can be resolved: sign in with the password, then link", async () => {
+    const s = await setup();
+    const jar = await registered(s);
+    expect((await signInWith(s, ANN)).res.status).toBe(409);
+    expect((await linkWith(s, jar, ANN)).res.status).toBe(302);
+    const later = await signInWith(s, ANN);
+    expect((await me(s, later.jar)).body!.id).toBe((await me(s, jar)).body!.id);
+  });
+
+  test("GET/DELETE accounts need sign-in", async () => {
+    const s = await setup();
+    expect((await accounts(s, new Jar())).status).toBe(401);
+    expect((await unlink(s, new Jar(), "idp")).status).toBe(401);
+  });
+
+  test("unlink removes the identity; unknown links → 404; you cannot unlink another user's link", async () => {
+    const s = await setup();
+    const jar = await registered(s);
+    await linkWith(s, jar, { sub: "u1" });
+    const bob = await registered(s, "bob@example.com");
+    expect((await unlink(s, bob, "idp")).status).toBe(404);
+    expect((await unlink(s, jar, "google")).status).toBe(404);
+    expect((await unlink(s, jar, "idp")).status).toBe(204);
+    expect(await s.users.findOAuthAccount!("idp", "u1", {})).toBeNull();
+    expect((await accounts(s, jar)).body).toEqual([]);
+  });
+
+  test("unlinking the last way to sign in is refused (409) with a fix; with another provider it is allowed", async () => {
+    const s = await setup();
+    const { jar } = await signInWith(s, ANN); // OAuth-only: no usable password, no passkey
+    const res = await unlink(s, jar, "idp");
+    expect(res.status).toBe(409);
+    const e = await errCode(res);
+    expect(e.code).toBe("MIU_E_AUTH_OAUTH_LAST_METHOD");
+    expect(e.fix).toBeTruthy();
+    expect(await s.users.findOAuthAccount!("idp", "ann-1", {})).not.toBeNull();
+    expect((await linkWith(s, jar, { sub: "g-1", email: "other@example.com", email_verified: true }, "google")).res.status).toBe(302);
+    expect((await unlink(s, jar, "idp")).status).toBe(204);
+    expect((await unlink(s, jar, "google")).status).toBe(409);
+  });
+
+  test("a user with a password can unlink their only provider", async () => {
+    const s = await setup();
+    const jar = await registered(s);
+    await linkWith(s, jar, { sub: "u1" });
+    expect((await unlink(s, jar, "idp")).status).toBe(204);
+  });
+
+  test("works with dbUserStore", async () => {
+    const s = await setup({ users: dbUserStore(sqlite()) });
+    const jar = await registered(s);
+    expect((await linkWith(s, jar, { sub: "d1", email: "d@example.com" })).res.status).toBe(302);
+    expect((await accounts(s, jar)).body!.map((a) => a.provider)).toEqual(["idp"]);
+    expect((await unlink(s, jar, "idp")).status).toBe(204);
+  });
+
+  test("\"accounts\" is reserved and cannot be a provider id", async () => {
+    const app = miu({ logLevel: "silent", plugins: [session({ secret: SECRET }), auth({ password: FAST, oauth: { oidc: [{ id: "accounts", issuer: ISSUER, clientId: "c", clientSecret: "s" }] } })] });
+    expect((await app.ready().catch((e) => e))?.code).toBe("MIU_E_AUTH_OAUTH_CONFIG");
   });
 });
