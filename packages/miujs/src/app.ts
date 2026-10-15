@@ -129,6 +129,19 @@ const tooLarge = (limit: number) =>
  * by the server's own cap (Bun's maxRequestBodySize, set by listen(); the Node adapter's counter;
  * Workers' platform limit). Reading through a stream reader would cost ~25x more per request on Bun.
  */
+/**
+ * The body as text, never more than `limit` bytes. With a Content-Length (servers enforce it)
+ * this is `req.text()`, the runtime's fast path; without one it goes through `readLimited`.
+ */
+async function readTextLimited(req: Request, limit: number): Promise<string> {
+  const declared = req.headers.get("content-length");
+  if (declared !== null) {
+    if (Number(declared) > limit) throw tooLarge(limit);
+    return req.text();
+  }
+  return utf8.decode(await readLimited(req, limit));
+}
+
 async function readLimited(req: Request, limit: number): Promise<Uint8Array> {
   const declared = req.headers.get("content-length");
   if (declared !== null && Number(declared) > limit) throw tooLarge(limit);
@@ -142,7 +155,7 @@ const utf8 = new TextDecoder();
 async function readBody(req: Request, limit: number): Promise<{ value: unknown; form: boolean }> {
   const type = (req.headers.get("content-type") ?? "").toLowerCase();
   if (type.includes("application/json") || type.includes("+json")) {
-    const text = utf8.decode(await readLimited(req, limit));
+    const text = await readTextLimited(req, limit);
     if (text === "") return { value: undefined, form: false };
     try {
       return { value: JSON.parse(text), form: false };
@@ -167,7 +180,7 @@ async function readBody(req: Request, limit: number): Promise<{ value: unknown; 
     }
     return { value: out, form: true };
   }
-  if (type.startsWith("text/")) return { value: utf8.decode(await readLimited(req, limit)), form: false };
+  if (type.startsWith("text/")) return { value: await readTextLimited(req, limit), form: false };
   if (!req.body) return { value: undefined, form: false };
   const buf = await readLimited(req, limit);
   return { value: buf.length ? buf : undefined, form: false };
