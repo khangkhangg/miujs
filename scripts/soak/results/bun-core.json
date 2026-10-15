@@ -1,0 +1,612 @@
+{
+  "app": "core",
+  "runtime": "bun",
+  "durationS": 60,
+  "concurrency": 64,
+  "drivers": 3,
+  "requests": 4171622,
+  "rps": 69527.03333333334,
+  "p50": 0.914,
+  "p95": 1.21,
+  "p99": 1.61,
+  "max": 7.037699999999997,
+  "errors": 0,
+  "errorKinds": {},
+  "expected": {},
+  "wsFramesInPerS": 0,
+  "ops": {
+    "GET /users/:id": {
+      "n": 625365,
+      "perS": 10422.75,
+      "p50": 0.914,
+      "p95": 1.21,
+      "p99": 1.62,
+      "max": 6.7402999999999995
+    },
+    "GET /json": {
+      "n": 3337322,
+      "perS": 55622.03333333333,
+      "p50": 0.913,
+      "p95": 1.21,
+      "p99": 1.61,
+      "max": 7.0122
+    },
+    "POST /echo": {
+      "n": 208935,
+      "perS": 3482.25,
+      "p50": 0.918,
+      "p95": 1.22,
+      "p99": 1.61,
+      "max": 7.037699999999997
+    }
+  },
+  "rss": {
+    "idleBeforeLoad": 40964096,
+    "start": 40996864,
+    "peak": 56262656,
+    "end": 49172480,
+    "settled": 44920832
+  },
+  "heap": {
+    "idleBeforeLoad": 487439,
+    "afterWarmup": 812775,
+    "warmupAtMs": 12022,
+    "end": 730971,
+    "settled": 672759,
+    "growth": -0.10064778075113039,
+    "settledGrowth": -0.17226907815816186
+  },
+  "objects": {
+    "afterWarmup": 5146,
+    "end": 4941,
+    "settled": 4912
+  },
+  "suspectedLeak": false,
+  "typeGrowthEnd": [
+    {
+      "type": "Structure",
+      "before": 827,
+      "after": 845,
+      "delta": 18
+    },
+    {
+      "type": "StructureRareData",
+      "before": 98,
+      "after": 102,
+      "delta": 4
+    },
+    {
+      "type": "Cell Butterfly",
+      "before": 20,
+      "after": 18,
+      "delta": -2
+    },
+    {
+      "type": "FunctionExecutable",
+      "before": 290,
+      "after": 286,
+      "delta": -4
+    },
+    {
+      "type": "SymbolTable",
+      "before": 147,
+      "after": 137,
+      "delta": -10
+    },
+    {
+      "type": "UnlinkedFunctionExecutable",
+      "before": 335,
+      "after": 321,
+      "delta": -14
+    },
+    {
+      "type": "FunctionCodeBlock",
+      "before": 109,
+      "after": 68,
+      "delta": -41
+    },
+    {
+      "type": "UnlinkedFunctionCodeBlock",
+      "before": 78,
+      "after": 37,
+      "delta": -41
+    },
+    {
+      "type": "string",
+      "before": 855,
+      "after": 740,
+      "delta": -115
+    }
+  ],
+  "typeGrowthSettled": [
+    {
+      "type": "Structure",
+      "before": 827,
+      "after": 845,
+      "delta": 18
+    },
+    {
+      "type": "StructureRareData",
+      "before": 98,
+      "after": 103,
+      "delta": 5
+    },
+    {
+      "type": "Cell Butterfly",
+      "before": 20,
+      "after": 18,
+      "delta": -2
+    },
+    {
+      "type": "FunctionExecutable",
+      "before": 290,
+      "after": 285,
+      "delta": -5
+    },
+    {
+      "type": "SymbolTable",
+      "before": 147,
+      "after": 133,
+      "delta": -14
+    },
+    {
+      "type": "UnlinkedFunctionExecutable",
+      "before": 335,
+      "after": 320,
+      "delta": -15
+    },
+    {
+      "type": "UnlinkedFunctionCodeBlock",
+      "before": 78,
+      "after": 35,
+      "delta": -43
+    },
+    {
+      "type": "FunctionCodeBlock",
+      "before": 109,
+      "after": 58,
+      "delta": -51
+    },
+    {
+      "type": "string",
+      "before": 855,
+      "after": 728,
+      "delta": -127
+    }
+  ],
+  "extras": {
+    "inflight": 0,
+    "maxInflight": 1,
+    "served": 4171622,
+    "rooms": null
+  },
+  "settledExtras": {
+    "rooms": null,
+    "settleS": 5
+  },
+  "codeState": {
+    "head": "7df5ae6",
+    "dirtyPackages": " 13 files changed, 282 insertions(+), 59 deletions(-)",
+    "at": "2026-10-15T11:15:10.967Z"
+  },
+  "stuck": {
+    "midBodyAborts": 200,
+    "fetchAborts": 200,
+    "inflightAfter": 0,
+    "serverAnswersAfter": 200,
+    "servedDelta": 201
+  },
+  "shutdownAfterLoad": {
+    "exited": true,
+    "ms": 15.38729999998759,
+    "code": 0,
+    "eventualExitMs": 15.38729999998759
+  },
+  "stderrTail": [
+    "STOPPED 1"
+  ],
+  "samples": [
+    {
+      "t": 15,
+      "rss": 40996864,
+      "heap": 487919,
+      "inflight": 0
+    },
+    {
+      "t": 1018,
+      "rss": 56262656,
+      "heap": 2151105,
+      "inflight": 0
+    },
+    {
+      "t": 2022,
+      "rss": 55209984,
+      "heap": 8384807,
+      "inflight": 0
+    },
+    {
+      "t": 3026,
+      "rss": 54255616,
+      "heap": 11677834,
+      "inflight": 0
+    },
+    {
+      "t": 4029,
+      "rss": 54501376,
+      "heap": 2440130,
+      "inflight": 0
+    },
+    {
+      "t": 5034,
+      "rss": 54407168,
+      "heap": 11404593,
+      "inflight": 0
+    },
+    {
+      "t": 6036,
+      "rss": 54476800,
+      "heap": 2647982,
+      "inflight": 0
+    },
+    {
+      "t": 7039,
+      "rss": 54468608,
+      "heap": 5877845,
+      "inflight": 0
+    },
+    {
+      "t": 8043,
+      "rss": 54415360,
+      "heap": 10721683,
+      "inflight": 0
+    },
+    {
+      "t": 9046,
+      "rss": 54476800,
+      "heap": 2917216,
+      "inflight": 0
+    },
+    {
+      "t": 10049,
+      "rss": 54411264,
+      "heap": 11989416,
+      "inflight": 0
+    },
+    {
+      "t": 11052,
+      "rss": 54431744,
+      "heap": 13501586,
+      "inflight": 0
+    },
+    {
+      "t": 12055,
+      "rss": 49930240,
+      "heap": 1889191,
+      "inflight": 0
+    },
+    {
+      "t": 13058,
+      "rss": 54386688,
+      "heap": 3209559,
+      "inflight": 0
+    },
+    {
+      "t": 14062,
+      "rss": 53940224,
+      "heap": 3261705,
+      "inflight": 0
+    },
+    {
+      "t": 15065,
+      "rss": 53854208,
+      "heap": 8100338,
+      "inflight": 0
+    },
+    {
+      "t": 16068,
+      "rss": 53858304,
+      "heap": 11080725,
+      "inflight": 0
+    },
+    {
+      "t": 17072,
+      "rss": 53829632,
+      "heap": 11085505,
+      "inflight": 0
+    },
+    {
+      "t": 18075,
+      "rss": 53854208,
+      "heap": 14369356,
+      "inflight": 0
+    },
+    {
+      "t": 19077,
+      "rss": 53841920,
+      "heap": 3688156,
+      "inflight": 0
+    },
+    {
+      "t": 20081,
+      "rss": 53927936,
+      "heap": 11774112,
+      "inflight": 0
+    },
+    {
+      "t": 21084,
+      "rss": 53923840,
+      "heap": 1111999,
+      "inflight": 0
+    },
+    {
+      "t": 22087,
+      "rss": 53866496,
+      "heap": 5791946,
+      "inflight": 0
+    },
+    {
+      "t": 23090,
+      "rss": 53895168,
+      "heap": 14418977,
+      "inflight": 0
+    },
+    {
+      "t": 24095,
+      "rss": 53895168,
+      "heap": 8350050,
+      "inflight": 0
+    },
+    {
+      "t": 25098,
+      "rss": 53899264,
+      "heap": 10018372,
+      "inflight": 0
+    },
+    {
+      "t": 26102,
+      "rss": 52736000,
+      "heap": 10202952,
+      "inflight": 0
+    },
+    {
+      "t": 27106,
+      "rss": 53657600,
+      "heap": 10110175,
+      "inflight": 0
+    },
+    {
+      "t": 28109,
+      "rss": 53862400,
+      "heap": 2783019,
+      "inflight": 0
+    },
+    {
+      "t": 29113,
+      "rss": 53620736,
+      "heap": 8339274,
+      "inflight": 0
+    },
+    {
+      "t": 30117,
+      "rss": 53645312,
+      "heap": 11577748,
+      "inflight": 0
+    },
+    {
+      "t": 31120,
+      "rss": 52948992,
+      "heap": 15322423,
+      "inflight": 0
+    },
+    {
+      "t": 32123,
+      "rss": 53501952,
+      "heap": 4742097,
+      "inflight": 0
+    },
+    {
+      "t": 33126,
+      "rss": 53587968,
+      "heap": 7754710,
+      "inflight": 0
+    },
+    {
+      "t": 34130,
+      "rss": 53628928,
+      "heap": 5288540,
+      "inflight": 0
+    },
+    {
+      "t": 35134,
+      "rss": 53637120,
+      "heap": 10521086,
+      "inflight": 0
+    },
+    {
+      "t": 36137,
+      "rss": 53661696,
+      "heap": 13374635,
+      "inflight": 0
+    },
+    {
+      "t": 37140,
+      "rss": 53678080,
+      "heap": 5547833,
+      "inflight": 0
+    },
+    {
+      "t": 38143,
+      "rss": 53649408,
+      "heap": 11116419,
+      "inflight": 0
+    },
+    {
+      "t": 39147,
+      "rss": 53673984,
+      "heap": 14208173,
+      "inflight": 0
+    },
+    {
+      "t": 40150,
+      "rss": 53678080,
+      "heap": 7465698,
+      "inflight": 0
+    },
+    {
+      "t": 41153,
+      "rss": 53596160,
+      "heap": 1417265,
+      "inflight": 0
+    },
+    {
+      "t": 42156,
+      "rss": 53563392,
+      "heap": 8733144,
+      "inflight": 0
+    },
+    {
+      "t": 43159,
+      "rss": 53542912,
+      "heap": 6154953,
+      "inflight": 0
+    },
+    {
+      "t": 44162,
+      "rss": 53637120,
+      "heap": 851218,
+      "inflight": 0
+    },
+    {
+      "t": 45165,
+      "rss": 53596160,
+      "heap": 6312111,
+      "inflight": 0
+    },
+    {
+      "t": 46169,
+      "rss": 53592064,
+      "heap": 12028260,
+      "inflight": 0
+    },
+    {
+      "t": 47171,
+      "rss": 53587968,
+      "heap": 6313320,
+      "inflight": 0
+    },
+    {
+      "t": 48174,
+      "rss": 53637120,
+      "heap": 10757216,
+      "inflight": 0
+    },
+    {
+      "t": 49177,
+      "rss": 53628928,
+      "heap": 1568559,
+      "inflight": 0
+    },
+    {
+      "t": 50180,
+      "rss": 53456896,
+      "heap": 9076741,
+      "inflight": 0
+    },
+    {
+      "t": 51184,
+      "rss": 53542912,
+      "heap": 5526488,
+      "inflight": 0
+    },
+    {
+      "t": 52187,
+      "rss": 53506048,
+      "heap": 8846907,
+      "inflight": 0
+    },
+    {
+      "t": 53191,
+      "rss": 53448704,
+      "heap": 13445280,
+      "inflight": 0
+    },
+    {
+      "t": 54195,
+      "rss": 53649408,
+      "heap": 1846616,
+      "inflight": 0
+    },
+    {
+      "t": 55197,
+      "rss": 53600256,
+      "heap": 7289040,
+      "inflight": 0
+    },
+    {
+      "t": 56201,
+      "rss": 53661696,
+      "heap": 15208963,
+      "inflight": 0
+    },
+    {
+      "t": 57204,
+      "rss": 53641216,
+      "heap": 7223496,
+      "inflight": 0
+    },
+    {
+      "t": 58208,
+      "rss": 53436416,
+      "heap": 13706596,
+      "inflight": 0
+    },
+    {
+      "t": 59211,
+      "rss": 53633024,
+      "heap": 2219054,
+      "inflight": 0
+    },
+    {
+      "t": 60212,
+      "rss": 45281280,
+      "heap": 731451,
+      "inflight": 0
+    },
+    {
+      "t": 61216,
+      "rss": 45039616,
+      "heap": 732070,
+      "inflight": 0
+    },
+    {
+      "t": 62219,
+      "rss": 45039616,
+      "heap": 732577,
+      "inflight": 0
+    },
+    {
+      "t": 63223,
+      "rss": 45039616,
+      "heap": 733084,
+      "inflight": 0
+    },
+    {
+      "t": 64226,
+      "rss": 45039616,
+      "heap": 733591,
+      "inflight": 0
+    }
+  ],
+  "cold": {
+    "readyMs": 61.0959,
+    "firstResponseMs": 66.9773,
+    "idleRss": 40083456,
+    "idleHeap": 519940,
+    "shutdownIdle": {
+      "exited": true,
+      "ms": 13.217200000000048,
+      "code": 0,
+      "eventualExitMs": 13.217200000000048
+    }
+  }
+}

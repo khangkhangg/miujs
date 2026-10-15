@@ -1,9 +1,12 @@
 # Benchmarks
 
 ```bash
-bun bench/run.ts            # 3 rounds × 2 s per framework and scenario
+bun bench/run.ts            # 3 rounds × 2 s per framework and scenario, then memory and cold start
 BENCH_MS=500 bun bench/run.ts
 ```
+
+For real-HTTP/WebSocket soak tests of the example apps (memory over time, latency percentiles,
+shutdown), see [`scripts/soak/REPORT.md`](../scripts/soak/REPORT.md).
 
 ## Method
 
@@ -14,8 +17,101 @@ BENCH_MS=500 bun bench/run.ts
 - Frameworks are **interleaved within each round** and the order rotates, so CPU frequency drift
   or thermal throttling hits all of them equally. The best round is kept.
 - Hono has no built-in validator, so its `/json` route validates by hand, doing the same checks.
+- **Memory** (heap per 10k requests, in-process, best of 2 interleaved rounds):
+  - *retained*: live-heap growth per 10k requests after a full GC, measured with `leakCheck`
+    from `scripts/lib/leak.ts`. A healthy framework is ~0.
+  - *peak*: the highest heap size above the post-GC baseline while serving 10k requests,
+    sampled every 500 requests. JSC collects young garbage on its own schedule, so treat this as
+    approximate garbage pressure, not an exact allocation count.
+- **Cold start**: `bench/cold.ts` in a fresh `bun` process: runtime boot, importing the framework,
+  building the same 3-route app and reading one response. Median of 7 interleaved runs.
 
-## Latest results (2026-10-15)
+## Latest results (2026-10-15, night)
+
+Bun 1.4.3 on Windows 11, laptop CPU (20 logical cores), MiuJS after the body-read fix below. Two
+back-to-back runs on an otherwise idle machine. Absolute req/s move ±10% between runs for every
+framework, so **compare within a row, not across rows or runs**.
+
+| Scenario | MiuJS | Elysia 1.4.30 | Hono 4.13.13 | MiuJS vs best other (run 1 / 2) |
+| --- | ---: | ---: | ---: | ---: |
+| `GET /` text | 1,348,000 | 1,824,000 | 1,555,000 | 74% / 70% |
+| `GET /users/:id` params → JSON | 945,000 | 1,145,500 | 712,000 | 82% / 90% |
+| `POST /json` body validation → JSON | 398,500 | 364,000 | 382,500 | **104% / 103%** |
+
+(req/s from run 1.)
+
+Heap per 10k requests (retained after GC / peak above baseline):
+
+| Scenario | MiuJS | Elysia | Hono |
+| --- | ---: | ---: | ---: |
+| `GET /` text | −1.4 KB / 1.0 KB | −1.8 KB / 0.0 KB | −1.4 KB / 1.4–1.8 KB |
+| `GET /users/:id` | −0.2 KB / 1.3 KB | 1.3 KB / 0.3–0.8 KB | 1.3 KB / 2.3–3.4 KB |
+| `POST /json` | 1.3 KB / 8.5–9.3 KB | 1.1 KB / 5.5–6.6 KB | 1.3 KB / 12.0–12.7 KB |
+
+Retained heap is ~0 for every framework and route (no leak). Peak heap is now level across all three.
+
+| | MiuJS | Elysia | Hono |
+| --- | ---: | ---: | ---: |
+| Cold start, process start → first response (median ms; runs 1 / 2) | 11.6 / 11.3 | 52.9 / 52.5 | 13.9 / 13.4 |
+
+Summary: MiuJS starts fastest (about 4.6× faster than Elysia, ahead of Hono), is fastest when
+validating JSON bodies, matches the others on memory, and trails Elysia by 10–18% on the params
+route and ~28% on the text route (see "What still blocks" below).
+
+**`POST /json` regression: fixed.** Since `5aae15e` (body limits) JSON bodies were read with
+`arrayBuffer()` and then `TextDecoder.decode`, which is slower than `req.text()` on Bun and doubled
+the garbage (265–288 KB peak per 10k requests). Bodies are now read with `req.text()`. With a
+`Content-Length` the limit is checked before reading. Without one the limit is checked on the text,
+counting UTF-8 bytes exactly only when the length is within 3× of the limit. Memory stays bounded
+by the server's own body cap, as before.
+
+### Earlier results (2026-10-15, evening)
+
+Bun 1.4.3 on Windows 11, laptop CPU (20 logical cores), MiuJS at `3d837b1`. Three full runs:
+runs 1 and 2 back to back while other agents' `bun test` jobs were probably still running on
+the same machine, and run 3 when it was otherwise idle. The machine throttles, and absolute req/s
+move ±10% between runs for **every** framework (Hono's `GET /` ranged 1.47M–1.62M), so
+**compare within a row, not across rows or runs**.
+
+| Scenario | MiuJS | Elysia 1.4.30 | Hono 4.13.13 | MiuJS vs best other (run 1 / 2 / 3) |
+| --- | ---: | ---: | ---: | ---: |
+| `GET /` text | 1,481,500 | 1,880,000 | 1,469,000 | 79% / 75% / 71% |
+| `GET /users/:id` params → JSON | 1,021,500 | 1,204,500 | 720,000 | 85% / 83% / 84% |
+| `POST /json` body validation → JSON | 339,500 | 384,000 | 406,500 | 84% / 91% / 92% |
+
+(req/s from run 1.)
+
+Heap per 10k requests (retained after GC / peak above baseline; same in all three runs within noise):
+
+| Scenario | MiuJS | Elysia | Hono |
+| --- | ---: | ---: | ---: |
+| `GET /` text | 7.6 KB / 1.0 KB | 7.2 KB / 0.0 KB | 7.6 KB / 2–7 KB |
+| `GET /users/:id` | 7.6 KB / 0.9 KB | 7.6 KB / 1.2 KB | 1.3 KB / 4–5 KB |
+| `POST /json` | 7.6 KB / **288 KB** | 7.4 KB / 4–11 KB | 7.6 KB / 11–14 KB |
+
+The ~7.5 KB *retained* figure is the same for all three frameworks and every route. It is the
+noise floor of the measurement (under 1 byte per request), not a leak. *Peak* is low everywhere
+except MiuJS `POST /json`, which creates ~25× more short-lived heap than the others (see below).
+
+| | MiuJS | Elysia | Hono |
+| --- | ---: | ---: | ---: |
+| Cold start, process start → first response (median ms; runs 1 / 2 / 3) | 11.0 / 11.4 / 10.9 | 49.0 / 50.3 / 50.0 | 12.3 / 12.9 / 12.5 |
+
+Summary: MiuJS starts fastest (about 4.5× faster than Elysia, slightly ahead of Hono), is level with
+Elysia and Hono on memory for GET routes, and trails Elysia by 15–17% on the params route and
+21–29% on the text route.
+
+**`POST /json` regressed** (fixed since; see above) from 106–111% of the best other framework (the 11:20 run below) to
+84–92%. Elysia and Hono did not move, so this is MiuJS's own change. Cause: since `5aae15e`
+(12:12, body limits) `readBody` reads JSON with `new Uint8Array(await req.arrayBuffer())` and
+then `TextDecoder.decode`. On Bun 1.4.3 that path costs ~1,450 ns per request versus ~1,100 ns
+for `req.text()` and ~960 ns for `req.json()` (A/B microbenchmark, 300k requests × 3 rounds,
+each figure including `new Request`). It also explains the 288 KB peak heap. When a
+`Content-Length` header is present and within the limit, `req.text()`/`req.json()` would keep the
+limit and skip the copy. That change is in `packages/miujs/src/app.ts`, which this benchmark
+does not touch.
+
+### Previous results (2026-10-15, 11:20)
 
 Bun 1.4.3 on Windows 11, laptop CPU. This machine throttles during long runs, so absolute
 req/s drift between runs for every framework. **Compare within a row, not across rows.**
@@ -29,9 +125,10 @@ Two back-to-back runs after the dispatch-path work:
 
 (req/s from run 1. Before this work the same rows were 77%, 70% and 99% of Elysia.)
 
-Summary: MiuJS beats Elysia and Hono when validating request bodies, is within 10–18% of Elysia
-on a params route, and trails Elysia by about 25% on a text route. The spec targets "within 10%
-of Elysia": the params row is at the edge, and the text row is not there. See below for why.
+At that point MiuJS beat Elysia and Hono when validating request bodies (it no longer does; see
+above), was within 10–18% of Elysia on a params route, and trailed Elysia by about 25% on a text
+route. The spec targets "within 10% of Elysia": the params row is at the edge, and the text row
+is not there. See below for why.
 
 ## Where the time goes (measured)
 

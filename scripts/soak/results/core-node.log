@@ -1,0 +1,10 @@
+
+== node core: cold start
+   first response 203 ms, idle RSS 71.2 MB, idle stop → exit 21 ms
+== node core: soak 60 s
+   26,489 ops/s, p50 2.29 / p95 3.51 / p99 5.92 ms, errors 0, heap warm 9.0 → end 8.9 → settled 8.8 MB (-1.6% / -2.8%)
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":null,"serverAnswersAfter":200,"servedDelta":0}; stop after load → exit in 33 ms
+
+| App (node) | Conc | ops/s | p50 ms | p95 ms | p99 ms | Errors | RSS start / peak / end MB | Heap warm → end → settled MB | Growth end / settled | Leak? |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- |
+| core | 64 | 26,489 | 2.29 | 3.51 | 5.92 | 0 | 70.8 / 191.7 / 190.1 | 9.0 → 8.9 → 8.8 | -1.6% / -2.8% | no |

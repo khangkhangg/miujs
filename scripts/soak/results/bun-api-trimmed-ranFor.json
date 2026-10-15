@@ -1,0 +1,682 @@
+{
+  "app": "api",
+  "runtime": "bun",
+  "durationS": 60,
+  "concurrency": 32,
+  "drivers": 0,
+  "requests": 469847,
+  "rps": 7830.783333333334,
+  "p50": 2.67,
+  "p95": 6.12,
+  "p99": 10.8,
+  "max": 1088.2304,
+  "errors": 0,
+  "errorKinds": {},
+  "expected": {
+    "GET /notes/:id (missing) 404": 1524
+  },
+  "wsFramesInPerS": 0,
+  "ops": {
+    "POST /auth/register": {
+      "n": 1078,
+      "perS": 17.966666666666665,
+      "p50": 191,
+      "p95": 303,
+      "p99": 796,
+      "max": 1088.2304
+    },
+    "POST /auth/logout": {
+      "n": 2156,
+      "perS": 35.93333333333333,
+      "p50": 4.4,
+      "p95": 10.5,
+      "p99": 47.900000000000006,
+      "max": 254.5869
+    },
+    "POST /auth/login": {
+      "n": 1078,
+      "perS": 17.966666666666665,
+      "p50": 185,
+      "p95": 292,
+      "p99": 360,
+      "max": 541.6713
+    },
+    "GET /auth/me": {
+      "n": 42742,
+      "perS": 712.3666666666667,
+      "p50": 2.65,
+      "p95": 5.92,
+      "p99": 9.23,
+      "max": 89.04289999999992
+    },
+    "GET /notes": {
+      "n": 189937,
+      "perS": 3165.616666666667,
+      "p50": 2.66,
+      "p95": 5.93,
+      "p99": 9.08,
+      "max": 84.42560000000049
+    },
+    "POST /notes": {
+      "n": 84733,
+      "perS": 1412.2166666666667,
+      "p50": 2.68,
+      "p95": 5.96,
+      "p99": 9.15,
+      "max": 75.4390999999996
+    },
+    "GET /notes/:id (missing)": {
+      "n": 1524,
+      "perS": 25.4,
+      "p50": 3.31,
+      "p95": 8.120000000000001,
+      "p99": 12.9,
+      "max": 46.11860000000024
+    },
+    "GET /notes/:id": {
+      "n": 61866,
+      "perS": 1031.1,
+      "p50": 2.64,
+      "p95": 5.89,
+      "p99": 8.84,
+      "max": 84.80220000000008
+    },
+    "DELETE /notes/:id": {
+      "n": 84733,
+      "perS": 1412.2166666666667,
+      "p50": 2.65,
+      "p95": 5.99,
+      "p99": 9.21,
+      "max": 138.04169999999976
+    }
+  },
+  "rss": {
+    "idleBeforeLoad": 48742400,
+    "start": 48754688,
+    "peak": 1419460608,
+    "end": 71774208,
+    "settled": 64421888
+  },
+  "heap": {
+    "idleBeforeLoad": 927810,
+    "afterWarmup": 3201848,
+    "warmupAtMs": 12041,
+    "end": 3821518,
+    "settled": 3553316,
+    "growth": 0.19353510847485578,
+    "settledGrowth": 0.10977035761847533
+  },
+  "objects": {
+    "afterWarmup": 16662,
+    "end": 19702,
+    "settled": 19538
+  },
+  "suspectedLeak": true,
+  "typeGrowthEnd": [
+    {
+      "type": "Object",
+      "before": 1666,
+      "after": 4967,
+      "delta": 3301
+    },
+    {
+      "type": "string",
+      "before": 4628,
+      "after": 5787,
+      "delta": 1159
+    },
+    {
+      "type": "StructureRareData",
+      "before": 245,
+      "after": 251,
+      "delta": 6
+    },
+    {
+      "type": "Response",
+      "before": 1,
+      "after": 2,
+      "delta": 1
+    },
+    {
+      "type": "Timeout",
+      "before": 3,
+      "after": 2,
+      "delta": -1
+    },
+    {
+      "type": "RegExp",
+      "before": 45,
+      "after": 42,
+      "delta": -3
+    },
+    {
+      "type": "Structure",
+      "before": 1472,
+      "after": 1468,
+      "delta": -4
+    },
+    {
+      "type": "Cell Butterfly",
+      "before": 118,
+      "after": 113,
+      "delta": -5
+    },
+    {
+      "type": "Uint8Array",
+      "before": 12,
+      "after": 3,
+      "delta": -9
+    },
+    {
+      "type": "URL",
+      "before": 21,
+      "after": 3,
+      "delta": -18
+    },
+    {
+      "type": "Headers",
+      "before": 27,
+      "after": 5,
+      "delta": -22
+    },
+    {
+      "type": "Request",
+      "before": 25,
+      "after": 2,
+      "delta": -23
+    }
+  ],
+  "typeGrowthSettled": [
+    {
+      "type": "Object",
+      "before": 1666,
+      "after": 4964,
+      "delta": 3298
+    },
+    {
+      "type": "string",
+      "before": 4628,
+      "after": 5748,
+      "delta": 1120
+    },
+    {
+      "type": "StructureRareData",
+      "before": 245,
+      "after": 251,
+      "delta": 6
+    },
+    {
+      "type": "Timeout",
+      "before": 3,
+      "after": 2,
+      "delta": -1
+    },
+    {
+      "type": "RegExp",
+      "before": 45,
+      "after": 42,
+      "delta": -3
+    },
+    {
+      "type": "Structure",
+      "before": 1472,
+      "after": 1468,
+      "delta": -4
+    },
+    {
+      "type": "Cell Butterfly",
+      "before": 118,
+      "after": 113,
+      "delta": -5
+    },
+    {
+      "type": "Uint8Array",
+      "before": 12,
+      "after": 3,
+      "delta": -9
+    },
+    {
+      "type": "URL",
+      "before": 21,
+      "after": 3,
+      "delta": -18
+    },
+    {
+      "type": "Headers",
+      "before": 27,
+      "after": 4,
+      "delta": -23
+    },
+    {
+      "type": "Request",
+      "before": 25,
+      "after": 2,
+      "delta": -23
+    },
+    {
+      "type": "NativePromiseContext",
+      "before": 23,
+      "after": 0,
+      "delta": -23
+    }
+  ],
+  "extras": {
+    "inflight": 0,
+    "maxInflight": 32,
+    "served": 469847,
+    "rooms": null,
+    "jobsRan": 0
+  },
+  "settledExtras": {
+    "rooms": null,
+    "settleS": 5
+  },
+  "codeState": {
+    "head": "6ef8ccf",
+    "dirtyPackages": " 40 files changed, 927 insertions(+), 171 deletions(-)",
+    "at": "2026-10-15T11:03:16.829Z"
+  },
+  "stuck": {},
+  "shutdownAfterLoad": {
+    "exited": true,
+    "ms": 24.536799999987124,
+    "code": 0,
+    "eventualExitMs": 24.536799999987124
+  },
+  "stderrTail": [
+    "STOPPED 2"
+  ],
+  "samples": [
+    {
+      "t": 1,
+      "rss": 48754688,
+      "heap": 928290,
+      "inflight": 0
+    },
+    {
+      "t": 1032,
+      "rss": 1419460608,
+      "heap": 2090412,
+      "inflight": 31
+    },
+    {
+      "t": 2038,
+      "rss": 84459520,
+      "heap": 14292840,
+      "inflight": 14
+    },
+    {
+      "t": 3057,
+      "rss": 1416429568,
+      "heap": 8541540,
+      "inflight": 19
+    },
+    {
+      "t": 4061,
+      "rss": 75210752,
+      "heap": 4330260,
+      "inflight": 23
+    },
+    {
+      "t": 5070,
+      "rss": 1412026368,
+      "heap": 4524224,
+      "inflight": 32
+    },
+    {
+      "t": 6074,
+      "rss": 76922880,
+      "heap": 4850874,
+      "inflight": 8
+    },
+    {
+      "t": 7081,
+      "rss": 949420032,
+      "heap": 9720226,
+      "inflight": 22
+    },
+    {
+      "t": 8091,
+      "rss": 878243840,
+      "heap": 3787482,
+      "inflight": 32
+    },
+    {
+      "t": 9099,
+      "rss": 473419776,
+      "heap": 8154727,
+      "inflight": 30
+    },
+    {
+      "t": 10111,
+      "rss": 1080643584,
+      "heap": 8288315,
+      "inflight": 20
+    },
+    {
+      "t": 11115,
+      "rss": 72699904,
+      "heap": 6972398,
+      "inflight": 32
+    },
+    {
+      "t": 12125,
+      "rss": 1143808000,
+      "heap": 3509403,
+      "inflight": 22
+    },
+    {
+      "t": 13129,
+      "rss": 73261056,
+      "heap": 5580961,
+      "inflight": 27
+    },
+    {
+      "t": 14147,
+      "rss": 1415909376,
+      "heap": 9021488,
+      "inflight": 32
+    },
+    {
+      "t": 15150,
+      "rss": 73785344,
+      "heap": 4926195,
+      "inflight": 19
+    },
+    {
+      "t": 16163,
+      "rss": 1414176768,
+      "heap": 6000210,
+      "inflight": 19
+    },
+    {
+      "t": 17175,
+      "rss": 73146368,
+      "heap": 7157127,
+      "inflight": 5
+    },
+    {
+      "t": 18188,
+      "rss": 1172905984,
+      "heap": 8270990,
+      "inflight": 32
+    },
+    {
+      "t": 19193,
+      "rss": 74944512,
+      "heap": 3750645,
+      "inflight": 32
+    },
+    {
+      "t": 20204,
+      "rss": 1338552320,
+      "heap": 4741388,
+      "inflight": 27
+    },
+    {
+      "t": 21210,
+      "rss": 343052288,
+      "heap": 4592373,
+      "inflight": 32
+    },
+    {
+      "t": 22223,
+      "rss": 931094528,
+      "heap": 9404578,
+      "inflight": 32
+    },
+    {
+      "t": 23229,
+      "rss": 275214336,
+      "heap": 8309821,
+      "inflight": 30
+    },
+    {
+      "t": 24238,
+      "rss": 1145700352,
+      "heap": 5529243,
+      "inflight": 23
+    },
+    {
+      "t": 25243,
+      "rss": 456359936,
+      "heap": 4902034,
+      "inflight": 32
+    },
+    {
+      "t": 26250,
+      "rss": 745451520,
+      "heap": 3488911,
+      "inflight": 20
+    },
+    {
+      "t": 27262,
+      "rss": 946839552,
+      "heap": 9930241,
+      "inflight": 31
+    },
+    {
+      "t": 28270,
+      "rss": 73035776,
+      "heap": 9344594,
+      "inflight": 32
+    },
+    {
+      "t": 29278,
+      "rss": 878690304,
+      "heap": 8034145,
+      "inflight": 18
+    },
+    {
+      "t": 30289,
+      "rss": 73183232,
+      "heap": 7156740,
+      "inflight": 32
+    },
+    {
+      "t": 31299,
+      "rss": 810962944,
+      "heap": 4912266,
+      "inflight": 27
+    },
+    {
+      "t": 32303,
+      "rss": 72966144,
+      "heap": 5242939,
+      "inflight": 21
+    },
+    {
+      "t": 33316,
+      "rss": 816377856,
+      "heap": 10227704,
+      "inflight": 9
+    },
+    {
+      "t": 34326,
+      "rss": 72843264,
+      "heap": 3419619,
+      "inflight": 2
+    },
+    {
+      "t": 35336,
+      "rss": 861061120,
+      "heap": 8217423,
+      "inflight": 23
+    },
+    {
+      "t": 36340,
+      "rss": 72736768,
+      "heap": 6550570,
+      "inflight": 23
+    },
+    {
+      "t": 37349,
+      "rss": 1213399040,
+      "heap": 7308621,
+      "inflight": 30
+    },
+    {
+      "t": 38357,
+      "rss": 475369472,
+      "heap": 6195846,
+      "inflight": 15
+    },
+    {
+      "t": 39368,
+      "rss": 970448896,
+      "heap": 5957523,
+      "inflight": 28
+    },
+    {
+      "t": 40374,
+      "rss": 676687872,
+      "heap": 5021094,
+      "inflight": 26
+    },
+    {
+      "t": 41379,
+      "rss": 207101952,
+      "heap": 7015189,
+      "inflight": 13
+    },
+    {
+      "t": 42387,
+      "rss": 704815104,
+      "heap": 5790737,
+      "inflight": 26
+    },
+    {
+      "t": 43393,
+      "rss": 543387648,
+      "heap": 3467881,
+      "inflight": 32
+    },
+    {
+      "t": 44404,
+      "rss": 1121415168,
+      "heap": 6126426,
+      "inflight": 14
+    },
+    {
+      "t": 45415,
+      "rss": 609890304,
+      "heap": 4935746,
+      "inflight": 32
+    },
+    {
+      "t": 46425,
+      "rss": 877998080,
+      "heap": 5434975,
+      "inflight": 16
+    },
+    {
+      "t": 47434,
+      "rss": 609935360,
+      "heap": 4102418,
+      "inflight": 31
+    },
+    {
+      "t": 48438,
+      "rss": 408727552,
+      "heap": 7268049,
+      "inflight": 30
+    },
+    {
+      "t": 49442,
+      "rss": 408666112,
+      "heap": 6131590,
+      "inflight": 32
+    },
+    {
+      "t": 50450,
+      "rss": 702672896,
+      "heap": 5096419,
+      "inflight": 16
+    },
+    {
+      "t": 51459,
+      "rss": 767807488,
+      "heap": 8729133,
+      "inflight": 12
+    },
+    {
+      "t": 52466,
+      "rss": 476352512,
+      "heap": 8697285,
+      "inflight": 5
+    },
+    {
+      "t": 53473,
+      "rss": 610918400,
+      "heap": 9179071,
+      "inflight": 17
+    },
+    {
+      "t": 54480,
+      "rss": 878391296,
+      "heap": 6871712,
+      "inflight": 26
+    },
+    {
+      "t": 55488,
+      "rss": 543088640,
+      "heap": 7582427,
+      "inflight": 32
+    },
+    {
+      "t": 56497,
+      "rss": 811712512,
+      "heap": 8293157,
+      "inflight": 10
+    },
+    {
+      "t": 57501,
+      "rss": 543875072,
+      "heap": 8453903,
+      "inflight": 15
+    },
+    {
+      "t": 58509,
+      "rss": 475951104,
+      "heap": 5035159,
+      "inflight": 31
+    },
+    {
+      "t": 59518,
+      "rss": 774733824,
+      "heap": 7792735,
+      "inflight": 27
+    },
+    {
+      "t": 60521,
+      "rss": 64495616,
+      "heap": 3821998,
+      "inflight": 0
+    },
+    {
+      "t": 61524,
+      "rss": 64364544,
+      "heap": 3822617,
+      "inflight": 0
+    },
+    {
+      "t": 62526,
+      "rss": 64356352,
+      "heap": 3823124,
+      "inflight": 0
+    },
+    {
+      "t": 63533,
+      "rss": 64356352,
+      "heap": 3823631,
+      "inflight": 0
+    },
+    {
+      "t": 64539,
+      "rss": 64356352,
+      "heap": 3824138,
+      "inflight": 0
+    }
+  ],
+  "cold": null
+}

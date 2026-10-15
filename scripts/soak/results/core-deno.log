@@ -1,0 +1,10 @@
+
+== deno core: cold start
+   first response 78 ms, idle RSS 37.6 MB, idle stop → exit 48 ms
+== deno core: soak 60 s
+   66,133 ops/s, p50 0.86 / p95 1.86 / p99 2.61 ms, errors 0, heap warm 3.7 → end 3.6 → settled 3.6 MB (-0.4% / -1.1%)
+   stuck checks: {"midBodyAborts":200,"fetchAborts":200,"inflightAfter":null,"serverAnswersAfter":200,"servedDelta":0}; stop after load → exit in 42 ms
+
+| App (deno) | Conc | ops/s | p50 ms | p95 ms | p99 ms | Errors | RSS start / peak / end MB | Heap warm → end → settled MB | Growth end / settled | Leak? |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- |
+| core | 64 | 66,133 | 0.86 | 1.86 | 2.61 | 0 | 37.6 / 48.2 / 46.9 | 3.7 → 3.6 → 3.6 | -0.4% / -1.1% | no |
