@@ -186,6 +186,9 @@ export async function runImport(repo: Repo, rt: { byName: Map<string, Resource> 
     return id;
   };
   const seenUnique = new Map<string, Map<string, number>>();
+  // Uniqueness against existing records is checked after the loop, in batches of 50 values.
+  const uniqueChecks: { rowNo: number; f: FieldMetaBase; v: unknown; key: string; errors: { field: string; message: string }[] }[] = [];
+  const pending: { rowNo: number; value: Record<string, unknown>; errors: { field: string; message: string }[] }[] = [];
   for (let i = 0; i < data.length; i++) {
     const rowNo = i + 1;
     const cells = data[i];
@@ -224,13 +227,32 @@ export async function runImport(repo: Repo, rt: { byName: Map<string, Resource> 
         if (prev !== undefined) rowErrors.push({ field: f.name, message: `duplicate of row ${prev}` });
         else {
           seen.set(key, rowNo);
-          const existing = await repo.list({ filter: { [f.name]: { eq: v } }, limit: 1 });
-          if (existing.items.length) rowErrors.push({ field: f.name, message: `already used by ${r.singular.toLowerCase()} ${existing.items[0].id}` });
+          uniqueChecks.push({ rowNo, f, v, key, errors: rowErrors });
         }
       }
     }
-    if (rowErrors.length) errors.push({ row: rowNo, errors: rowErrors });
-    values.push(rowErrors.length ? null : value);
+    pending.push({ rowNo, value, errors: rowErrors });
+  }
+  const byField = new Map<FieldMetaBase, typeof uniqueChecks>();
+  for (const u of uniqueChecks) {
+    let list = byField.get(u.f);
+    if (!list) byField.set(u.f, (list = []));
+    list.push(u);
+  }
+  for (const [f, list] of byField) {
+    for (let i = 0; i < list.length; i += 50) {
+      const chunk = list.slice(i, i + 50);
+      const existing = await repo.list({ filter: { [f.name]: { in: chunk.map((u) => u.v) } }, limit: chunk.length });
+      const taken = new Map(existing.items.map((rec) => [JSON.stringify(toDb(f, rec[f.name])), rec.id]));
+      for (const u of chunk) {
+        const id = taken.get(u.key);
+        if (id !== undefined) u.errors.push({ field: f.name, message: `already used by ${r.singular.toLowerCase()} ${id}` });
+      }
+    }
+  }
+  for (const p of pending) {
+    if (p.errors.length) errors.push({ row: p.rowNo, errors: p.errors });
+    values.push(p.errors.length ? null : p.value);
   }
   const result: ImportResult = { dryRun: !!o.dryRun, total: data.length, valid: data.length - errors.length, invalid: errors.length, columns, ignored, errors };
   if (o.dryRun) return result;

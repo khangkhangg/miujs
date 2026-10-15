@@ -6,7 +6,7 @@ import { quoteIdent, type Database, type Statement } from "@miujs/db";
 import { errors, validate, type Context, type Env, type Schema } from "miujs";
 import { adminErrors } from "./errors.ts";
 import { fromDb, toDb } from "./fields.ts";
-import { filterClauses, encodeCursor, parseSort, searchClause, sortSql, resolveRelative, type Clause } from "./query.ts";
+import { filterClauses, encodeCursor, parseSort, searchClause, sortSql, splitSort, resolveRelative, type Clause } from "./query.ts";
 import { createSchema, updateSchema, type AdminRecord, type DataAccess, type Filter, type HookArgs, type Resource } from "./resource.ts";
 
 export interface Scope {
@@ -48,8 +48,10 @@ export interface ListOptions {
 
 export interface Prepared {
   statements: Statement[];
+  /** The record id to read back after the write (run() reads them all in a few queries). */
+  readBack?: string;
   /** After the statements committed: hooks, audit, events. Returns the record. */
-  commit(): Promise<AdminRecord | null>;
+  commit(record?: AdminRecord | null): Promise<AdminRecord | null>;
 }
 
 type Row = Record<string, unknown>;
@@ -96,6 +98,8 @@ export class Repo {
   private scope: Scope;
   /** While run() commits a batch, audit entries collect here and go out with one logMany. */
   private auditBuffer: AuditEntryIn[] | null = null;
+  /** Relation targets already checked while preparing a batch (bulk and import repeat them). */
+  private relationsSeen = new Set<string>();
 
   constructor(rt: Runtime, r: Resource, scope: Scope) {
     this.rt = rt;
@@ -116,11 +120,16 @@ export class Repo {
     return this.scope.orgId;
   }
 
-  /** org_id and deleted_at conditions every statement carries. */
-  private base(): Clause[] {
+  /**
+   * org_id and deleted_at conditions every statement carries. `byId`: the statement looks rows
+   * up by id; the unary + keeps SQLite on the primary key (without it, and without ANALYZE
+   * statistics, it reads an (org_id, ...) index instead: every row of the organization, ~15 ms per
+   * lookup at 100k rows).
+   */
+  private base(byId = false): Clause[] {
     const out: Clause[] = [];
     const org = this.orgId();
-    if (org !== null) out.push({ sql: `"org_id" = ?`, binds: [org] });
+    if (org !== null) out.push({ sql: byId ? `+"org_id" = ?` : `"org_id" = ?`, binds: [org] });
     if (this.r.softDelete) out.push({ sql: `"deleted_at" IS NULL`, binds: [] });
     return out;
   }
@@ -143,7 +152,7 @@ export class Repo {
   }
 
   async findRow(id: string): Promise<Row | null> {
-    const w = this.where([{ sql: `"id" = ?`, binds: [id] }, ...this.base()]);
+    const w = this.where([{ sql: `"id" = ?`, binds: [id] }, ...this.base(true)]);
     return this.rt.db.prepare(`SELECT * FROM ${this.table}${w.sql}`).bind(...w.binds).first<Row>();
   }
 
@@ -152,7 +161,7 @@ export class Repo {
     const out: Row[] = [];
     for (let i = 0; i < ids.length; i += 90) {
       const chunk = ids.slice(i, i + 90);
-      const w = this.where([{ sql: `"id" IN (${chunk.map(() => "?").join(", ")})`, binds: chunk }, ...this.base()]);
+      const w = this.where([{ sql: `"id" IN (${chunk.map(() => "?").join(", ")})`, binds: chunk }, ...this.base(true)]);
       const { results } = await this.rt.db.prepare(`SELECT * FROM ${this.table}${w.sql}`).bind(...w.binds).all<Row>();
       out.push(...results);
     }
@@ -167,16 +176,23 @@ export class Repo {
   async list(o: ListOptions = {}): Promise<{ items: AdminRecord[]; nextCursor: string | null }> {
     const limit = Math.min(Math.max(1, o.limit ?? 50), 1000);
     const sort = parseSort(this.r, o.sort);
-    const { orderBy, after } = sortSql(sort, o.cursor);
     const clauses = [...this.base(), ...filterClauses(this.r, o.filter ?? {}, this.rt.now())];
     const search = searchClause(this.r, o.q);
     if (search) clauses.push(search);
-    if (after) clauses.push(after);
-    const w = this.where(clauses);
-    const { results } = await this.rt.db
-      .prepare(`SELECT * FROM ${this.table}${w.sql} ORDER BY ${orderBy} LIMIT ?`)
-      .bind(...w.binds, limit + 1)
-      .all<Row>();
+    const page = async (orderBy: string, extra: Clause | null, n: number) => {
+      const w = this.where(extra ? [...clauses, extra] : clauses);
+      return (await this.rt.db.prepare(`SELECT * FROM ${this.table}${w.sql} ORDER BY ${orderBy} LIMIT ?`).bind(...w.binds, n).all<Row>()).results;
+    };
+    let results: Row[];
+    if (sort.column === "id" || sort.notNull) {
+      const { orderBy, after } = sortSql(sort, o.cursor);
+      results = await page(orderBy, after, limit + 1);
+    } else {
+      // Values, then NULLs: two range reads on the (org, field, id) index instead of a full sort.
+      const plan = splitSort(sort, o.cursor);
+      results = plan.values ? await page(plan.values.orderBy, plan.values.where, limit + 1) : [];
+      if (results.length < limit + 1) results = results.concat(await page(plan.nulls.orderBy, plan.nulls.where, limit + 1 - results.length));
+    }
     const more = results.length > limit;
     const rows = more ? results.slice(0, limit) : results;
     return { items: rows.map((row) => this.toRecord(row)), nextCursor: more ? encodeCursor(sort, rows[rows.length - 1]) : null };
@@ -217,8 +233,11 @@ export class Repo {
       const v = values[f.name];
       if (v === undefined || v === null) continue;
       const target = this.rt.byName.get(f.options.target!)!;
+      const key = `${target.name} ${String(v)}`;
+      if (this.relationsSeen.has(key)) continue;
       const found = await new Repo(this.rt, target, this.scope).findRow(String(v));
       if (!found) throw adminErrors.relationInvalid(this.r.name, f.name, target.name, v);
+      this.relationsSeen.add(key);
     }
   }
 
@@ -278,8 +297,9 @@ export class Repo {
     return {
       id,
       statements: [stmt],
-      commit: async () => {
-        const record = (await this.get(id))!;
+      readBack: id,
+      commit: async (read) => {
+        const record = read ?? (await this.get(id))!;
         await this.r.hooks.afterCreate?.({ ...this.hookArgs(), record });
         await this.audit("create", id, undefined, record);
         await this.rt.emit(`${this.r.name}.created`, this.event({ id, record }), this.scope);
@@ -316,12 +336,13 @@ export class Repo {
       sets.push(`"updated_at" = ?`, `"updated_by" = ?`);
       binds.push(this.rt.now(), this.scope.userId);
     }
-    const w = this.where([{ sql: `"id" = ?`, binds: [id] }, ...this.base()]);
+    const w = this.where([{ sql: `"id" = ?`, binds: [id] }, ...this.base(true)]);
     const stmt = this.rt.db.prepare(`UPDATE ${this.table} SET ${sets.join(", ")}${w.sql}`).bind(...binds, ...w.binds);
     return {
       statements: [stmt],
-      commit: async () => {
-        const record = (await this.get(id))!;
+      readBack: id,
+      commit: async (read) => {
+        const record = read ?? (await this.get(id))!;
         await this.r.hooks.afterUpdate?.({ ...this.hookArgs(), before, record, changed });
         await this.audit("update", id, before, record);
         const pick = (rec: AdminRecord) => Object.fromEntries(changed.map((k) => [k, rec[k]]));
@@ -337,7 +358,7 @@ export class Repo {
     const record = this.toRecord(current);
     if (this.r.permissions) this.scope.authorize?.(this.r.permissions.delete, record);
     await this.r.hooks.beforeDelete?.({ ...this.hookArgs(), record });
-    const w = this.where([{ sql: `"id" = ?`, binds: [id] }, ...this.base()]);
+    const w = this.where([{ sql: `"id" = ?`, binds: [id] }, ...this.base(true)]);
     const soft = this.r.softDelete;
     let stmt: Statement;
     if (soft) {
@@ -373,10 +394,15 @@ export class Repo {
         mapDbError(this.r, err);
       }
     }
+    this.relationsSeen.clear();
+    // Written records are read back together (chunks of 90 ids), not one SELECT each.
+    const ids = prepared.map((p) => p.readBack).filter((x): x is string => typeof x === "string");
+    const read = new Map<string, AdminRecord>();
+    if (ids.length > 1) for (const row of await this.findRows(ids)) read.set(row.id as string, this.toRecord(row));
     const out: (AdminRecord | null)[] = [];
     this.auditBuffer = [];
     try {
-      for (const p of prepared) out.push(await p.commit());
+      for (const p of prepared) out.push(await p.commit(p.readBack ? read.get(p.readBack) : undefined));
     } finally {
       const entries = this.auditBuffer;
       this.auditBuffer = null;
@@ -424,15 +450,22 @@ export class Repo {
     }
   }
 
-  /** Adds `_included: { field: record | null }` for the given relation fields. */
-  async include(records: AdminRecord[], names: string[]): Promise<void> {
+  /**
+   * Adds `_included: { field: record | null }` for the given relation fields. `visible` is the
+   * caller's row-level read check: a related record it rejects is embedded as null.
+   */
+  async include(records: AdminRecord[], names: string[], visible?: (target: Resource, rec: AdminRecord) => boolean): Promise<void> {
     for (const name of names) {
       const f = this.r.fields[name];
       const target = this.rt.byName.get(f.options.target!)!;
       const ids = [...new Set(records.map((rec) => rec[name]).filter((v): v is string => typeof v === "string"))];
       const repo = new Repo(this.rt, target, this.scope);
       const rows = await repo.findRows(ids);
-      const byId = new Map(rows.map((row) => [row.id as string, repo.toRecord(row)]));
+      const byId = new Map<string, AdminRecord>();
+      for (const row of rows) {
+        const rec = repo.toRecord(row);
+        if (!visible || visible(target, rec)) byId.set(rec.id, rec);
+      }
       for (const rec of records) {
         const inc = ((rec as Record<string, unknown>)._included ??= {}) as Record<string, unknown>;
         inc[name] = typeof rec[name] === "string" ? (byId.get(rec[name] as string) ?? null) : null;

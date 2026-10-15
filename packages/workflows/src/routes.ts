@@ -20,10 +20,15 @@ type Authorize = (perm: string) => unknown;
 
 /**
  * Structural permission check: `ctx.authorize(perm)` when an access plugin provides it (false
- * or a throw denies), otherwise the `admin` role.
+ * or a throw denies), otherwise the `admin` role. Refused (MIU_E_WORKFLOWS_ORG_SCOPED) while an
+ * organization is active, so only global roles grant workflow permissions.
  */
 export async function checkPermission(ctx: Pick<Context, "user">, perm: string): Promise<void> {
   if (!ctx.user) throw errors.unauthorized();
+  // Workflows, runs and events are app-wide. An access plugin checks permissions against the
+  // active org's role, so an org admin would otherwise read and drive every org's runs.
+  const scoped = ctx as { can?: unknown; org?: unknown };
+  if (typeof scoped.can === "function" && scoped.org) throw workflowErrors.orgScoped();
   const authorize = (ctx as { authorize?: Authorize }).authorize;
   if (typeof authorize === "function") {
     if ((await authorize.call(ctx, perm)) === false) throw errors.forbidden(`Missing permission ${perm}`, `Grant "${perm}" to this user (see your access rules).`);
@@ -64,6 +69,30 @@ function safeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+/** Default largest webhook body: 1 MiB. */
+export const WEBHOOK_MAX_BODY = 1024 * 1024;
+
+async function readBodyLimited(req: Request, limit: number): Promise<string> {
+  const declared = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > limit) throw workflowErrors.bodyTooLarge(limit);
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const decoder = new TextDecoder();
+  let size = 0;
+  let out = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel().catch(() => {});
+      throw workflowErrors.bodyTooLarge(limit);
+    }
+    out += decoder.decode(value, { stream: true });
+  }
+  return out + decoder.decode();
+}
+
 export async function verifySignature(secret: string, body: string, header: string | null): Promise<boolean> {
   if (!header) return false;
   const given = header.trim().replace(/^sha256=/i, "").toLowerCase();
@@ -79,13 +108,21 @@ export async function verifySignature(secret: string, body: string, header: stri
  * registered at run time get webhooks without new routes.
  */
 export async function handleWebhook(engine: Engine, def: WorkflowDef<any>, tr: WebhookTrigger, ctx: Context): Promise<Response> {
-  const raw = await ctx.req.text();
+  const raw = await readBodyLimited(ctx.req, tr.maxBodySize ?? WEBHOOK_MAX_BODY);
   if (tr.secret !== undefined) {
     const secret = typeof tr.secret === "function" ? tr.secret(ctx.env) : tr.secret;
     if (!secret) {
       throw workflowErrors.config(`Webhook ${tr.path} has a secret configured, but it resolved to nothing`, "Set the secret in env (e.g. FORM_SECRET) or pass secret: \"...\" to webhook().");
     }
-    if (!(await verifySignature(secret, raw, ctx.headers.get(tr.header ?? "x-signature")))) throw workflowErrors.signature();
+    let signed = raw;
+    if (tr.tolerance !== undefined) {
+      // Replay protection: the timestamp is signed with the body and must be recent.
+      const ts = (ctx.headers.get(tr.timestampHeader ?? "x-signature-timestamp") ?? "").trim();
+      const now = Math.floor(engine.opts.clock.now() / 1000);
+      if (!/^\d{1,12}$/.test(ts) || Math.abs(now - Number(ts)) > tr.tolerance) throw workflowErrors.signature();
+      signed = `${ts}.${raw}`;
+    }
+    if (!(await verifySignature(secret, signed, ctx.headers.get(tr.header ?? "x-signature")))) throw workflowErrors.signature();
   }
   let body: unknown = {};
   if (raw.trim() !== "") {

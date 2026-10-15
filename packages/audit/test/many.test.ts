@@ -100,3 +100,28 @@ describe("ctx.audit.logMany and the audit service", () => {
     expect((await svc.query({ actor: "system" })).items).toHaveLength(1);
   });
 });
+
+describe("reserved checkpoint rows", () => {
+  test("app code cannot write an audit.checkpoint row that would excuse deleting earlier rows", async () => {
+    const store = memoryAuditStore({ key: KEY });
+    const app = miu({ logLevel: "silent", plugins: [audit({ store, routes: false })] });
+    await app.ready();
+    const svc = app.service<AuditService>("audit");
+    await svc.log({ action: "delete", resource: "contacts", resourceId: "evidence" });
+    const [row1] = await store.scan(0, 1);
+    // e.g. a generic "track event" route that logs a client-chosen action
+    const forged = { action: "audit.checkpoint", resource: "audit", metadata: { purgedThroughSeq: 1, anchorHash: row1.hash } };
+    let code = "none";
+    try {
+      await svc.log(forged);
+    } catch (err: any) {
+      code = err.code;
+    }
+    expect(code).toBe("MIU_E_AUDIT_INVALID");
+    await expect(svc.logMany([forged])).rejects.toThrow(/reserved/);
+    await svc.log({ action: "view", resource: "contacts" });
+    // Had it been written, deleting row 1 would go unnoticed.
+    await store.deleteThrough(1);
+    expect((await verifyChain(store)).ok).toBe(false);
+  });
+});

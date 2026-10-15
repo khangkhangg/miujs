@@ -13,10 +13,36 @@ export interface Clock {
   advanceTo?(time: number): void;
 }
 
+/** Longest delay a JS timer holds; longer ones fire at once (Node, Bun, browsers). */
+export const MAX_TIMER_MS = 2_147_483_647;
+
+type Native = ReturnType<typeof setTimeout>;
+/** A timer longer than MAX_TIMER_MS, re-armed in steps. */
+interface LongTimer {
+  t: Native;
+  unrefd: boolean;
+  unref(): void;
+}
+
+const isLong = (h: unknown): h is LongTimer => typeof h === "object" && h !== null && "unrefd" in h;
+
 export const realClock: Clock = {
   now: () => Date.now(),
-  setTimeout: (fn, ms) => setTimeout(fn, ms),
-  clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+  setTimeout(fn, ms) {
+    if (!(ms > MAX_TIMER_MS)) return setTimeout(fn, ms);
+    const h = { unrefd: false } as LongTimer;
+    const arm = (left: number) => {
+      h.t = setTimeout(left > MAX_TIMER_MS ? () => arm(left - MAX_TIMER_MS) : fn, Math.min(left, MAX_TIMER_MS));
+      if (h.unrefd) (h.t as { unref?: () => void }).unref?.();
+    };
+    h.unref = () => {
+      h.unrefd = true;
+      (h.t as { unref?: () => void }).unref?.();
+    };
+    arm(ms);
+    return h;
+  },
+  clearTimeout: (h) => clearTimeout(isLong(h) ? h.t : (h as Native)),
 };
 
 export interface ManualClock extends Clock {

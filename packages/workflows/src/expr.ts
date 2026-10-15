@@ -111,6 +111,11 @@ const COMPARE: Record<string, (a: unknown, b: unknown) => boolean> = {
 
 const cache = new Map<string, CompiledExpression>();
 
+/** Longest expression source accepted. Builders write one-liners; this bounds parse work. */
+export const MAX_EXPRESSION_LENGTH = 4096;
+/** Deepest nesting of (), [] and ! accepted. Bounds recursion (no stack overflows). */
+export const MAX_EXPRESSION_DEPTH = 64;
+
 /** Parse `source` once. Throws MIU_E_WORKFLOW_EXPRESSION for anything outside the language. */
 export function compileExpression(source: string, opts: CompileOptions = {}): CompiledExpression {
   const roots = opts.roots ?? ["data", "input", "steps"];
@@ -119,8 +124,13 @@ export function compileExpression(source: string, opts: CompileOptions = {}): Co
   if (hit) return hit;
 
   if (typeof source !== "string" || source.trim() === "") throw workflowErrors.expression(String(source), "expression is empty");
+  if (source.length > MAX_EXPRESSION_LENGTH) throw workflowErrors.expression(source.slice(0, 80) + "…", `longer than ${MAX_EXPRESSION_LENGTH} characters`);
   const toks = tokenize(source);
   let p = 0;
+  let depth = 0;
+  const deeper = (at: number) => {
+    if (++depth > MAX_EXPRESSION_DEPTH) throw workflowErrors.expression(source.slice(0, 80), `nested deeper than ${MAX_EXPRESSION_DEPTH} levels`, at);
+  };
   const paths: string[][] = [];
   const peek = () => toks[p];
   const isOp = (v: string) => {
@@ -162,8 +172,10 @@ export function compileExpression(source: string, opts: CompileOptions = {}): Co
   };
   const parseUnary = (): Fn => {
     if (isOp("!")) {
+      deeper(peek().at);
       p++;
       const inner = parseUnary();
+      depth--;
       return (s) => !inner(s);
     }
     return parsePrimary();
@@ -175,12 +187,15 @@ export function compileExpression(source: string, opts: CompileOptions = {}): Co
       return () => v;
     }
     if (tk.t === "op" && tk.v === "(") {
+      deeper(tk.at);
       const inner = parseOr();
       if (!isOp(")")) throw workflowErrors.expression(source, "Expected )", peek().at);
       p++;
+      depth--;
       return inner;
     }
     if (tk.t === "op" && tk.v === "[") {
+      deeper(tk.at);
       const items: Fn[] = [];
       if (!isOp("]")) {
         for (;;) {
@@ -194,6 +209,7 @@ export function compileExpression(source: string, opts: CompileOptions = {}): Co
       }
       if (!isOp("]")) throw workflowErrors.expression(source, "Expected ]", peek().at);
       p++;
+      depth--;
       return (s) => items.map((f) => f(s));
     }
     if (tk.t === "id") {
@@ -238,12 +254,31 @@ export function evaluate(source: string, scope: Scope, opts?: CompileOptions): u
   return compileExpression(source, opts).evaluate(scope);
 }
 
-const WHOLE = /^\{\{\s*([\s\S]*?)\s*\}\}$/;
-const PART = /\{\{\s*([\s\S]*?)\s*\}\}/g;
+// Templates are scanned with indexOf, not regexes: a lazy `{{\s*([\s\S]*?)\s*}}` backtracks
+// cubically on an unclosed "{{" followed by whitespace (seconds for a few KB).
+type Part = { start: number; end: number; src: string };
+
+function templateParts(s: string): Part[] {
+  const out: Part[] = [];
+  let i = s.indexOf("{{");
+  while (i !== -1) {
+    const close = s.indexOf("}}", i + 2);
+    if (close === -1) break;
+    out.push({ start: i, end: close + 2, src: s.slice(i + 2, close).trim() });
+    i = s.indexOf("{{", close + 2);
+  }
+  return out;
+}
+
+/** True when some "{{" has no "}}" after it. */
+export function hasUnclosedTemplate(s: string): boolean {
+  const last = s.lastIndexOf("{{");
+  return last !== -1 && s.indexOf("}}", last + 2) === -1;
+}
 
 /** Expressions inside `{{ }}` in `value`'s strings (deeply), for validation. */
 export function templateExpressions(value: unknown): string[] {
-  if (typeof value === "string") return [...value.matchAll(PART)].map((m) => m[1]);
+  if (typeof value === "string") return templateParts(value).map((m) => m.src);
   if (Array.isArray(value)) return value.flatMap(templateExpressions);
   if (value !== null && typeof value === "object") return Object.values(value).flatMap(templateExpressions);
   return [];
@@ -260,17 +295,24 @@ export function hasTemplate(value: unknown): boolean {
 export function interpolate(value: unknown, scope: Scope, opts?: CompileOptions): unknown {
   if (typeof value === "string") {
     if (!value.includes("{{")) return value;
-    const whole = WHOLE.exec(value);
-    if (whole && !whole[1].includes("{{")) return evaluate(whole[1], scope, opts);
-    return value.replace(PART, (_, src: string) => {
-      const v = evaluate(src, scope, opts);
-      return v === undefined || v === null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
-    });
+    const parts = templateParts(value);
+    if (parts.length === 0) return value;
+    const first = parts[0];
+    if (parts.length === 1 && first.start === 0 && first.end === value.length && !first.src.includes("{{")) return evaluate(first.src, scope, opts);
+    let out = "";
+    let at = 0;
+    for (const part of parts) {
+      const v = evaluate(part.src, scope, opts);
+      out += value.slice(at, part.start) + (v === undefined || v === null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
+      at = part.end;
+    }
+    return out + value.slice(at);
   }
   if (Array.isArray(value)) return value.map((v) => interpolate(v, scope, opts));
   if (value !== null && typeof value === "object") {
+    // Own data properties only: `out[k] = v` with k "__proto__" (from JSON.parse) would swap the prototype.
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) out[k] = interpolate(v, scope, opts);
+    for (const [k, v] of Object.entries(value)) Object.defineProperty(out, k, { value: interpolate(v, scope, opts), enumerable: true, writable: true, configurable: true });
     return out;
   }
   return value;

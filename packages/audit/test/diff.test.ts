@@ -82,6 +82,27 @@ describe("redact", () => {
     redact(input, r);
     expect(input).toEqual({ password: "p", n: { token: "t" } });
   });
+  test("redacts squashed, numbered and oddly cased secret keys", () => {
+    const input = { password2: "p", newPassword1: "p", accesstoken: "t", refreshtoken: "t", authtoken: "t", sessiontoken: "t", clientsecret: "s", pAsSwOrD: "p", APIKEY: "k", privatekey: "k" };
+    const out = redact(input, r) as any;
+    for (const k of Object.keys(input)) expect([k, out[k]]).toEqual([k, REDACTED]);
+    expect(redact({ secretary: "Ann", tokenizer: "bpe", passenger: "p" }, r)).toEqual({ secretary: "Ann", tokenizer: "bpe", passenger: "p" });
+  });
+  test("redacts values that are credentials whatever their key", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJlLXNpZ25hdHVyZQ";
+    const out = redact({ header: "Bearer abc.def-123", basic: "Basic dXNlcjpwYXNz", note: jwt, list: [`token=${jwt}`], fine: "Bearer of good news", name: "Ann" }, r) as any;
+    expect(out.header).toBe(REDACTED);
+    expect(out.basic).toBe(REDACTED);
+    expect(out.note).toBe(REDACTED);
+    expect(out.list).toEqual([REDACTED]);
+    expect(out.name).toBe("Ann");
+  });
+  test("redacts inside objects with toJSON (ORM rows, models) instead of passing them through", () => {
+    const row = { toJSON: () => ({ name: "Ann", passwordHash: "$argon2id$..." }) };
+    const out = redact({ user: row }, r);
+    expect(canonicalJson(out)).toBe(`{"user":{"name":"Ann","passwordHash":"${REDACTED}"}}`);
+    expect(canonicalJson(redact({ at: new Date(0) }, r))).toBe('{"at":"1970-01-01T00:00:00.000Z"}');
+  });
   test("survives cycles", () => {
     const a: any = { x: 1 };
     a.self = a;

@@ -6,7 +6,7 @@ import { html, raw, type HtmlString } from "@miujs/web";
 import { describeActions, validateSpec, type WorkflowSpec } from "@miujs/workflows";
 import { workflowLib } from "./client/workflow.ts";
 import { pageData, type Core, type PageData } from "./core.ts";
-import { can, redirect, sub } from "./http.ts";
+import { can, redirect } from "./http.ts";
 import { alert, page } from "./layout.ts";
 import { errorPage } from "./pages.ts";
 
@@ -26,6 +26,25 @@ function fmtDuration(ms: number | null): string {
 }
 const status = (s: string) => html`<span class="status ${s}">${s}</span>`;
 
+/**
+ * Who owns what this request builds and sees: the verified active organization (from
+ * @miujs/access), or null (app-wide) without one. Workflows built in an org are invisible to
+ * every other org, and runs are shown only for workflows the owner can see.
+ */
+export function ownerOf(ctx: Context): string | null {
+  if (typeof (ctx as { can?: unknown }).can !== "function") return null;
+  const org = (ctx as { org?: { id?: unknown } | null }).org;
+  return org && typeof org.id === "string" ? org.id : null;
+}
+
+/** May this owner see runs of `name`? Its own UI workflows; app-wide callers also code workflows. */
+async function canSeeRuns(core: Core, ctx: Context, name: string): Promise<boolean> {
+  const owner = ownerOf(ctx);
+  const store = await core.store(ctx);
+  if (await store.get(name, undefined, owner)) return true;
+  return owner === null && (await store.owner(name)) === undefined && !!core.workflows?.has(name);
+}
+
 async function guard(core: Core, ctx: Context, perm: "workflows:read" | "workflows:manage"): Promise<{ d: PageData } | Response> {
   const d = await pageData(core, ctx);
   if (!core.workflows) return errorPage(core, ctx, d, 404, "Not found", "Workflows are not enabled. Add workflows() from @miujs/workflows to the app.", "workflows");
@@ -37,10 +56,13 @@ export async function workflowList(core: Core, ctx: Context): Promise<Response> 
   const g = await guard(core, ctx, "workflows:read");
   if (g instanceof Response) return g;
   const store = await core.store(ctx);
-  const saved = await store.list();
-  const listed = await sub(core.app, ctx, "GET", core.wfPrefix);
-  const all: { name: string; description?: string }[] = listed.ok && Array.isArray(listed.data?.workflows) ? listed.data.workflows : [];
+  const owner = ownerOf(ctx);
+  const saved = await store.list(owner);
+  // The engine's own list (the workflows HTTP routes are app-wide and refuse org requests).
+  const described = (core.workflows as { inspect?: () => { workflows?: unknown } } | null)?.inspect?.().workflows;
+  const all: { name: string; description?: string }[] = Array.isArray(described) ? described : [];
   const code = all.filter((w) => !core.loader?.owns(w.name) && !saved.some((s) => s.name === w.name));
+  const codeRuns = owner === null;
   const manage = can(ctx, "workflows:manage");
   const p = core.path;
   const body = html`<div class="page-head"><h1>Workflows</h1><div class="toolbar">${manage ? html`<a class="btn primary" href="${p}/workflows/new">New workflow</a>` : ""}</div></div>
@@ -53,7 +75,7 @@ export async function workflowList(core: Core, ctx: Context): Promise<Response> 
       : html`<tr><td colspan="5" class="muted">No workflows yet.</td></tr>`
   }</tbody></table></div>${
     code.length
-      ? html`<h2>Defined in code</h2><p class="help">These are part of the app's source and cannot be edited here.</p><ul>${code.map((w) => html`<li>${w.name}${w.description ? html` — ${w.description}` : ""} · <a href="${p}/workflows/runs/${encodeURIComponent(w.name)}">Runs</a></li>`)}</ul>`
+      ? html`<h2>Defined in code</h2><p class="help">These are part of the app's source and cannot be edited here.</p><ul>${code.map((w) => html`<li>${w.name}${w.description ? html` — ${w.description}` : ""}${codeRuns ? html` · <a href="${p}/workflows/runs/${encodeURIComponent(w.name)}">Runs</a>` : ""}</li>`)}</ul>`
       : ""
   }`;
   return page(core.shell, ctx, { title: "Workflows", active: "workflows", body, ...g.d });
@@ -75,10 +97,11 @@ function issueList(issues: { path: string; message: string; fix: string }[], spe
 async function editor(core: Core, ctx: Context, d: PageData, name: string | null, o: { spec?: unknown; issues?: { path: string; message: string; fix: string }[]; status?: number; json?: string } = {}): Promise<Response> {
   const store = await core.store(ctx);
   const p = core.path;
-  const stored = name ? await store.get(name, Number(ctx.url.searchParams.get("version")) || undefined) : null;
+  const owner = ownerOf(ctx);
+  const stored = name ? await store.get(name, Number(ctx.url.searchParams.get("version")) || undefined, owner) : null;
   if (name && !stored && !o.spec) return errorPage(core, ctx, d, 404, "Not found", `There is no workflow "${name}" here.`, "workflows");
   const spec = o.spec ?? stored?.spec ?? { name: "", trigger: { type: "manual" }, steps: [] };
-  const versions = name ? await store.versions(name) : [];
+  const versions = name ? await store.versions(name, owner) : [];
   const manage = can(ctx, "workflows:manage");
   const all = core.admin.schema();
   const events = W.resourceEvents(all.resources.map((r) => r.name));
@@ -126,26 +149,29 @@ async function saveSpec(core: Core, ctx: Context, spec: unknown): Promise<SaveRe
   if (!checked.ok) return { ok: false, status: 400, issues: checked.issues };
   const s = checked.spec as WorkflowSpec;
   const store = await core.store(ctx);
-  if (core.workflows!.has(s.name) && !core.loader?.owns(s.name) && !(await store.get(s.name))) {
+  const owner = ownerOf(ctx);
+  if (core.workflows!.has(s.name) && !core.loader?.owns(s.name) && (await store.owner(s.name)) === undefined) {
     return { ok: false, status: 409, issues: [{ path: "name", message: `"${s.name}" is already used by a workflow defined in code`, fix: "Choose another name." }] };
   }
-  const saved = await store.save(s, ctx.user?.id ?? null);
+  const saved = await store.save(s, ctx.user?.id ?? null, owner);
+  if (!saved) return { ok: false, status: 409, issues: [{ path: "name", message: `"${s.name}" is already used by another workflow`, fix: "Choose another name." }] };
   return { ok: true, name: saved.name, version: saved.version };
 }
 
 async function publish(core: Core, ctx: Context, name: string, version: number): Promise<{ ok: boolean; status: number; message?: string }> {
   const store = await core.store(ctx);
-  const target = await store.get(name, version);
+  const owner = ownerOf(ctx);
+  const target = await store.get(name, version, owner);
   if (!target) return { ok: false, status: 404, message: `Workflow ${name} v${version} does not exist.` };
   // Re-check against today's actions before it goes live.
   const checked = validateSpec(target.spec, { actions: core.actions() });
   if (!checked.ok) return { ok: false, status: 400, message: checked.issues.map((i) => `${i.path}: ${i.message}`).join("; ") };
-  await store.publish(name, version, ctx.user?.id ?? null);
+  await store.publish(name, version, ctx.user?.id ?? null, owner);
   if (core.loader) {
     const report = await core.loader.sync(store);
     const err = report.errors.find((e) => e.name === name);
     if (err) {
-      await store.unpublish(name);
+      await store.unpublish(name, owner);
       await core.loader.sync(store);
       return { ok: false, status: 409, message: err.message };
     }
@@ -182,7 +208,7 @@ export async function publishForm(core: Core, ctx: Context, name: string, unpubl
   if (g instanceof Response) return g;
   if (unpublish) {
     const store = await core.store(ctx);
-    await store.unpublish(name);
+    if (!(await store.unpublish(name, ownerOf(ctx)))) return errorPage(core, ctx, g.d, 404, "Not found", `There is no workflow "${name}" here.`, "workflows");
     await core.loader?.sync(store);
     return redirect(`${core.path}/workflows/edit/${encodeURIComponent(name)}?done=saved`);
   }
@@ -224,7 +250,7 @@ export async function apiPublish(core: Core, ctx: Context, name: string, version
   need(ctx, core, "workflows:manage");
   if (version === null) {
     const store = await core.store(ctx);
-    await store.unpublish(name);
+    if (!(await store.unpublish(name, ownerOf(ctx)))) throw errors.notFound(`There is no workflow "${name}" here`, "List yours on the workflows page.");
     await core.loader?.sync(store);
     return { name, published: null };
   }
@@ -238,14 +264,17 @@ export async function apiPublish(core: Core, ctx: Context, name: string, version
 export async function runsPage(core: Core, ctx: Context, name: string): Promise<Response> {
   const g = await guard(core, ctx, "workflows:read");
   if (g instanceof Response) return g;
-  const qs = new URLSearchParams({ workflow: name, limit: "50" });
+  if (!(await canSeeRuns(core, ctx, name))) return errorPage(core, ctx, g.d, 404, "Not found", `There is no workflow "${name}" here.`, "workflows");
   const st = ctx.url.searchParams.get("status");
-  if (st && /^[a-z]+$/.test(st)) qs.set("status", st);
   const before = ctx.url.searchParams.get("before");
-  if (before && /^\d+$/.test(before)) qs.set("before", before);
-  const res = await sub(core.app, ctx, "GET", `${core.wfPrefix}/runs?${qs}`);
+  const limit = 50;
+  // Read through the engine: the workflows HTTP routes are app-wide, this page is per owner.
+  const res = await core
+    .workflows!.listRuns({ workflow: name, limit, ...(st && RUN_STATUSES.has(st) ? { status: st } : {}), ...(before && /^\d+$/.test(before) ? { before: Number(before) } : {}) }, ctx.env)
+    .then((found: any[]) => ({ ok: true, data: { runs: found, next: found.length === limit ? found[found.length - 1].createdAt : null } as any }))
+    .catch((err: unknown) => ({ ok: false, data: { runs: [], next: null, error: { message: (err as Error).message } } as any }));
   const p = core.path;
-  const runs: any[] = res.ok ? res.data.runs : [];
+  const runs: any[] = res.data.runs;
   const body = html`<div class="page-head"><h1>Runs of ${name}</h1><div class="toolbar"><a class="btn" href="${p}/workflows">All workflows</a></div></div>${res.ok ? "" : alert(res.data?.error?.message ?? "Could not load runs.")}
 <div class="table-wrap"><table><caption class="sr-only">Runs, newest first</caption><thead><tr><th scope="col">Run</th><th scope="col">Status</th><th scope="col">Trigger</th><th scope="col">Started</th><th scope="col">Duration</th><th scope="col">Error</th></tr></thead><tbody>${
     runs.length
@@ -261,13 +290,24 @@ export async function runsPage(core: Core, ctx: Context, name: string): Promise<
 }
 
 const ACTIVE = new Set(["queued", "running", "sleeping", "waiting"]);
+const RUN_STATUSES = new Set(["queued", "running", "sleeping", "waiting", "completed", "failed", "cancelled"]);
+
+/** A run this owner may see, or null (unknown ids and other owners' runs look the same). */
+async function visibleRun(core: Core, ctx: Context, id: string): Promise<any | null> {
+  let run: any;
+  try {
+    run = await core.workflows!.getRun(id, ctx.env);
+  } catch {
+    return null;
+  }
+  return run && (await canSeeRuns(core, ctx, String(run.workflow))) ? run : null;
+}
 
 export async function runPage(core: Core, ctx: Context, id: string): Promise<Response> {
   const g = await guard(core, ctx, "workflows:read");
   if (g instanceof Response) return g;
-  const res = await sub(core.app, ctx, "GET", `${core.wfPrefix}/runs/${encodeURIComponent(id)}`);
-  if (!res.ok) return errorPage(core, ctx, g.d, res.status, "Run not found", res.data?.error?.message ?? "", "workflows");
-  const run = res.data;
+  const run = await visibleRun(core, ctx, id);
+  if (!run) return errorPage(core, ctx, g.d, 404, "Run not found", `There is no run "${id}" here.`, "workflows");
   const p = core.path;
   const manage = can(ctx, "workflows:manage");
   const done = ctx.url.searchParams.get("done");
@@ -293,8 +333,14 @@ ${done === "cancel" ? alert("Run cancelled.", "ok") : done === "retry" ? alert("
 }
 
 export async function runControl(core: Core, ctx: Context, id: string, op: "cancel" | "retry"): Promise<Response> {
-  const d = await pageData(core, ctx);
-  const res = await sub(core.app, ctx, "POST", `${core.wfPrefix}/runs/${encodeURIComponent(id)}/${op}`);
-  if (!res.ok) return errorPage(core, ctx, d, res.status, op === "cancel" ? "Could not cancel" : "Could not retry", [res.data?.error?.message, res.data?.error?.fix].filter(Boolean).join(" "), "workflows");
+  const g = await guard(core, ctx, "workflows:manage");
+  if (g instanceof Response) return g;
+  if (!(await visibleRun(core, ctx, id))) return errorPage(core, ctx, g.d, 404, "Run not found", `There is no run "${id}" here.`, "workflows");
+  try {
+    await (op === "cancel" ? core.workflows!.cancel(id, ctx.env) : core.workflows!.retry(id, ctx.env));
+  } catch (err) {
+    const e = err as { status?: number; message?: string; fix?: string };
+    return errorPage(core, ctx, g.d, typeof e.status === "number" ? e.status : 500, op === "cancel" ? "Could not cancel" : "Could not retry", [e.message, e.fix].filter(Boolean).join(" "), "workflows");
+  }
   return redirect(`${core.path}/workflows/run/${encodeURIComponent(id)}?done=${op}`);
 }

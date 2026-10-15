@@ -117,3 +117,17 @@ test("in production (as on Workers, where admin does not auto-migrate) the CRM t
   const created = await b("/api/contacts", { json: { name: "Ada", stage: "customer" }, headers: { "x-org-id": org.json.org.id } });
   expect(created.status).toBe(201);
 });
+
+test("a file database runs in WAL mode (one fsync per checkpoint, not per write: ~13x faster audited writes)", async () => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(join(tmpdir(), "crm-wal-"));
+  const { app, database } = createApp({ sessionSecret: SECRET, passwordIterations: 1000, dev: true, dbPath: join(dir, "crm.db") });
+  await app.ready();
+  await app.request("/api/contacts");
+  expect(await database!.prepare("PRAGMA journal_mode").first<{ journal_mode: string }>()).toEqual({ journal_mode: "wal" });
+  expect(await database!.prepare("PRAGMA synchronous").first<{ synchronous: number }>()).toEqual({ synchronous: 1 });
+  await app.close();
+  rmSync(dir, { recursive: true, force: true });
+});

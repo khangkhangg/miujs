@@ -81,7 +81,13 @@ const SECRET_WORDS = new Set([
 ]);
 const SECRET_PAIRS = [["api", "key"], ["access", "key"], ["private", "key"], ["social", "security"], ["credit", "card"], ["card", "number"], ["set", "cookie"]];
 
+// Matched inside the key with case, digits and separators removed: catches "accesstoken",
+// "password2" and "pAsSwOrD", which word splitting misses. Long enough not to hit look-alikes.
+const SECRET_SUBSTRINGS = ["password", "passwd", "passphrase", "apikey", "accesstoken", "refreshtoken", "authtoken", "sessiontoken", "clientsecret", "secretkey", "privatekey", "authorization"];
+
 function isDefaultSecret(key: string): boolean {
+  const squashed = key.toLowerCase().replace(/[^a-z]/g, "");
+  if (SECRET_SUBSTRINGS.some((x) => squashed.includes(x))) return true;
   const w = words(key);
   if (w.some((x) => SECRET_WORDS.has(x))) return true;
   for (let i = 0; i + 1 < w.length; i++) if (SECRET_PAIRS.some(([p, q]) => w[i] === p && w[i + 1] === q)) return true;
@@ -106,14 +112,25 @@ export function redactor(extra: RedactRule[] = []): Redactor {
   };
 }
 
-/** Deep copy with values under secret keys replaced by `[REDACTED]`. */
+// Values that are credentials whatever key they sit under: an HTTP auth header value, or a JWT.
+const AUTH_VALUE = /^\s*(bearer|basic)\s+\S{10,}\s*$/i;
+const JWT = /\beyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{10,}/;
+
+/** True for strings that are themselves credentials (`Bearer …`, `Basic …`, JWTs). */
+export function isSecretValue(v: string): boolean {
+  return AUTH_VALUE.test(v) || JWT.test(v);
+}
+
+/** Deep copy with values under secret keys (and credential-looking strings) replaced by `[REDACTED]`. */
 export function redact(value: unknown, isSecret: Redactor, seen: WeakSet<object> = new WeakSet()): unknown {
+  if (typeof value === "string") return isSecretValue(value) ? REDACTED : value;
   if (value === null || typeof value !== "object") return value;
   if (seen.has(value)) return "[Circular]";
   seen.add(value);
   let out: unknown;
   if (Array.isArray(value)) out = value.map((x) => redact(x, isSecret, seen));
-  else if (typeof (value as { toJSON?: unknown }).toJSON === "function") out = value;
+  // Redact what will actually be stored: models and ORM rows serialize through toJSON.
+  else if (typeof (value as { toJSON?: unknown }).toJSON === "function") out = redact((value as { toJSON(): unknown }).toJSON(), isSecret, seen);
   else {
     const o: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) o[k] = isSecret(k) ? REDACTED : redact(v, isSecret, seen);

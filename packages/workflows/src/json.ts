@@ -7,12 +7,12 @@ import { BUILTIN_ACTIONS, type ActionDef } from "./actions.ts";
 import { cron, defineWorkflow, manual, on, webhook, type Trigger, type WorkflowContext, type WorkflowDef } from "./define.ts";
 import { parseDuration } from "./duration.ts";
 import { workflowErrors, type SpecIssue } from "./errors.ts";
-import { compileExpression, hasTemplate, interpolate, templateExpressions, type Scope } from "./expr.ts";
+import { compileExpression, hasTemplate, hasUnclosedTemplate, interpolate, templateExpressions, type Scope } from "./expr.ts";
 
 export type SpecTrigger =
   | { type: "event"; event: string; match?: Record<string, unknown> }
   | { type: "cron"; cron: string }
-  | { type: "webhook"; path: string; secretEnv?: string; header?: string }
+  | { type: "webhook"; path: string; secretEnv?: string; header?: string; tolerance?: number }
   | { type: "manual" };
 
 export type SpecStep =
@@ -39,6 +39,10 @@ export interface JsonOptions {
 const STEP_TYPES = ["action", "condition", "wait", "wait_for_event", "approval"] as const;
 const TRIGGER_TYPES = ["event", "cron", "webhook", "manual"] as const;
 const ROOTS = ["data", "input", "steps"];
+/** Most steps in one spec, counting nested ones. */
+export const MAX_SPEC_STEPS = 500;
+/** Deepest nesting of condition branches. */
+export const MAX_SPEC_DEPTH = 16;
 
 const FIX = {
   object: "The spec must be a JSON object: { name, trigger, steps }.",
@@ -55,7 +59,7 @@ const ALLOWED: Record<string, string[]> = {
   spec: ["name", "description", "trigger", "concurrency", "steps"],
   event: ["type", "event", "match"],
   cron: ["type", "cron"],
-  webhook: ["type", "path", "secretEnv", "header"],
+  webhook: ["type", "path", "secretEnv", "header", "tolerance"],
   manual: ["type"],
   action: ["id", "type", "action", "params", "retries"],
   condition: ["id", "type", "if", "then", "else"],
@@ -89,6 +93,7 @@ class Checker {
   ids = new Map<string, string>();
   actions: Map<string, ActionDef>;
   allIds = new Set<string>();
+  count = 0;
 
   constructor(actions: Map<string, ActionDef>) {
     this.actions = actions;
@@ -132,7 +137,7 @@ class Checker {
   templates(value: unknown, path: string) {
     if (typeof value === "string") {
       for (const src of templateExpressions(value)) this.expression(src, path);
-      if (/\{\{(?![\s\S]*\}\})/.test(value)) this.push(path, "has an unclosed {{", "Close every template: {{ data.field }}.");
+      if (hasUnclosedTemplate(value)) this.push(path, "has an unclosed {{", "Close every template: {{ data.field }}.");
       return;
     }
     if (Array.isArray(value)) value.forEach((v, i) => this.templates(v, join(path, i)));
@@ -151,13 +156,13 @@ class Checker {
     }
   }
 
-  collect(steps: unknown) {
-    if (!Array.isArray(steps)) return;
+  collect(steps: unknown, depth = 0) {
+    if (!Array.isArray(steps) || depth > MAX_SPEC_DEPTH) return;
     for (const s of steps) {
       if (!isObj(s)) continue;
       if (typeof s.id === "string") this.allIds.add(s.id);
-      this.collect(s.then);
-      this.collect(s.else);
+      this.collect(s.then, depth + 1);
+      this.collect(s.else, depth + 1);
     }
   }
 
@@ -182,16 +187,24 @@ class Checker {
       if (typeof tr.path !== "string" || !tr.path.startsWith("/")) this.push("trigger.path", 'must be a path starting with "/"', 'Set "path": "/hooks/form".');
       if (tr.secretEnv !== undefined && typeof tr.secretEnv !== "string") this.push("trigger.secretEnv", "must be a string", 'Name the env var holding the HMAC secret, e.g. "FORM_SECRET".');
       if (tr.header !== undefined && typeof tr.header !== "string") this.push("trigger.header", "must be a string", 'Name the signature header, e.g. "x-signature".');
+      if (tr.tolerance !== undefined) {
+        this.schema(t.integer({ min: 1, max: 86_400 }), tr.tolerance, "trigger.tolerance", 'Use "tolerance": 300 (seconds a signed request stays valid).');
+        if (tr.secretEnv === undefined) this.push("trigger.tolerance", "needs secretEnv", 'Set "secretEnv" too: only signed webhooks can check timestamps.');
+      }
     }
   }
 
-  steps(steps: unknown, path: string, nonEmpty: boolean) {
+  steps(steps: unknown, path: string, nonEmpty: boolean, depth = 0) {
     if (!Array.isArray(steps)) return this.push(path, steps === undefined ? "is required" : "must be an array", FIX.steps);
     if (nonEmpty && steps.length === 0) return this.push(path, "must have at least 1 step", FIX.steps);
-    steps.forEach((s, i) => this.step(s, join(path, i)));
+    if (depth > MAX_SPEC_DEPTH) return this.push(path, `nests conditions deeper than ${MAX_SPEC_DEPTH} levels`, "Flatten the workflow: combine conditions with && / ||, or split it into workflows chained by events.");
+    for (let i = 0; i < steps.length; i++) {
+      if (++this.count > MAX_SPEC_STEPS) return this.count === MAX_SPEC_STEPS + 1 ? this.push(path, `has more than ${MAX_SPEC_STEPS} steps in total`, "Split the workflow into smaller workflows chained by events.") : undefined;
+      this.step(steps[i], join(path, i), depth);
+    }
   }
 
-  step(s: unknown, path: string) {
+  step(s: unknown, path: string, depth = 0) {
     if (!isObj(s)) return this.push(path, "must be an object", 'Each step is an object like {"id":"pause","type":"wait","duration":"1d"}.');
     if (typeof s.id !== "string" || !/^[A-Za-z][A-Za-z0-9_-]*$/.test(s.id)) this.push(join(path, "id"), s.id === undefined ? "is required" : "must be an identifier", FIX.id);
     else if (this.ids.has(s.id)) this.push(join(path, "id"), `duplicate id "${s.id}" (first at ${this.ids.get(s.id)})`, FIX.id);
@@ -215,8 +228,8 @@ class Checker {
       case "condition":
         if (typeof s.if !== "string") this.push(join(path, "if"), "is required", `Set "if" to an expression, e.g. "data.amount > 10000 && data.stage == 'won'".`);
         else this.expression(s.if, join(path, "if"));
-        this.steps(s.then, join(path, "then"), false);
-        if (s.else !== undefined) this.steps(s.else, join(path, "else"), false);
+        this.steps(s.then, join(path, "then"), false, depth + 1);
+        if (s.else !== undefined) this.steps(s.else, join(path, "else"), false, depth + 1);
         return;
       case "wait":
         return this.duration(s.duration, join(path, "duration"), true);
@@ -304,7 +317,7 @@ function toTrigger(tr: SpecTrigger): Trigger {
       return cron(tr.cron);
     case "webhook": {
       const name = tr.secretEnv;
-      return webhook(tr.path, { ...(name ? { secret: (env) => env[name] as string | undefined } : {}), ...(tr.header ? { header: tr.header } : {}) });
+      return webhook(tr.path, { ...(name ? { secret: (env) => env[name] as string | undefined } : {}), ...(tr.header ? { header: tr.header } : {}), ...(tr.tolerance !== undefined ? { tolerance: tr.tolerance } : {}) });
     }
     default:
       return manual();

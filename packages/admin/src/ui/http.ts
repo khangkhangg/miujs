@@ -88,4 +88,31 @@ export function orgCookie(ctx: Context, id: string | null): string {
   return id === null ? `${ORG_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure}` : `${ORG_COOKIE}=${id}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax${secure}`;
 }
 
+/**
+ * The UI's own content policy, so pages stay protected in apps without secureHeaders(): scripts
+ * and styles only from the UI's assets (no inline script), no plugins, no <base> rewriting,
+ * forms post back here, and no framing (clickjacking on delete / publish buttons). With
+ * secureHeaders() these headers are kept, as it only adds what a response lacks.
+ */
+export const ADMIN_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+
 export const PAGE_HEADERS = { "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "same-origin" };
+
+/**
+ * Headers of every UI page. When secureHeaders({ csp }) runs (it puts a nonce in ctx.state), its
+ * policy and frame options apply; otherwise the UI's own.
+ */
+export function pageHeaders(ctx: Context): Record<string, string> {
+  if (typeof ctx.state?.cspNonce === "string") return PAGE_HEADERS;
+  return { ...PAGE_HEADERS, "x-frame-options": "DENY", "content-security-policy": ADMIN_CSP };
+}

@@ -3,18 +3,22 @@
 import { errors } from "miujs";
 
 const BARE = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
-const NAMED = /^([^<>"\r\n]{0,200}|"[^"\r\n]{0,200}")\s*<([^<>\s]+)>$/;
-const CRLF = /[\r\n]/;
+// Unquoted display names are RFC 5322 phrases: no specials, so a name like "evil@x.com, Ann" can
+// never turn into a second recipient once a provider parses the address list. Quote to use them.
+const NAMED = /^([^<>()[\]:;@\\,"]{0,200}|"[^"\\]{0,200}")\s*<([^<>\s]+)>$/;
+// Line breaks of any kind (CR, LF, NEL, U+2028/9) and other control characters except tab.
+// eslint-disable-next-line no-control-regex
+const CRLF = /[\u0000-\u0008\u000a-\u001f\u007f\u0085\u2028\u2029]/;
 const HEADER_NAME = /^[A-Za-z0-9][A-Za-z0-9-]{0,99}$/;
 /** Headers that name senders or recipients. Setting them via `headers` would bypass validation. */
-const RESERVED = new Set(["from", "to", "cc", "bcc", "subject", "reply-to", "sender", "return-path", "content-type", "content-transfer-encoding", "mime-version"]);
+const RESERVED = new Set(["from", "to", "cc", "bcc", "subject", "reply-to", "sender", "return-path", "resent-from", "resent-sender", "resent-to", "resent-cc", "resent-bcc", "resent-reply-to", "content-type", "content-transfer-encoding", "mime-version"]);
 
 const invalidAddress = (field: string, value: unknown) =>
   errors.custom({
     code: "MIU_E_MAIL_ADDRESS_INVALID",
     status: 400,
     message: `Invalid email address in ${field}: ${JSON.stringify(String(value).slice(0, 100))}`,
-    fix: 'Use a single address like "ann@example.com" or "Ann <ann@example.com>" per entry; pass several recipients as an array.',
+    fix: 'Use a single address like "ann@example.com" or "Ann <ann@example.com>" per entry; pass several recipients as an array. Quote display names that contain , ; : @ ( ) [ ] (e.g. \'"Smith, Ann" <ann@example.com>\'), without " or \\ inside.',
   });
 
 const invalidHeader = (message: string) =>

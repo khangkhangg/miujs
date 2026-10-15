@@ -144,8 +144,7 @@ describe("workflow pages", () => {
     const failing: WorkflowSpec = { name: "fails", trigger: { type: "manual" }, steps: [{ id: "explode", type: "action", action: "boom", params: {} }] };
     await h.req("POST", "/admin/api/workflows", { body: { spec: failing } });
     await h.req("POST", "/admin/api/workflows/fails/publish", { body: { version: 1 } });
-    const started = await h.req("POST", "/workflows/fails/runs", { body: {} });
-    expect(started.status).toBe(201);
+    const started = { body: await h.wf.start("fails", {}) };
     await h.settle();
     const list = await h.req("GET", "/admin/workflows/runs/fails");
     expect(list.text).toContain('<span class="status failed">failed</span>');
@@ -162,16 +161,16 @@ describe("workflow pages", () => {
     const waiting: WorkflowSpec = { name: "waits", trigger: { type: "manual" }, steps: [{ id: "nap", type: "wait", duration: "2d" }] };
     await h.req("POST", "/admin/api/workflows", { body: { spec: waiting } });
     await h.req("POST", "/admin/api/workflows/waits/publish", { body: { version: 1 } });
-    const w = await h.req("POST", "/workflows/waits/runs", { body: {} });
+    const w = { body: await h.wf.start("waits", {}) };
     await h.app.drain();
     const page = await h.req("GET", `/admin/workflows/run/${w.body.id}`);
     expect(page.text).toContain(`action="/admin/workflows/run/${w.body.id}/cancel"`);
     const cancel = await h.req("POST", `/admin/workflows/run/${w.body.id}/cancel`, { form: {} });
     expect(cancel.status).toBe(303);
-    expect((await h.req("GET", `/workflows/runs/${w.body.id}`)).body.status).toBe("cancelled");
+    expect((await h.wf.getRun(w.body.id)).status).toBe("cancelled");
   });
 
-  test("cancel and retry are refused without workflows:manage (enforced by the workflows routes)", async () => {
+  test("cancel and retry are refused without workflows:manage", async () => {
     const r = await h.req("POST", "/admin/workflows/run/whatever/cancel", { form: {}, user: "wren" });
     expect(r.status).toBe(403);
   });

@@ -138,18 +138,19 @@ describe("generated apps end to end", () => {
     const log = await call("GET", "/audit", undefined, { "x-org-id": orgId });
     expect(log.status).toBe(200);
     expect(JSON.stringify(log.json)).toContain("projects");
-    let runs: any = null;
+    // Workflow runs are app-wide, so org members can't read them through /workflows (403).
+    expect((await call("GET", "/workflows/runs?workflow=project-welcome", undefined, { "x-org-id": orgId })).status).toBe(403);
+    const wf = app.service("workflows");
+    let runs: any[] = [];
     for (let i = 0; i < 50; i++) {
-      runs = await call("GET", "/workflows/runs?workflow=project-welcome", undefined, { "x-org-id": orgId });
-      if (JSON.stringify(runs.json).includes("completed")) break;
+      runs = await wf.listRuns({ workflow: "project-welcome" });
+      if (runs.some((r) => r.status === "completed")) break;
       await Bun.sleep(20);
     }
-    expect(runs.status).toBe(200);
-    expect(JSON.stringify(runs.json)).toContain("completed");
+    const done = runs.find((r) => r.status === "completed");
+    expect(done).toBeDefined();
     // The welcome email really went out through the mail plugin.
-    const runId = JSON.stringify(runs.json).match(/"id":"([0-9a-f-]{36})"/)![1];
-    const one = await call("GET", `/workflows/runs/${runId}`, undefined, { "x-org-id": orgId });
-    expect(JSON.stringify(one.json)).toContain('"sent":true');
+    expect(JSON.stringify(await wf.getRun(done.id))).toContain('"sent":true');
     // Another org's id is refused: tenant isolation comes from access, not the request body.
     expect((await call("GET", "/projects", undefined, { "x-org-id": "someone-else" })).status).toBe(403);
   }, 30_000);
@@ -165,9 +166,9 @@ describe("generated apps end to end", () => {
     const moved = await call("PATCH", `/contacts/${made.json.id}/stage`, { stage: "qualified" }, { "x-org-id": orgId });
     expect(moved.json.stage).toBe("qualified");
     expect((await call("GET", "/contacts?stage=qualified", undefined, { "x-org-id": orgId })).json.contacts).toHaveLength(1);
-    const runs = await call("GET", "/workflows/runs?workflow=contact-follow-up", undefined, { "x-org-id": orgId });
-    expect(runs.status).toBe(200);
-    expect(JSON.stringify(runs.json)).toContain("contact-follow-up");
+    expect((await call("GET", "/workflows/runs?workflow=contact-follow-up", undefined, { "x-org-id": orgId })).status).toBe(403);
+    const runs = await app.service("workflows").listRuns({ workflow: "contact-follow-up" });
+    expect(runs.length).toBeGreaterThan(0);
   }, 30_000);
 
   test("quiz-game: only the creator's hostKey hosts, no create-on-join, games per IP are rate limited", async () => {

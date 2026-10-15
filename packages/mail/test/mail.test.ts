@@ -80,6 +80,16 @@ describe("createMailer: send", () => {
       ["Bcc via headers", { headers: { Bcc: "v@example.com" } }],
       ["To via headers (any case)", { headers: { tO: "v@example.com" } }],
       ["From via headers", { headers: { From: "ceo@example.com" } }],
+      // An unquoted display name is a phrase: a comma there starts a second address in a list.
+      ["comma in an unquoted display name (extra recipient)", { to: "evil@attacker.example, Ann <a@example.com>" }],
+      ["semicolon in an unquoted display name", { to: "evil@attacker.example; Ann <a@example.com>" }],
+      ["group syntax in a display name", { to: "x: evil@attacker.example; <a@example.com>" }],
+      ["@ in an unquoted display name", { to: "evil@attacker.example <a@example.com>" }],
+      ["backslash-escaped quote in a quoted name", { to: '"Ann\\" , evil@attacker.example" <a@example.com>' }],
+      ["NUL in subject", { subject: "Hi\u0000there" }],
+      ["unicode line separator in subject", { subject: "Hi Bcc: v@example.com" }],
+      ["NEL in header value", { headers: { "X-Tag": "a\u0085Bcc: v@example.com" } }],
+      ["Resent-Bcc via headers", { headers: { "Resent-Bcc": "v@example.com" } }],
     ];
     for (const [label, patch] of cases) {
       test(`rejects ${label}`, async () => {

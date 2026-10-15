@@ -209,7 +209,8 @@ export function parseSort(r: Resource, sort: string | undefined): Sort {
   const allowed = sortableKeys(r);
   const c = allowed.includes(key) ? columnOf(r, key) : null;
   if (!c) throw adminErrors.sortInvalid(s, allowed);
-  return { key, column: c.column, desc, notNull: key === "createdAt" || key === "updatedAt" };
+  // Required fields are NOT NULL columns too.
+  return { key, column: c.column, desc, notNull: key === "createdAt" || key === "updatedAt" || !!c.def.options.required };
 }
 
 interface Cursor {
@@ -231,7 +232,7 @@ export function encodeCursor(sort: Sort, row: Record<string, unknown>): string {
   return b64url(JSON.stringify({ s: `${sort.desc ? "-" : ""}${sort.key}`, v: sort.column === "id" ? null : (row[sort.column] ?? null), id: row.id }));
 }
 
-function decodeCursor(sort: Sort, raw: string): Cursor {
+export function decodeCursor(sort: Sort, raw: string): Cursor {
   let c: Cursor;
   try {
     c = JSON.parse(unb64url(raw));
@@ -272,6 +273,25 @@ export function sortSql(sort: Sort, cursor: string | undefined): { orderBy: stri
     orderBy,
     after: { sql: `((${col} IS NOT NULL AND (${col} ${cmp} ? OR (${col} = ? AND "id" ${cmp} ?))) OR ${col} IS NULL)`, binds: [c.v, c.v, c.id] },
   };
+}
+
+/**
+ * A nullable sort as two index-friendly parts instead of one ORDER BY over `(col IS NULL)`, which
+ * no index can serve: first the rows with a value, `ORDER BY col, id` with a keyset range (an
+ * (org, col, id) index reads just one page), then, once those run out, the NULL rows by id. Same
+ * order and cursors as sortSql: values first, NULLs last, in both directions.
+ */
+export function splitSort(sort: Sort, cursor: string | undefined): { values: { orderBy: string; where: Clause } | null; nulls: { orderBy: string; where: Clause } } {
+  const col = quoteIdent(sort.column);
+  const dir = sort.desc ? "DESC" : "ASC";
+  const cmp = sort.desc ? "<" : ">";
+  const c = cursor ? decodeCursor(sort, cursor) : null;
+  const nullsOrder = `"id" ${dir}`;
+  if (c && c.v === null) return { values: null, nulls: { orderBy: nullsOrder, where: { sql: `${col} IS NULL AND "id" ${cmp} ?`, binds: [c.id] } } };
+  const values = c
+    ? { sql: `(${col} ${cmp}= ? AND (${col} ${cmp} ? OR "id" ${cmp} ?))`, binds: [c.v, c.v, c.id] }
+    : { sql: `${col} IS NOT NULL`, binds: [] };
+  return { values: { orderBy: `${col} ${dir}, "id" ${dir}`, where: values }, nulls: { orderBy: nullsOrder, where: { sql: `${col} IS NULL`, binds: [] } } };
 }
 
 /** Free-text search: FTS5 when `search: true`, else LIKE over searchable (or title) fields. */

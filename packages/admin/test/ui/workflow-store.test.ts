@@ -14,8 +14,8 @@ const spec = (name: string, message = "hi"): WorkflowSpec => ({
 describe("admin_workflows storage", () => {
   test("each save is a new version; list shows the latest and the published one", async () => {
     const store = workflowStore(sqlite());
-    const v1 = await store.save(spec("greet"), "ann");
-    const v2 = await store.save(spec("greet", "hello"), "bob");
+    const v1 = (await store.save(spec("greet"), "ann"))!;
+    const v2 = (await store.save(spec("greet", "hello"), "bob"))!;
     await store.save(spec("other"), "ann");
     expect([v1.version, v2.version]).toEqual([1, 2]);
     expect(v2).toMatchObject({ name: "greet", status: "draft", createdBy: "bob" });

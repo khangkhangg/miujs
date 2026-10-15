@@ -4,7 +4,7 @@ import { definePlugin, errors, processEnv, route, t, type CloudflareNeeds, type 
 import { diff, redact, redactor, type RedactRule } from "./diff.ts";
 import { auditManage } from "./manage.ts";
 import { checkKeys, ENV_KEY, envKeys, hashAuditEmail, MIN_KEY_LENGTH, type AuditKeys } from "./keys.ts";
-import { storeKeys, type AuditInput, type AuditPage, type AuditQuery, type AuditRecord, type AuditStore } from "./store.ts";
+import { CHECKPOINT_ACTION, storeKeys, type AuditInput, type AuditPage, type AuditQuery, type AuditRecord, type AuditStore } from "./store.ts";
 
 export interface AuditEntry {
   /** What happened, e.g. `"update"`, `"export"`, `"view"`. */
@@ -132,6 +132,15 @@ export function audit(opts: AuditOptions) {
   function toInput(entry: AuditEntry, origin: Origin): AuditInput {
     if (!entry || typeof entry !== "object") {
       throw errors.custom({ code: "MIU_E_AUDIT_INVALID", status: 500, message: "Invalid audit entry: expected an object", fix: 'Call ctx.audit.log({ action: "update", resource: "contacts", ... }).' });
+    }
+    // verifyChain trusts checkpoint rows to excuse deleted rows before them: only purgeOlderThan writes them.
+    if (entry.action === CHECKPOINT_ACTION) {
+      throw errors.custom({
+        code: "MIU_E_AUDIT_INVALID",
+        status: 500,
+        message: `Invalid audit entry: the action "${CHECKPOINT_ACTION}" is reserved`,
+        fix: "Use another action name; checkpoint rows are written only by purgeOlderThan().",
+      });
     }
     const hasDiff = entry.before !== undefined || entry.after !== undefined;
     return {

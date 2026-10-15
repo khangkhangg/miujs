@@ -126,6 +126,46 @@ export const workflowErrors = {
       fix: "Send the hex HMAC-SHA256 of the raw request body, keyed with the webhook secret, in the configured header (\"sha256=\" prefix optional).",
     }),
 
+  httpBlocked: (url: string, reason: string) =>
+    new MiuError({
+      code: "MIU_E_WORKFLOW_HTTP_BLOCKED",
+      status: 400,
+      message: `The http action refused ${url}: ${reason}`,
+      fix: "Call a public http(s) URL. To let JSON workflows reach internal services on purpose, pass fromJson(spec, { actions: [createHttpAction({ allowPrivateNetwork: true })] }), or write a defineAction() for that service.",
+    }),
+
+  httpTooLarge: (url: string, limit: number) =>
+    new MiuError({
+      code: "MIU_E_WORKFLOW_HTTP_TOO_LARGE",
+      status: 502,
+      message: `The response from ${url} is larger than ${limit} bytes`,
+      fix: "Ask the endpoint for less data, or raise the limit with createHttpAction({ maxResponseBytes }) (step outputs are stored in the run journal).",
+    }),
+
+  httpTimeout: (url: string, ms: number) =>
+    new MiuError({
+      code: "MIU_E_WORKFLOW_HTTP_TIMEOUT",
+      status: 504,
+      message: `${url} did not answer within ${ms} ms`,
+      fix: "Check that the endpoint is up, or raise the limit with createHttpAction({ timeoutMs }).",
+    }),
+
+  orgScoped: () =>
+    new MiuError({
+      code: "MIU_E_WORKFLOWS_ORG_SCOPED",
+      status: 403,
+      message: "Workflows are app-wide and cannot be used from inside an organization",
+      fix: "Call the workflows routes and tools without an active organization (no x-org-id header, no org picked in the session), as a platform operator whose global role grants the workflows permission.",
+    }),
+
+  bodyTooLarge: (limit: number) =>
+    new MiuError({
+      code: "MIU_E_BODY_TOO_LARGE",
+      status: 413,
+      message: `Webhook body is larger than ${limit} bytes`,
+      fix: "Send a smaller body, or raise the limit with webhook(path, { maxBodySize }).",
+    }),
+
   approver: (step: string) =>
     new MiuError({
       code: "MIU_E_WORKFLOW_NOT_APPROVER",

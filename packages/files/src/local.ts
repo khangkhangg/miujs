@@ -25,12 +25,16 @@ export function assertFsRuntime(runtime: string): void {
 
 // Names Windows treats as devices or silently rewrites; rejected everywhere so a directory of
 // files can move between machines.
-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
+// Includes CONIN$/CONOUT$/CLOCK$, the superscript COM¹-³/LPT¹-³ forms, and "CON .txt"
+// (Win32 strips spaces before the extension).
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|conin\$|conout\$|clock\$|com[0-9¹²³]|lpt[0-9¹²³]) *(\..*)?$/i;
 const UPLOAD_ID = /^[0-9a-f]{32}$/;
 const ETAG = /^[0-9a-f]{32}$/;
 
 function checkLocalKey(key: string): string {
   checkKey(key);
+  // macOS file systems treat NFC and NFD spellings as one name: allow only one of them.
+  if (key.normalize("NFC") !== key) throw filesErrors.keyInvalid(key, "is not Unicode NFC (normalize it with key.normalize(\"NFC\"))");
   for (const seg of key.split("/")) {
     if (WINDOWS_RESERVED.test(seg)) throw filesErrors.keyInvalid(key, `"${seg}" is a reserved device name on Windows`);
     if (seg.endsWith(".") || seg.endsWith(" ")) throw filesErrors.keyInvalid(key, "a segment ends with '.' or a space");

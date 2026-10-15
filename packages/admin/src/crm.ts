@@ -444,7 +444,10 @@ export function crm(o: CrmOptions = {}): CrmKit {
           if (target.permissions) (c as { authorize?: (p: string, r?: unknown) => void }).authorize?.(target.permissions.read, rec);
           const audit = (c as { audit?: TimelineSource["audit"] }).audit;
           const items = await timeline({ resource: target.name, id: rec.id }, { data: repo.data(), audit, orgId: scope.orgId, limit: ctx.query.limit });
-          return { items };
+          // repo.data() reads as the system; row-level read policies on activities still apply.
+          const can = (c as { can?: (p: string, r?: unknown) => boolean }).can;
+          const visible = typeof can === "function" ? items.filter((e) => e.kind !== "activity" || can.call(c, activities.permissions!.read, e.activity)) : items;
+          return { items: visible };
         },
       }),
     );

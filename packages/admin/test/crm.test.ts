@@ -25,7 +25,19 @@ describe("CRM resources", () => {
     ]);
     expect(Object.keys(deals.views)).toEqual(["pipeline", "closingSoon"]);
     expect(activities.fields.type.options.choices!.map((c) => c.value)).toEqual(["call", "email", "meeting", "note"]);
-    expect(adminMigrations(crmResources()).map((m) => m.id)).toEqual(["admin_001_companies", "admin_001_contacts", "admin_001_deals", "admin_001_activities", "admin_001_tasks", "admin_system_001_settings"]);
+    expect(adminMigrations(crmResources()).map((m) => m.id)).toEqual([
+      "admin_001_companies",
+      "admin_002_companies_sort_indexes",
+      "admin_001_contacts",
+      "admin_002_contacts_sort_indexes",
+      "admin_001_deals",
+      "admin_002_deals_sort_indexes",
+      "admin_001_activities",
+      "admin_002_activities_sort_indexes",
+      "admin_001_tasks",
+      "admin_002_tasks_sort_indexes",
+      "admin_system_001_settings",
+    ]);
   });
 
   test("currency is configurable", () => {

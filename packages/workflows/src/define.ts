@@ -35,6 +35,16 @@ export interface WebhookTrigger {
   secret?: string | ((env: Env) => string | undefined);
   /** Header carrying the hex signature. Default "x-signature". */
   header?: string;
+  /**
+   * Replay protection (needs `secret`): seconds a signed request stays valid. The sender puts
+   * the unix time (seconds) in `timestampHeader` and signs `${timestamp}.${body}`; older or
+   * newer requests are refused. Default: off (the signature covers only the body).
+   */
+  tolerance?: number;
+  /** Header carrying the unix timestamp for `tolerance`. Default "x-signature-timestamp". */
+  timestampHeader?: string;
+  /** Largest request body accepted, in bytes. Default 1 MiB. */
+  maxBodySize?: number;
   /** Map the parsed JSON body to the workflow input. Default: the body. */
   input?: (body: unknown, req: Request) => unknown;
 }
@@ -60,6 +70,12 @@ export function cron(expr: string, opts: { input?: unknown } = {}): CronTrigger 
 export function webhook(path: string, opts: Omit<WebhookTrigger, "type" | "path"> = {}): WebhookTrigger {
   if (typeof path !== "string" || !path.startsWith("/")) {
     throw workflowErrors.config(`webhook() needs a path starting with "/", got ${JSON.stringify(path)}`, 'Call webhook("/hooks/form").');
+  }
+  if (opts.tolerance !== undefined && (!Number.isInteger(opts.tolerance) || opts.tolerance < 1 || opts.secret === undefined)) {
+    throw workflowErrors.config(`webhook(${JSON.stringify(path)}): tolerance must be a whole number of seconds >= 1, with a secret`, `Call webhook("${path}", { secret: (env) => env.HOOK_SECRET, tolerance: 300 }).`);
+  }
+  if (opts.maxBodySize !== undefined && (!Number.isInteger(opts.maxBodySize) || opts.maxBodySize < 0)) {
+    throw workflowErrors.config(`webhook(${JSON.stringify(path)}): maxBodySize must be a whole number of bytes`, "Pass maxBodySize: 1048576 (1 MiB).");
   }
   return { type: "webhook", path, ...opts };
 }
@@ -227,7 +243,7 @@ export function describeTrigger(tr: Trigger): Record<string, unknown> {
     case "cron":
       return { type: "cron", cron: tr.cron };
     case "webhook":
-      return { type: "webhook", path: tr.path, signed: tr.secret !== undefined };
+      return { type: "webhook", path: tr.path, signed: tr.secret !== undefined, ...(tr.tolerance !== undefined ? { tolerance: tr.tolerance } : {}) };
     default:
       return { type: "manual" };
   }

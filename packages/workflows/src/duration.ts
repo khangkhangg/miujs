@@ -26,14 +26,19 @@ const UNITS: Record<string, number> = {
   weeks: 604_800_000,
 };
 
+/** Longest duration accepted: 100 years. Keeps wake-up times exact integers in every store. */
+export const MAX_DURATION_MS = 100 * 365 * 86_400_000;
+
 /** Milliseconds in `value`. Throws MIU_E_WORKFLOW_DURATION. */
 export function parseDuration(value: Duration): number {
   if (typeof value === "number") {
-    if (Number.isFinite(value) && value >= 0) return value;
+    if (Number.isFinite(value) && value >= 0 && value <= MAX_DURATION_MS) return value;
     throw workflowErrors.duration(value);
   }
   const m = typeof value === "string" ? /^\s*(\d+(?:\.\d+)?)\s*([a-z]+)\s*$/i.exec(value) : null;
   const unit = m ? UNITS[m[2].toLowerCase()] : undefined;
   if (!m || unit === undefined) throw workflowErrors.duration(value);
-  return Math.round(Number(m[1]) * unit);
+  const ms = Math.round(Number(m[1]) * unit);
+  if (!(ms <= MAX_DURATION_MS)) throw workflowErrors.duration(value);
+  return ms;
 }

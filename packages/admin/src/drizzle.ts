@@ -7,7 +7,7 @@ import { tableFromSchema } from "@miujs/db/drizzle";
 import { adminErrors } from "./errors.ts";
 import { sqlType } from "./fields.ts";
 import type { FieldMetaBase, Resource } from "./resource.ts";
-import { checkResources, orderByDependencies } from "./tables.ts";
+import { checkResources, orderByDependencies, sortKeys } from "./tables.ts";
 
 function columnSchema(f: FieldMetaBase): Schema<any> {
   let base: Schema<any>;
@@ -61,6 +61,7 @@ export function resourceTables(resources: readonly Resource[]): Record<string, B
       else if (f.type === "relation") indexes.push({ columns: [f.name], name: `${r.table}_${f.column}_idx` });
       else if (f.options.index) indexes.push({ columns: [...scope, f.name], name: `${r.table}_${f.column}_idx` });
     }
+    for (const k of sortKeys(r)) indexes.push({ columns: [...scope, k, "id"], name: `${r.table}_${r.fields[k].column}_sort_idx` });
     out[r.name] = tableFromSchema(r.table, storageSchema(r), { casing: "snake_case", references: references as never, indexes: indexes as never }) as unknown as Built;
   }
   return out;

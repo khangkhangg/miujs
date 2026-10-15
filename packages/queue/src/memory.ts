@@ -32,7 +32,8 @@ export interface MemoryQueue extends QueueAdapter {
    * and retry backoff are skipped by advancing the clock; on the real clock they are waited for.
    */
   drain(): Promise<void>;
-  stop(): void;
+  /** Stops timers and starting jobs; resolves once running jobs finished (at most 10 s). */
+  stop(): Promise<void>;
 }
 
 interface Item {
@@ -60,6 +61,8 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
   const delayed = new Map<unknown, number>(); // timer handle -> due time
   const delayedById = new Map<string, { h: unknown; item: Item; due: number }>(); // for cancel and listing
   let started = false; // setup() ran and stop() did not
+  // stop() ran: nothing new starts (jobs already running finish). Cleared by setup().
+  let stopped = false;
   const scheduleTimers = new Set<unknown>();
   const deadLetters: DeadLetter[] = [];
   let running = 0;
@@ -82,7 +85,7 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
 
   const pump = () => {
     pumpQueued = false;
-    while (!paused && running < concurrency && ready.length) start(ready.shift()!);
+    while (!stopped && !paused && running < concurrency && ready.length) start(ready.shift()!);
     notify();
   };
   const schedulePump = () => {
@@ -185,6 +188,7 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
     },
     setup() {
       started = true;
+      stopped = false;
       if (runtime().schedules.length && scheduleTimers.size === 0) armSchedules();
     },
     schedulesChanged() {
@@ -213,16 +217,34 @@ export function memoryQueue(opts: MemoryQueueOptions = {}): MemoryQueue {
     },
     stop() {
       started = false;
+      // An in-process queue loses what is pending on exit anyway; starting it after shutdown
+      // would run jobs against closed databases and keep the process alive.
+      stopped = true;
       for (const h of scheduleTimers) clock.clearTimeout(h);
       scheduleTimers.clear();
       for (const h of delayed.keys()) clock.clearTimeout(h);
       delayed.clear();
       delayedById.clear();
       notify();
+      if (!running) return Promise.resolve();
+      // Jobs already running may still use databases the app closes next: wait for them, bounded
+      // so one hung job cannot hold shutdown forever.
+      return new Promise<void>((resolve) => {
+        const limit = setTimeout(resolve, 10_000);
+        (limit as { unref?: () => void }).unref?.();
+        const check = () => {
+          if (running) waiters.push(check);
+          else {
+            clearTimeout(limit);
+            resolve();
+          }
+        };
+        waiters.push(check);
+      });
     },
     async drain() {
       for (;;) {
-        if (!ready.length && !running && !dispatching) {
+        if ((stopped || !ready.length) && !running && !dispatching) {
           if (!delayed.size) return;
           if (clock.advanceTo) {
             clock.advanceTo(Math.min(...delayed.values()));

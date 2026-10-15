@@ -93,8 +93,8 @@ export interface QueueAdapter extends QueueManagement {
   send(msg: QueueMessage, opts: { delay?: number }, env: Env): Promise<void>;
   /** Called from the plugin's `setup` (start workers, register Workers handlers). */
   setup?(app: App): void | Promise<void>;
-  /** Stop timers. */
-  stop?(): void;
+  /** Stop timers and starting jobs; may resolve once running jobs finished. */
+  stop?(): void | Promise<void>;
   /** Remove a message that has not started yet (delayed, or waiting its turn). False when there was none. */
   cancel?(id: string, env: Env): Promise<boolean>;
   /** `QueueRuntime.schedules` gained or lost entries: start or stop the minute scheduler. */

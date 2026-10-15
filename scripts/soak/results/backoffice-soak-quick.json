@@ -1,0 +1,208 @@
+{
+  "at": "2026-10-15T19:38:51.694Z",
+  "durationS": 46,
+  "users": 50,
+  "coldMs": 225,
+  "requests": 15191,
+  "rps": 334,
+  "errors": 0,
+  "perOp": [
+    {
+      "op": "deals closingSoon",
+      "n": 689,
+      "p50": 6.65,
+      "p99": 77.73,
+      "errors": {}
+    },
+    {
+      "op": "list sort name",
+      "n": 956,
+      "p50": 6.1,
+      "p99": 81.47,
+      "errors": {}
+    },
+    {
+      "op": "tasks open",
+      "n": 652,
+      "p50": 6.11,
+      "p99": 89.76,
+      "errors": {}
+    },
+    {
+      "op": "get",
+      "n": 1567,
+      "p50": 4.72,
+      "p99": 72.81,
+      "errors": {}
+    },
+    {
+      "op": "list stage",
+      "n": 2162,
+      "p50": 5.7,
+      "p99": 77.14,
+      "errors": {}
+    },
+    {
+      "op": "admin UI list page",
+      "n": 962,
+      "p50": 6.91,
+      "p99": 77.35,
+      "errors": {}
+    },
+    {
+      "op": "list sort value",
+      "n": 826,
+      "p50": 5.09,
+      "p99": 81.52,
+      "errors": {}
+    },
+    {
+      "op": "update",
+      "n": 1437,
+      "p50": 434.97,
+      "p99": 721.19,
+      "errors": {}
+    },
+    {
+      "op": "timeline",
+      "n": 746,
+      "p50": 6,
+      "p99": 71.93,
+      "errors": {}
+    },
+    {
+      "op": "delete",
+      "n": 817,
+      "p50": 424.84,
+      "p99": 724.1,
+      "errors": {}
+    },
+    {
+      "op": "search",
+      "n": 1353,
+      "p50": 10.26,
+      "p99": 80.87,
+      "errors": {}
+    },
+    {
+      "op": "create",
+      "n": 1478,
+      "p50": 429.55,
+      "p99": 743.04,
+      "errors": {}
+    },
+    {
+      "op": "admin UI record page",
+      "n": 453,
+      "p50": 7.1,
+      "p99": 80.27,
+      "errors": {}
+    },
+    {
+      "op": "bulk update 20",
+      "n": 445,
+      "p50": 463.97,
+      "p99": 742.09,
+      "errors": {}
+    },
+    {
+      "op": "export (filtered)",
+      "n": 320,
+      "p50": 434.7,
+      "p99": 772.45,
+      "errors": {}
+    },
+    {
+      "op": "import 50",
+      "n": 328,
+      "p50": 523.38,
+      "p99": 836.07,
+      "errors": {}
+    }
+  ],
+  "memory": {
+    "warmup": {
+      "t": 5,
+      "rssMB": 116.9,
+      "heapMB": 13.1,
+      "objects": 92693
+    },
+    "lastSample": {
+      "t": 41,
+      "rssMB": 121,
+      "heapMB": 14.3,
+      "objects": 128217
+    },
+    "endOfLoad": {
+      "rssMB": 122.5,
+      "heapMB": 11.3,
+      "objects": 71633
+    },
+    "settled10s": {
+      "rssMB": 110,
+      "heapMB": 10.6,
+      "objects": 54063
+    },
+    "heapGrowthPct": -19.2,
+    "heapSlopeKBPerMin": 1251,
+    "peakRssMB": 122.5
+  },
+  "shutdown": {
+    "exited": true,
+    "exitMs": 61
+  },
+  "database": {
+    "file": true,
+    "sizeMB": 83.8
+  },
+  "samples": [
+    {
+      "t": 5,
+      "rssMB": 116.9,
+      "heapMB": 13.1,
+      "objects": 92693
+    },
+    {
+      "t": 10,
+      "rssMB": 122.5,
+      "heapMB": 13.8,
+      "objects": 103160
+    },
+    {
+      "t": 15,
+      "rssMB": 115.8,
+      "heapMB": 11.7,
+      "objects": 82398
+    },
+    {
+      "t": 20,
+      "rssMB": 115.9,
+      "heapMB": 12.4,
+      "objects": 93309
+    },
+    {
+      "t": 25,
+      "rssMB": 119.3,
+      "heapMB": 12.8,
+      "objects": 102256
+    },
+    {
+      "t": 30,
+      "rssMB": 118.8,
+      "heapMB": 13.1,
+      "objects": 105749
+    },
+    {
+      "t": 35,
+      "rssMB": 120.1,
+      "heapMB": 12.8,
+      "objects": 100451
+    },
+    {
+      "t": 41,
+      "rssMB": 121,
+      "heapMB": 14.3,
+      "objects": 128217
+    }
+  ]
+}

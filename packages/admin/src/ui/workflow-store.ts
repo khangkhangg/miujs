@@ -20,6 +20,11 @@ export const adminWorkflowMigrations: Migration[] = [
 );
 CREATE INDEX IF NOT EXISTS admin_workflows_status ON admin_workflows(status);`,
   },
+  {
+    // The organization a workflow was built in (NULL: app-wide, built without an active org).
+    id: "admin_ui_002_workflows_org",
+    sql: "ALTER TABLE admin_workflows ADD COLUMN org_id TEXT;",
+  },
 ];
 
 export type WorkflowStatus = "draft" | "published" | "archived";
@@ -32,6 +37,8 @@ export interface StoredWorkflow {
   createdAt: number;
   createdBy: string | null;
   publishedAt: number | null;
+  /** The organization that owns it; null: app-wide. */
+  org: string | null;
 }
 
 export interface WorkflowSummary {
@@ -50,6 +57,7 @@ interface Row {
   created_at: number;
   created_by: string | null;
   published_at: number | null;
+  org_id?: string | null;
 }
 
 const toStored = (r: Row): StoredWorkflow => ({
@@ -60,73 +68,97 @@ const toStored = (r: Row): StoredWorkflow => ({
   createdAt: Number(r.created_at),
   createdBy: r.created_by ?? null,
   publishedAt: r.published_at == null ? null : Number(r.published_at),
+  org: r.org_id ?? null,
 });
 
+/**
+ * Every method except `published()` and `owner()` is scoped to one owner: an organization id,
+ * or null for app-wide workflows. A workflow of another owner does not exist for the caller.
+ */
 export interface WorkflowStore {
   ready(): Promise<void>;
-  list(): Promise<WorkflowSummary[]>;
+  list(org?: string | null): Promise<WorkflowSummary[]>;
   /** Newest first. */
-  versions(name: string): Promise<StoredWorkflow[]>;
+  versions(name: string, org?: string | null): Promise<StoredWorkflow[]>;
   /** A version, or the latest. */
-  get(name: string, version?: number): Promise<StoredWorkflow | null>;
-  /** Saves a new draft version (latest + 1). */
-  save(spec: WorkflowSpec, userId: string | null): Promise<StoredWorkflow>;
+  get(name: string, version?: number, org?: string | null): Promise<StoredWorkflow | null>;
+  /**
+   * Saves a new draft version (latest + 1). Null when the name belongs to another owner (names
+   * are unique app-wide, like the engine's).
+   */
+  save(spec: WorkflowSpec, userId: string | null, org?: string | null): Promise<StoredWorkflow | null>;
   /** Makes `version` the published one (the previous one becomes archived). False if missing. */
-  publish(name: string, version: number, userId: string | null): Promise<boolean>;
-  unpublish(name: string): Promise<void>;
+  publish(name: string, version: number, userId: string | null, org?: string | null): Promise<boolean>;
+  /** False when this owner has no workflow of that name. */
+  unpublish(name: string, org?: string | null): Promise<boolean>;
+  /** Every owner's published versions (for the loader). */
   published(): Promise<StoredWorkflow[]>;
+  /** Who owns a name: undefined when nobody saved it. */
+  owner(name: string): Promise<string | null | undefined>;
 }
 
 /** Workflow versions in `database` (SQLite or D1). */
 export function workflowStore(database: Database, now: () => number = Date.now): WorkflowStore {
   const ready = async () => void (await migrateOnce(database, adminWorkflowMigrations));
   const q = (sql: string, ...args: unknown[]) => database.prepare(sql).bind(...args);
+  // "org_id IS ?" matches NULL with NULL (app-wide) and an id with the same id.
   return {
     ready,
-    async list() {
+    async list(org = null) {
       await ready();
       const { results } = await q(
         `SELECT name, MAX(version) AS latest, MAX(CASE WHEN status = 'published' THEN version END) AS published, MAX(created_at) AS updated_at
-         FROM admin_workflows GROUP BY name ORDER BY name`,
+         FROM admin_workflows WHERE org_id IS ? GROUP BY name ORDER BY name`,
+        org,
       ).all<{ name: string; latest: number; published: number | null; updated_at: number }>();
       const out: WorkflowSummary[] = [];
       for (const r of results) {
-        const latest = await this.get(r.name, Number(r.latest));
+        const latest = await this.get(r.name, Number(r.latest), org);
         out.push({ name: r.name, description: latest?.spec.description ?? null, latest: Number(r.latest), published: r.published == null ? null : Number(r.published), updatedAt: Number(r.updated_at) });
       }
       return out;
     },
-    async versions(name) {
+    async versions(name, org = null) {
       await ready();
-      const { results } = await q("SELECT * FROM admin_workflows WHERE name = ? ORDER BY version DESC", name).all<Row>();
+      const { results } = await q("SELECT * FROM admin_workflows WHERE name = ? AND org_id IS ? ORDER BY version DESC", name, org).all<Row>();
       return results.map(toStored);
     },
-    async get(name, version) {
+    async get(name, version, org = null) {
       await ready();
       const row =
         version === undefined
-          ? await q("SELECT * FROM admin_workflows WHERE name = ? ORDER BY version DESC LIMIT 1", name).first<Row>()
-          : await q("SELECT * FROM admin_workflows WHERE name = ? AND version = ?", name, version).first<Row>();
+          ? await q("SELECT * FROM admin_workflows WHERE name = ? AND org_id IS ? ORDER BY version DESC LIMIT 1", name, org).first<Row>()
+          : await q("SELECT * FROM admin_workflows WHERE name = ? AND version = ? AND org_id IS ?", name, version, org).first<Row>();
       return row ? toStored(row) : null;
     },
-    async save(spec, userId) {
+    async owner(name) {
+      await ready();
+      const row = await q("SELECT org_id FROM admin_workflows WHERE name = ? LIMIT 1", name).first<{ org_id: string | null }>();
+      return row ? (row.org_id ?? null) : undefined;
+    },
+    async save(spec, userId, org = null) {
       await ready();
       const name = spec.name;
-      // INSERT ... SELECT computes the next version atomically.
+      // INSERT ... SELECT computes the next version atomically, and inserts nothing when the
+      // name already belongs to another owner.
       await q(
-        `INSERT INTO admin_workflows (name, version, spec, status, created_at, created_by)
-         SELECT ?, COALESCE(MAX(version), 0) + 1, ?, 'draft', ?, ? FROM admin_workflows WHERE name = ?`,
+        `INSERT INTO admin_workflows (name, version, spec, status, created_at, created_by, org_id)
+         SELECT ?, COALESCE(MAX(version), 0) + 1, ?, 'draft', ?, ?, ? FROM admin_workflows WHERE name = ?
+         HAVING NOT EXISTS (SELECT 1 FROM admin_workflows WHERE name = ? AND org_id IS NOT ?)`,
         name,
         JSON.stringify(spec),
         now(),
         userId,
+        org,
         name,
+        name,
+        org,
       ).run();
-      return (await this.get(name))!;
+      return this.get(name, undefined, org);
     },
-    async publish(name, version, userId) {
+    async publish(name, version, userId, org = null) {
       await ready();
-      const exists = await q("SELECT 1 AS ok FROM admin_workflows WHERE name = ? AND version = ?", name, version).first();
+      const exists = await q("SELECT 1 AS ok FROM admin_workflows WHERE name = ? AND version = ? AND org_id IS ?", name, version, org).first();
       if (!exists) return false;
       await database.batch([
         q("UPDATE admin_workflows SET status = 'archived' WHERE name = ? AND status = 'published' AND version <> ?", name, version),
@@ -134,9 +166,11 @@ export function workflowStore(database: Database, now: () => number = Date.now):
       ]);
       return true;
     },
-    async unpublish(name) {
+    async unpublish(name, org = null) {
       await ready();
-      await q("UPDATE admin_workflows SET status = 'archived' WHERE name = ? AND status = 'published'", name).run();
+      if (!(await this.get(name, undefined, org))) return false;
+      await q("UPDATE admin_workflows SET status = 'archived' WHERE name = ? AND status = 'published' AND org_id IS ?", name, org).run();
+      return true;
     },
     async published() {
       await ready();
@@ -222,7 +256,7 @@ export class WorkflowLoader {
       }
       let def: WorkflowDef<any>;
       try {
-        def = fromJson(p.spec, { actions: [...this.o.actions()] });
+        def = p.org === null ? fromJson(p.spec, { actions: [...this.o.actions()] }) : fromJson(scopeSpec(p.spec, p.org), { actions: scopeActions(this.o.actions(), p.org) });
       } catch (err) {
         errors.push({ name: p.name, message: (err as Error).message });
         continue;
@@ -261,4 +295,49 @@ export class WorkflowLoader {
   invalidate(): void {
     this.last = -Infinity;
   }
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * A workflow built in an organization only sees that organization: its event trigger and every
+ * wait_for_event step also match `data.orgId` (admin events carry it), so other orgs' records
+ * never start or resume its runs.
+ */
+export function scopeSpec(spec: WorkflowSpec, org: string): WorkflowSpec {
+  const out = structuredClone(spec) as WorkflowSpec;
+  const scope = (match: unknown) => ({ ...(isObject(match) ? match : {}), "data.orgId": org });
+  if (out.trigger?.type === "event") out.trigger.match = scope(out.trigger.match);
+  const walk = (steps: unknown) => {
+    if (!Array.isArray(steps)) return;
+    for (const s of steps) {
+      if (!isObject(s)) continue;
+      if (s.type === "wait_for_event") s.match = scope(s.match);
+      walk(s.then);
+      walk(s.else);
+    }
+  };
+  walk(out.steps);
+  return out;
+}
+
+/**
+ * Actions whose params name an organization (`orgId`, like crm.create_task) refuse any other
+ * organization than the workflow's own: params are written by the workflow's author, who must not
+ * reach into another tenant.
+ */
+export function scopeActions(actions: readonly ActionDef[], org: string): ActionDef[] {
+  return actions.map((a) => {
+    const props = (a.params.json as { properties?: Record<string, unknown> } | undefined)?.properties;
+    if (!props || !Object.prototype.hasOwnProperty.call(props, "orgId")) return a;
+    return {
+      ...a,
+      run: (params: any, actx: any) => {
+        if (params?.orgId !== org) {
+          throw Object.assign(new Error(`Action "${a.name}" may only act in this workflow's organization (${org}), not ${JSON.stringify(params?.orgId)}.`), { retryable: false });
+        }
+        return a.run(params, actx);
+      },
+    };
+  });
 }

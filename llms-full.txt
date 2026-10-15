@@ -370,9 +370,22 @@ sustained load over real HTTP and WebSockets on Bun, Node and Deno.
 - **OAuth and passkeys:** provider sign-in links only to accounts whose email is verified, never
   taking over an existing account; signed-in users link and unlink providers explicitly. Passkeys
   use single-use server-side challenges and sign-counter clone detection.
-- **Password reset** signs out other sessions and revokes API tokens.
-- **API tokens:** shown once and stored as SHA-256 hashes. Passwords use argon2id on Bun, otherwise
-  PBKDF2 (600k iterations). Legacy bcrypt and Django hashes are upgraded on the next login.
+- **Password reset** signs out other sessions, revokes API tokens, and removes passkeys and OAuth
+  links, so whoever took over the account keeps no way back in.
+- **API tokens:** created only from a signed-in browser session (a token cannot mint more tokens),
+  shown once and stored as SHA-256 hashes. Passwords use argon2id on Bun, otherwise PBKDF2 (600k
+  iterations). Legacy bcrypt and Django hashes are upgraded on the next login.
+- **WebSockets:** a cross-origin handshake that carries cookies is refused (403
+  `MIU_E_WS_ORIGIN`); list other sites with `ctx.upgrade({ origins: [...] })`. Client messages
+  are capped at 1 MiB and a client that stops reading is closed once 1 MiB waits for it:
+  `miu({ websocket: { maxPayloadLength, backpressureLimit } })`. Bun enforces both; Deno and
+  Workers check message size per message; the Node adapter has no WebSockets.
+- **MCP:** browser calls to `/mcp` from a non-loopback origin need `mcp: { allowedOrigins }`
+  (DNS rebinding). Route tools keep their route's `auth` and `permission`; plugin tools declare
+  `auth` / `permission` the same way, and `tools/list` shows each caller only what they may call.
+- **Realtime rooms:** with `requireHostKey` only the key from `createRoom()` makes a host;
+  `createOnJoin: false` means a random room URL is a 404, not a new room; `maxPlayers`,
+  `maxMembers` (default 5000) and `maxConnectionsPerIp` (default 1000) cap rooms and clients.
 
 ## Roadmap
 
@@ -796,7 +809,7 @@ const res = await app.fetch(new Request("http://localhost/"));
 console.log(res.headers.get("server-timing"));
 ```
 
-Plugin hooks: `setup(app)`, `routes`, `onRequest`, `onResponse`, `onError`, `mcpTools()`, `inspect()`, `cloudflare()`. In `setup`, plugins can call `app.add(...)`, `app.on("queue" | "scheduled", fn)` and `app.provide(name, value)`; code outside requests reads services with `app.service(name)`. Add typed context fields with `declare module "miujs" { interface Context { ... } }`, and typed per-route options with `declare module "miujs" { interface RouteExtensions { myOption?: ... } }`: routes then accept `myOption`, and hooks read it from `ctx.route.config.myOption` (the route's own config object; absent on internal `/_miu/*` and MCP routes).
+Plugin hooks: `setup(app)`, `routes`, `onRequest`, `onResponse`, `onError`, `mcpTools()`, `inspect()`, `cloudflare()`. In `setup`, plugins can call `app.add(...)`, `app.on("queue" | "scheduled", fn)` and `app.provide(name, value)`; code outside requests reads services with `app.service(name)`. Add typed context fields with `declare module "miujs" { interface Context { ... } }`, and typed per-route options with `declare module "miujs" { interface RouteExtensions { myOption?: ... } }`: routes then accept `myOption`, and hooks read it from `ctx.route.config.myOption` (the route's own config object; absent on internal `/_miu/*` and MCP routes). A plugin MCP tool can declare `auth` and `permission` like a route: `/mcp` refuses other callers (401/403 tool errors) and leaves the tool out of their `tools/list`.
 
 ## MCP, OpenAPI and inspect
 
@@ -864,6 +877,7 @@ await server.stop();
 | `logRequests` | `boolean` | `false` | One log line per request. |
 | `maxBodySize` | `number` | `10485760` (10 MiB) | Largest request body in bytes. Routes can override. |
 | `trustProxy` | `{ header: string; hops?: number }` | none | Your reverse proxy's header, so `ctx.ip` is the real client. |
+| `websocket` | `{ maxPayloadLength?: number; backpressureLimit?: number }` | 1 MiB each | WebSocket limits in bytes: largest client message (bigger closes the socket), and most bytes buffered for a client that stops reading before it is closed (1013). Bun enforces both; Deno and Workers check message size. |
 
 ## Errors
 
@@ -2210,7 +2224,7 @@ Responses carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` f
 ## Rules
 
 - `match` takes `route` (route name), `path` (`/api/*` matches the path and everything below; `:param` and `*` match one segment), `method` and `tag`. Every given key must match; a list matches any of its entries. A rule without `match` applies to every request.
-- `by` is `"ip"`, `"user"` (signed-in user, else IP), `"apiKey"` (`x-api-key` or `Authorization: Bearer`, hashed; else IP) or `(ctx) => string | null`. Returning `null` exempts the request.
+- `by` is `"ip"`, `"user"` (signed-in user, else IP), `"apiKey"` (`x-api-key` or `Authorization: Bearer`, hashed; else IP; a key with no signed-in user behind it also counts against the client's IP, so made-up keys cannot buy a fresh bucket per request) or `(ctx) => string | null`. Returning `null` exempts the request.
 - `window` is seconds or `"10s"`, `"1m"`, `"15m"`, `"1h"`, `"1d"`.
 - Rules with `by: "user"` need `auth()` listed before `rateLimit()` in `plugins`; otherwise setup fails with `MIU_E_RATELIMIT_ORDER`.
 - Behind a proxy, set `trustProxyHeader` (e.g. `"x-forwarded-for"`). The rightmost address is used. Never name a header clients can set directly.
@@ -2863,7 +2877,11 @@ Persistence is coalesced and split:
 | `className` | `string` | `"MiuRooms"` | Exported Durable Object class name (for `miu deploy cloudflare`). |
 | `codes` | `string` | none (memory) | KV binding for join codes on Cloudflare. |
 | `codeTtlMs` | `number` | `21600000` (6 h) | How long a join code stays valid. |
-| `codeLookups` | `{ perMinute?, burst? }` | `{ perMinute: 30, burst: 10 }` | Per-IP limit on code lookups. |
+| `codeLookups` | `{ perMinute?, burst? }` | `{ perMinute: 30, burst: 10 }` | Per-IP limit on wrong join codes (only misses count, so a classroom behind one NAT can all look up the real code). |
+| `maxConnectionsPerIp` | `number` | `1000` | Open room sockets per client IP (Bun/Deno/Node); more get `429 MIU_E_ROOM_TOO_MANY_CONNECTIONS`. |
+| `mcpAuth` | `AuthRequirement` | `{ role: "admin" }` | Who may call the MCP tools `rooms_list` / `room_state` (they list every room id and show raw state, bypassing join codes and `view`). Set on the tools as `auth`: `/mcp` enforces it and hides them from other callers. |
+| `mcpPermission` | `string` | none | A permission the operator tools also require (`ctx.authorize`, `@miujs/access`). |
+| `mcpAccess` | `"admin" | "public"` | `"admin"` | Older alias for `mcpAuth`: `"admin"` = `{ role: "admin" }`, `"public"` = `false`. |
 | `emptyMs` | `number` | `30000` | Dispose local rooms after they stay empty this long. |
 | `clock` | `Clock` | `systemClock` | Time source (`FakeClock` in tests). |
 
@@ -2882,6 +2900,11 @@ Persistence is coalesced and split:
 | `rateLimit` | `{ perSecond?, burst?, kickAfterMs? } \| false` | `30/s`, burst `60`, kick after `3000` ms | Inbound frame limit per connection. |
 | `maxMessageBytes` | `number` | `16384` | Largest inbound frame; bigger frames close the socket (1009). |
 | `maxPlayers` | `number` | unlimited | Max non-spectator players. |
+| `maxMembers` | `number` | `5000` | Max seats of any role, spectators included. |
+| `joinTimeoutMs` | `number` | `10000` | A socket that has not joined by then is closed (4002). `0` turns it off. |
+| `requireHostKey` | `boolean` | `false` | Host only with the `hostKey` that `createRoom()` returns: nobody is host by joining first, and nobody is promoted when the host leaves. Use it when the host has powers. |
+| `createOnJoin` | `boolean` | `true` | `false`: only rooms made with `createRoom()` exist; any other id is `404 MIU_E_ROOM_NOT_FOUND` (no rooms conjured by random URLs). |
+| `patchBatchMs` | `number` | `0` | Coalesce the patches of messages and timers into one per window (the first at once). For real-time games: 16-50 ms turns M moves × N players frames into ~N per window. |
 | `reconnectMs` | `number` | `30000` | How long a disconnected player keeps their seat. |
 | `presenceBatchMs` | `number` | `50` | Coalesce the patches caused by joins and leaves into one per window. `0` sends them at once. |
 
@@ -2889,6 +2912,14 @@ The `room` handle also has `room.kick(playerId, code?)` and `room.env`.
 
 - `room.kick` removes the seat at once: no reconnect grace, resume token revoked, `onLeave` runs. The socket closes with `code`, default `4009`, which clients treat as terminal.
 - `room.env` is the Durable Object's `env` on Workers (D1 and other bindings) and the process env locally.
+
+Security notes:
+
+- `createRoom()` returns `{ id, code, hostKey }`. Hand the `hostKey` to the creator only; with `requireHostKey: true` it is the only way to be host.
+- `onLeave` gets `kicked: true` for `room.kick()`, so a room can keep its own ban list.
+- A client that closes cleanly (code 1000, `room.close()` in the SDK) leaves at once: no reconnect grace.
+- A socket the runtime had to drop frames for (Bun: past its backpressure limit, a client that stopped reading) is closed with 1013 and resumes with a fresh state, instead of silently missing patches.
+- Handler crashes reach the client as `MIU_E_ROOM_HANDLER_FAILED` without the internal message.
 
 `connect(url, options)` from `@miujs/realtime/client`: `name`, `role` (default `"player"`), `hostKey`, `resume`, `reconnect` (default on: `minDelayMs` 250, `maxDelayMs` 5000, `maxAttempts` Infinity; `false` turns it off), `encoding` (`"json"` or `"msgpack"`, default `"json"`), `WebSocket` (default: the global one).
 
@@ -2902,7 +2933,10 @@ The `room` handle also has `room.kick(playerId, code?)` and `room.env`.
 - `MIU_E_ROOM_ID_INVALID`: the room id is not 1-64 letters, digits, `_` or `-` (400).
 - `MIU_E_ROOM_MESSAGE_INVALID`: a client message failed its schema.
 - `MIU_E_ROOM_STATE_INVALID`: a handler left the state invalid; the change was rolled back.
-- `MIU_E_ROOM_FULL`: the room (or every shard) has `maxPlayers` seated.
+- `MIU_E_ROOM_FULL`: the room (or every shard) has `maxPlayers` seated, or `maxMembers` seats of any role.
+- `MIU_E_ROOM_NOT_FOUND`: `createOnJoin: false` and no such room (404).
+- `MIU_E_ROOM_TOO_MANY_CONNECTIONS`: this IP holds `maxConnectionsPerIp` room sockets (429).
+- `MIU_E_ROOM_JOIN_TIMEOUT`: the socket did not join within `joinTimeoutMs` (closed 4002).
 - `MIU_E_ROOM_RATE_LIMITED`: a client sent frames over the rate limit.
 - `MIU_E_ROOM_CODE_UNKNOWN` / `MIU_E_ROOM_CODE_RATE_LIMITED`: join code not found, or too many lookups.
 - `MIU_E_ROOM_TIMER_NOT_DURABLE`: `after()` or `tick()` was used in a Durable Object; use `schedule()`.
@@ -4104,7 +4138,11 @@ export const dealFlow = fromJson(spec, { actions: [updateRecord] });
 export const plugin = workflows({ workflows: [dealFlow] });
 ```
 
-Step types: `action`, `condition`, `wait`, `wait_for_event`, `approval`. Trigger types: `event`, `cron`, `webhook` (with `secretEnv`, `header`), `manual`.
+Step types: `action`, `condition`, `wait`, `wait_for_event`, `approval`. Trigger types: `event`, `cron`, `webhook` (with `secretEnv`, `header`, `tolerance`), `manual`.
+
+Limits for specs a browser can submit: at most 500 steps, conditions nested 16 deep, expressions of 4096 characters nested 64 deep, durations up to 100 years. The `http` action refuses non-public targets (loopback, private, link-local and metadata addresses in any IPv4/IPv6 spelling, single-label and `.local`/`.internal`/`.localhost` names), checks every redirect hop, times out after 30 s and keeps at most 1 MiB of response. Hostnames are judged by name (no DNS lookup), so also restrict egress at the network level. To reach internal services on purpose, register `createHttpAction({ allowPrivateNetwork: true, timeoutMs, maxResponseBytes, maxRedirects })` in `fromJson(spec, { actions })`.
+
+Webhooks accept bodies up to 1 MiB (`webhook(path, { maxBodySize })`). With `tolerance: 300` (and a secret) the sender signs `${timestamp}.${body}` and sends the unix time in `x-signature-timestamp`; older requests are refused as replays. The workflow routes and MCP tools refuse requests made inside an organization (`MIU_E_WORKFLOWS_ORG_SCOPED`): workflows are app-wide, so only global roles grant their permissions.
 
 ## Routes and MCP
 

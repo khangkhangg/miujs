@@ -1,0 +1,314 @@
+{
+  "at": "2026-10-15T19:14:28.356Z",
+  "contacts": 100000,
+  "db": "memory",
+  "seedMs": 8134,
+  "scenarios": [
+    {
+      "scenario": "list default (-createdAt)",
+      "p50": 0.64,
+      "p99": 2.41,
+      "statements": 3,
+      "items": 50
+    },
+    {
+      "scenario": "list page 20 (cursor)",
+      "p50": 0.74,
+      "p99": 2.79,
+      "statements": 3,
+      "items": 50
+    },
+    {
+      "scenario": "filter stage=lead",
+      "p50": 0.44,
+      "p99": 1.63,
+      "statements": 3,
+      "items": 50
+    },
+    {
+      "scenario": "filter stage + sort name",
+      "p50": 25.98,
+      "p99": 47.6,
+      "statements": 3,
+      "items": 50
+    },
+    {
+      "scenario": "sort -value",
+      "p50": 26.66,
+      "p99": 47.26,
+      "statements": 3,
+      "items": 50
+    },
+    {
+      "scenario": "view upcoming (date filter + sort)",
+      "p50": 26.96,
+      "p99": 48.94,
+      "statements": 3,
+      "items": 50
+    },
+    {
+      "scenario": "filter company=<id>",
+      "p50": 0.16,
+      "p99": 0.29,
+      "statements": 3,
+      "items": 10
+    },
+    {
+      "scenario": "filter owner + stage in",
+      "p50": 0.42,
+      "p99": 1.64,
+      "statements": 3,
+      "items": 50
+    },
+    {
+      "scenario": "filter value range",
+      "p50": 0.43,
+      "p99": 2.11,
+      "statements": 3,
+      "items": 50
+    },
+    {
+      "scenario": "filter tags contains vip",
+      "p50": 0.49,
+      "p99": 1.75,
+      "statements": 3,
+      "items": 50
+    },
+    {
+      "scenario": "search q (FTS) common word",
+      "p50": 17.56,
+      "p99": 27.62,
+      "statements": 3,
+      "items": 50
+    },
+    {
+      "scenario": "search q (FTS) rare",
+      "p50": 0.48,
+      "p99": 0.78,
+      "statements": 3,
+      "items": 0
+    },
+    {
+      "scenario": "filter name contains (LIKE)",
+      "p50": 16.25,
+      "p99": 24.13,
+      "statements": 3,
+      "items": 46
+    },
+    {
+      "scenario": "list + include=company",
+      "p50": 0.7,
+      "p99": 2.55,
+      "statements": 4,
+      "items": 50
+    },
+    {
+      "scenario": "deals view closingSoon",
+      "p50": 14.71,
+      "p99": 34.88,
+      "statements": 3,
+      "items": 50
+    },
+    {
+      "scenario": "deals pipeline stage=proposal sort -amount",
+      "p50": 13.1,
+      "p99": 19.96,
+      "statements": 3,
+      "items": 50
+    },
+    {
+      "scenario": "activities for a contact",
+      "p50": 0.09,
+      "p99": 0.13,
+      "statements": 3,
+      "items": 2
+    },
+    {
+      "scenario": "get contact by id",
+      "p50": 0.04,
+      "p99": 0.07,
+      "statements": 3,
+      "items": null
+    },
+    {
+      "scenario": "timeline of a contact",
+      "p50": 0.16,
+      "p99": 0.44,
+      "statements": 5,
+      "items": 2
+    }
+  ],
+  "plans": {
+    "list default (-createdAt)": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL ORDER BY \"created_at\" DESC, \"id\" DESC LIMIT ?\n      SEARCH contacts USING INDEX contacts_org_created_idx (org_id=?)\n      USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+    ],
+    "list page 20 (cursor)": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND (\"created_at\" <= ? AND (\"created_at\" < ? OR \"id\" < ?)) ORDER BY \"created_at\" DESC, \"id\"\n      SEARCH contacts USING INDEX contacts_org_created_idx (org_id=? AND created_at<?)\n      USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+    ],
+    "filter stage=lead": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND \"stage\" = ? ORDER BY \"created_at\" DESC, \"id\" DESC LIMIT ?\n      SEARCH contacts USING INDEX contacts_org_created_idx (org_id=?)\n      USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+    ],
+    "filter stage + sort name": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND \"stage\" = ? ORDER BY (\"name\" IS NULL) ASC, \"name\" ASC, \"id\" ASC LIMIT ?\n      SEARCH contacts USING INDEX contacts_org_created_idx (org_id=?)\n      USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "sort -value": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL ORDER BY (\"value\" IS NULL) ASC, \"value\" DESC, \"id\" DESC LIMIT ?\n      SEARCH contacts USING INDEX contacts_org_created_idx (org_id=?)\n      USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "view upcoming (date filter + sort)": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND \"next_follow_up\" >= ? ORDER BY (\"next_follow_up\" IS NULL) ASC, \"next_follow_up\" ASC, \"i\n      SEARCH contacts USING INDEX contacts_next_follow_up_idx (org_id=? AND next_follow_up>?)\n      USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "filter company=<id>": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND \"company\" = ? ORDER BY \"created_at\" DESC, \"id\" DESC LIMIT ?\n      SEARCH contacts USING INDEX contacts_company_idx (company=?)\n      USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "filter owner + stage in": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND \"owner\" = ? AND \"stage\" IN (?, ?) ORDER BY \"created_at\" DESC, \"id\" DESC LIMIT ?\n      SEARCH contacts USING INDEX contacts_org_created_idx (org_id=?)\n      USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+    ],
+    "filter value range": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND \"value\" >= ? AND \"value\" < ? ORDER BY \"created_at\" DESC, \"id\" DESC LIMIT ?\n      SEARCH contacts USING INDEX contacts_org_created_idx (org_id=?)\n      USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+    ],
+    "filter tags contains vip": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND EXISTS (SELECT 1 FROM json_each(\"tags\") WHERE json_each.value = ?) ORDER BY \"created_at\n      SEARCH contacts USING INDEX contacts_org_created_idx (org_id=?)\n      SCAN json_each EXISTS VIRTUAL TABLE INDEX 1:\n      USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+    ],
+    "search q (FTS) common word": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND \"id\" IN (SELECT \"id\" FROM \"contacts_fts\" WHERE \"contacts_fts\" MATCH ?) ORDER BY \"create\n      SEARCH contacts USING INDEX sqlite_autoindex_contacts_1 (id=?)\n      LIST SUBQUERY 1\n      SCAN contacts_fts VIRTUAL TABLE INDEX 0:M4\n      USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "search q (FTS) rare": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND \"id\" IN (SELECT \"id\" FROM \"contacts_fts\" WHERE \"contacts_fts\" MATCH ?) ORDER BY \"create\n      SEARCH contacts USING INDEX sqlite_autoindex_contacts_1 (id=?)\n      LIST SUBQUERY 1\n      SCAN contacts_fts VIRTUAL TABLE INDEX 0:M4\n      USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "filter name contains (LIKE)": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND \"name\" LIKE ? ESCAPE '\\' ORDER BY \"created_at\" DESC, \"id\" DESC LIMIT ?\n      SEARCH contacts USING INDEX contacts_org_created_idx (org_id=?)\n      USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+    ],
+    "list + include=company": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL ORDER BY \"created_at\" DESC, \"id\" DESC LIMIT ?\n      SEARCH contacts USING INDEX contacts_org_created_idx (org_id=?)\n      USE TEMP B-TREE FOR LAST TERM OF ORDER BY",
+      "SELECT * FROM \"companies\" WHERE \"id\" IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,\n      SEARCH companies USING INDEX sqlite_autoindex_companies_1 (id=?)"
+    ],
+    "deals view closingSoon": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"deals\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND \"expected_close\" <= ? AND \"stage\" IN (?, ?, ?, ?) ORDER BY (\"expected_close\" IS NULL) ASC,\n      SEARCH deals USING INDEX deals_expected_close_idx (org_id=? AND expected_close<?)\n      USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "deals pipeline stage=proposal sort -amount": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"deals\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND \"stage\" = ? ORDER BY (\"amount\" IS NULL) ASC, \"amount\" DESC, \"id\" DESC LIMIT ?\n      SEARCH deals USING INDEX deals_org_created_idx (org_id=?)\n      USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "activities for a contact": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"activities\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND \"subject_type\" = ? AND \"subject_id\" = ? ORDER BY (\"occurred_at\" IS NULL) ASC, \"occurr\n      SEARCH activities USING INDEX activities_subject_id_idx (org_id=? AND subject_id=?)\n      USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "get contact by id": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"id\" = ? AND \"org_id\" = ? AND \"deleted_at\" IS NULL\n      SEARCH contacts USING INDEX sqlite_autoindex_contacts_1 (id=?)"
+    ],
+    "timeline of a contact": [
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?\n      SEARCH access_memberships USING INDEX sqlite_autoindex_access_memberships_1 (org_id=? AND user_id=?)",
+      "SELECT * FROM \"contacts\" WHERE \"id\" = ? AND \"org_id\" = ? AND \"deleted_at\" IS NULL\n      SEARCH contacts USING INDEX sqlite_autoindex_contacts_1 (id=?)",
+      "SELECT * FROM \"activities\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL AND \"subject_type\" = ? AND \"subject_id\" = ? ORDER BY (\"occurred_at\" IS NULL) ASC, \"occurr\n      SEARCH activities USING INDEX activities_subject_id_idx (org_id=? AND subject_id=?)\n      USE TEMP B-TREE FOR ORDER BY",
+      "SELECT seq, ts, action, resource, resource_id, actor, org_id, ip, user_agent, request_id, changes, metadata, prev_hash, hash, key_id FROM audit_log WHERE resour\n      SEARCH audit_log USING INDEX audit_log_resource (resource=? AND resource_id=?)"
+    ]
+  },
+  "export": {
+    "rows": 100000,
+    "mb": 20.8,
+    "ms": 492,
+    "rowsPerSec": 203073,
+    "heapStartMB": 12.9,
+    "peakHeapDeltaMB": 11.2,
+    "peakRssDeltaMB": 18.8
+  },
+  "import": {
+    "status": 200,
+    "dryStatus": 200,
+    "invalid": 0,
+    "imported": 5000,
+    "dryRunMs": 155,
+    "dryRunStatements": 5004,
+    "importMs": 1277,
+    "importStatements": 36691,
+    "importBreakdown": {
+      "SELECT * FROM \"contacts\" WHERE \"id\" = ? AND \"org_id\" = ? AND \"deleted_": 5001,
+      "INSERT OR IGNORE INTO workflow_events (id, name, data, idempotency_key": 5001,
+      "SELECT * FROM workflow_waiters WHERE event = ? AND kind = 'event' AND ": 5001,
+      "SELECT * FROM \"contacts\" WHERE \"org_id\" = ? AND \"deleted_at\" IS NULL A": 5000,
+      "INSERT INTO workflow_runs (id, workflow, status, input, output, error,": 5000,
+      "INSERT INTO audit_log (seq, ts, action, resource, resource_id, actor, ": 5000,
+      "INSERT INTO \"contacts\" (\"id\", \"org_id\", \"name\", \"email\", \"stage\", \"val": 3333,
+      "SELECT * FROM \"companies\" WHERE \"id\" = ? AND \"org_id\" = ? AND \"deleted": 1668,
+      "INSERT INTO \"contacts\" (\"id\", \"org_id\", \"name\", \"email\", \"company\", \"s": 1667,
+      "SELECT seq, ts, action, resource, resource_id, actor, org_id, ip, user": 2,
+      "SELECT id, email, name, roles, password_hash, created_at, email_verifi": 1,
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?": 1
+    }
+  },
+  "bulk": {
+    "status": 200,
+    "ms": 86,
+    "statements": 3021,
+    "breakdown": {
+      "SELECT * FROM \"contacts\" WHERE \"id\" = ? AND \"org_id\" = ? AND \"deleted_": 501,
+      "INSERT OR IGNORE INTO workflow_events (id, name, data, idempotency_key": 501,
+      "SELECT * FROM workflow_waiters WHERE event = ? AND kind = 'event' AND ": 501,
+      "INSERT INTO audit_log (seq, ts, action, resource, resource_id, actor, ": 501,
+      "SELECT * FROM \"companies\" WHERE \"id\" = ? AND \"org_id\" = ? AND \"deleted": 500,
+      "UPDATE \"contacts\" SET \"company\" = ?, \"stage\" = ?, \"updated_at\" = ?, \"u": 366,
+      "UPDATE \"contacts\" SET \"company\" = ?, \"updated_at\" = ?, \"updated_by\" = ": 134,
+      "SELECT * FROM \"contacts\" WHERE \"id\" IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ": 6,
+      "SELECT seq, ts, action, resource, resource_id, actor, org_id, ip, user": 2,
+      "SELECT id, email, name, roles, password_hash, created_at, email_verifi": 1,
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?": 1,
+      "INSERT OR REPLACE INTO workflow_steps (run_id, name, seq, kind, status": 1
+    }
+  },
+  "auditCost": {
+    "patchP50": 0.81,
+    "patchP99": 3.39,
+    "statements": 21,
+    "auditStatements": 4,
+    "breakdown": {
+      "SELECT * FROM \"contacts\" WHERE \"id\" = ? AND \"org_id\" = ? AND \"deleted_": 3,
+      "INSERT OR IGNORE INTO workflow_events (id, name, data, idempotency_key": 2,
+      "SELECT * FROM workflow_waiters WHERE event = ? AND kind = 'event' AND ": 2,
+      "INSERT INTO audit_log (seq, ts, action, resource, resource_id, actor, ": 2,
+      "SELECT seq, ts, action, resource, resource_id, actor, org_id, ip, user": 2,
+      "SELECT id, email, name, roles, password_hash, created_at, email_verifi": 1,
+      "SELECT role FROM access_memberships WHERE org_id = ? AND user_id = ?": 1,
+      "UPDATE \"contacts\" SET \"stage\" = ?, \"updated_at\" = ?, \"updated_by\" = ? ": 1,
+      "INSERT OR REPLACE INTO workflow_steps (run_id, name, seq, kind, status": 1,
+      "UPDATE workflow_runs SET lease_until = ?, updated_at = ?, status = ?, ": 1,
+      "SELECT * FROM workflow_runs WHERE id = ?": 1,
+      "UPDATE workflow_runs SET status = ?, lease_until = ?, wake_at = ?, upd": 1
+    }
+  },
+  "concurrent": [
+    {
+      "users": 50,
+      "requests": 2697,
+      "rps": 269,
+      "p50": 1.58,
+      "p99": 1084.63,
+      "errors": {}
+    },
+    {
+      "users": 200,
+      "requests": 2845,
+      "rps": 283,
+      "p50": 18.76,
+      "p99": 4060.83,
+      "errors": {}
+    }
+  ],
+  "endHeapMB": 17.7,
+  "endRssMB": 372.5
+}

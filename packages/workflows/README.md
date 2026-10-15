@@ -135,7 +135,11 @@ export const dealFlow = fromJson(spec, { actions: [updateRecord] });
 export const plugin = workflows({ workflows: [dealFlow] });
 ```
 
-Step types: `action`, `condition`, `wait`, `wait_for_event`, `approval`. Trigger types: `event`, `cron`, `webhook` (with `secretEnv`, `header`), `manual`.
+Step types: `action`, `condition`, `wait`, `wait_for_event`, `approval`. Trigger types: `event`, `cron`, `webhook` (with `secretEnv`, `header`, `tolerance`), `manual`.
+
+Limits for specs a browser can submit: at most 500 steps, conditions nested 16 deep, expressions of 4096 characters nested 64 deep, durations up to 100 years. The `http` action refuses non-public targets (loopback, private, link-local and metadata addresses in any IPv4/IPv6 spelling, single-label and `.local`/`.internal`/`.localhost` names), checks every redirect hop, times out after 30 s and keeps at most 1 MiB of response. Hostnames are judged by name (no DNS lookup), so also restrict egress at the network level. To reach internal services on purpose, register `createHttpAction({ allowPrivateNetwork: true, timeoutMs, maxResponseBytes, maxRedirects })` in `fromJson(spec, { actions })`.
+
+Webhooks accept bodies up to 1 MiB (`webhook(path, { maxBodySize })`). With `tolerance: 300` (and a secret) the sender signs `${timestamp}.${body}` and sends the unix time in `x-signature-timestamp`; older requests are refused as replays. The workflow routes and MCP tools refuse requests made inside an organization (`MIU_E_WORKFLOWS_ORG_SCOPED`): workflows are app-wide, so only global roles grant their permissions.
 
 ## Routes and MCP
 

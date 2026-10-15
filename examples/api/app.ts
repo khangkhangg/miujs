@@ -38,6 +38,9 @@ interface NoteRow {
 }
 const toNote = (r: NoteRow) => ({ id: r.id, title: r.title, body: r.body, createdAt: r.created_at });
 const listKey = (userId: string) => `notes:${userId}`;
+/** Notes per list response (and per cache entry): bounded, so one heavy user cannot make either huge. */
+const LIST_DEFAULT = 100;
+const LIST_MAX = 500;
 
 export interface CreateAppOptions {
   /** Signs session cookies. Default: $SESSION_SECRET (a random one is generated in dev). */
@@ -67,15 +70,18 @@ export function createApp(opts: CreateAppOptions = {}) {
   const jobs = queue({ jobs: [noteCreated], ...(targetRuntime() === "workerd" ? {} : { adapter: memoryQueue() }) });
 
   const listNotes = route.get("/notes", {
-    summary: "List my notes, newest first",
+    summary: "List my notes, newest first (limit: default 100, at most 500)",
     auth: "required",
+    query: t.object({ limit: t.optional(t.integer({ min: 1, max: LIST_MAX })) }),
     response: t.object({ notes: t.array(Note) }),
-    handler: async ({ user, db, cache }) => {
-      const notes = await cache.remember(listKey(user.id), 60, async () => {
-        const { results } = await db.prepare("SELECT * FROM notes WHERE user_id = ? ORDER BY created_at DESC, rowid DESC").bind(user.id).all<NoteRow>();
+    handler: async ({ user, query, db, cache }) => {
+      const limit = query.limit ?? LIST_DEFAULT;
+      // One cache entry per user (the newest LIST_MAX); a page is a slice of it.
+      const newest = await cache.remember(listKey(user.id), 60, async () => {
+        const { results } = await db.prepare("SELECT * FROM notes WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?").bind(user.id, LIST_MAX).all<NoteRow>();
         return results.map(toNote);
       });
-      return { notes };
+      return { notes: newest.slice(0, limit) };
     },
   });
 

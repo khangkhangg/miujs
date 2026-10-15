@@ -8,7 +8,7 @@
 //   DB_PATH=crm.db bun examples/crm/app.ts
 //   open http://localhost:3000/admin   (owner@example.com / correct horse battery)
 
-import { miu, processEnv, targetRuntime, type Context } from "miujs";
+import { definePlugin, miu, processEnv, targetRuntime, type Context } from "miujs";
 import { access, defineRoles } from "@miujs/access";
 import { crm } from "@miujs/admin/crm";
 import { adminUI } from "@miujs/admin/ui";
@@ -28,7 +28,7 @@ const CRM = ["companies", "contacts", "deals", "activities", "tasks"];
  */
 export const roles = defineRoles({
   owner: ["*"],
-  operator: ["system:*"],
+  operator: ["system:*", "workflows:*"],
   admin: [...CRM.map((r) => `${r}:*`), "members:read", "members:invite", "workflows:*"],
   sales: [
     "companies:read",
@@ -69,7 +69,20 @@ function orgFrom(ctx: Context): string | undefined {
 }
 
 export function createApp(opts: CreateAppOptions = {}) {
-  const local: Database | null = targetRuntime() === "workerd" ? null : sqlite(opts.dbPath ?? processEnv().DB_PATH ?? ":memory:");
+  const path = opts.dbPath ?? processEnv().DB_PATH ?? ":memory:";
+  const local = targetRuntime() === "workerd" ? null : sqlite(path);
+  // A SQLite file in WAL mode: every audited write otherwise waits for its own fsync (~1.7 ms
+  // instead of ~0.13 ms per audit row). synchronous=NORMAL is durable across app crashes in WAL.
+  // The app owns the local database: app.close() closes it (releasing the file, e.g. on Windows).
+  const tuning = definePlugin({
+    name: "sqlite-local",
+    async setup() {
+      if (local && path !== ":memory:") await local.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
+    },
+    async stop() {
+      await local?.close();
+    },
+  });
   const source: DatabaseSource = local ?? d1("DB");
 
   const kit = crm({ database: source });
@@ -84,6 +97,7 @@ export function createApp(opts: CreateAppOptions = {}) {
       secureHeaders({ csp: true }),
       // admin() only auto-migrates in dev; db() applies migrations everywhere (on Workers: D1, on
       // the first request of each isolate), so the CRM and System-settings tables exist in production.
+      tuning,
       db({ database: source, migrations: kit.migrations }),
       session({ secret: opts.sessionSecret }),
       auth({ users: dbUserStore(source), password: opts.passwordIterations ? { algorithm: "pbkdf2", iterations: opts.passwordIterations } : undefined }),

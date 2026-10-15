@@ -1,0 +1,394 @@
+{
+  "at": "2026-10-15T19:49:13.299Z",
+  "durationS": 604,
+  "users": 50,
+  "coldMs": 258,
+  "requests": 92513,
+  "rps": 153,
+  "errors": 0,
+  "perOp": [
+    {
+      "op": "list stage",
+      "n": 13715,
+      "p50": 6.42,
+      "p99": 225.26,
+      "errors": {}
+    },
+    {
+      "op": "get",
+      "n": 9748,
+      "p50": 5.85,
+      "p99": 227.16,
+      "errors": {}
+    },
+    {
+      "op": "admin UI list page",
+      "n": 5922,
+      "p50": 7.78,
+      "p99": 224.14,
+      "errors": {}
+    },
+    {
+      "op": "timeline",
+      "n": 4841,
+      "p50": 6.37,
+      "p99": 239.55,
+      "errors": {}
+    },
+    {
+      "op": "create",
+      "n": 8814,
+      "p50": 889.87,
+      "p99": 2266.95,
+      "errors": {}
+    },
+    {
+      "op": "search",
+      "n": 7791,
+      "p50": 14.53,
+      "p99": 238.97,
+      "errors": {}
+    },
+    {
+      "op": "deals closingSoon",
+      "n": 3912,
+      "p50": 6.23,
+      "p99": 225.44,
+      "errors": {}
+    },
+    {
+      "op": "admin UI record page",
+      "n": 2889,
+      "p50": 7.61,
+      "p99": 221.03,
+      "errors": {}
+    },
+    {
+      "op": "list sort value",
+      "n": 4797,
+      "p50": 6.17,
+      "p99": 231.2,
+      "errors": {}
+    },
+    {
+      "op": "tasks open",
+      "n": 3933,
+      "p50": 6.46,
+      "p99": 211.59,
+      "errors": {}
+    },
+    {
+      "op": "delete",
+      "n": 4768,
+      "p50": 888.06,
+      "p99": 2374.98,
+      "errors": {}
+    },
+    {
+      "op": "list sort name",
+      "n": 5819,
+      "p50": 6.53,
+      "p99": 216.41,
+      "errors": {}
+    },
+    {
+      "op": "import 50",
+      "n": 1970,
+      "p50": 1106.17,
+      "p99": 2686.49,
+      "errors": {}
+    },
+    {
+      "op": "update",
+      "n": 8658,
+      "p50": 874.77,
+      "p99": 2270.69,
+      "errors": {}
+    },
+    {
+      "op": "export (filtered)",
+      "n": 2017,
+      "p50": 931.02,
+      "p99": 2391.09,
+      "errors": {}
+    },
+    {
+      "op": "bulk update 20",
+      "n": 2919,
+      "p50": 857.78,
+      "p99": 2519.81,
+      "errors": {}
+    }
+  ],
+  "memory": {
+    "warmup": {
+      "t": 105,
+      "rssMB": 123.6,
+      "heapMB": 12.7,
+      "objects": 104955
+    },
+    "lastSample": {
+      "t": 589,
+      "rssMB": 129.4,
+      "heapMB": 15.4,
+      "objects": 154900
+    },
+    "endOfLoad": {
+      "rssMB": 129,
+      "heapMB": 15.1,
+      "objects": 144025
+    },
+    "settled10s": {
+      "rssMB": 132.1,
+      "heapMB": 15.1,
+      "objects": 143204
+    },
+    "heapGrowthPct": 19.2,
+    "heapSlopeKBPerMin": 385,
+    "peakRssMB": 131.9
+  },
+  "shutdown": {
+    "exited": true,
+    "exitMs": 372
+  },
+  "database": {
+    "file": true,
+    "sizeMB": 396.7
+  },
+  "samples": [
+    {
+      "t": 15,
+      "rssMB": 128.3,
+      "heapMB": 12.3,
+      "objects": 92911
+    },
+    {
+      "t": 30,
+      "rssMB": 126.5,
+      "heapMB": 13,
+      "objects": 106770
+    },
+    {
+      "t": 45,
+      "rssMB": 124.2,
+      "heapMB": 12.3,
+      "objects": 94162
+    },
+    {
+      "t": 60,
+      "rssMB": 124.6,
+      "heapMB": 12.5,
+      "objects": 101312
+    },
+    {
+      "t": 75,
+      "rssMB": 124.2,
+      "heapMB": 12.1,
+      "objects": 93411
+    },
+    {
+      "t": 90,
+      "rssMB": 122.5,
+      "heapMB": 12.8,
+      "objects": 104798
+    },
+    {
+      "t": 105,
+      "rssMB": 123.6,
+      "heapMB": 12.7,
+      "objects": 104955
+    },
+    {
+      "t": 120,
+      "rssMB": 123.1,
+      "heapMB": 12.6,
+      "objects": 102092
+    },
+    {
+      "t": 135,
+      "rssMB": 122.4,
+      "heapMB": 13.4,
+      "objects": 117029
+    },
+    {
+      "t": 151,
+      "rssMB": 122.1,
+      "heapMB": 13.2,
+      "objects": 114806
+    },
+    {
+      "t": 166,
+      "rssMB": 124.7,
+      "heapMB": 13.6,
+      "objects": 118957
+    },
+    {
+      "t": 181,
+      "rssMB": 123.5,
+      "heapMB": 14.1,
+      "objects": 128158
+    },
+    {
+      "t": 196,
+      "rssMB": 125.9,
+      "heapMB": 14.4,
+      "objects": 134679
+    },
+    {
+      "t": 211,
+      "rssMB": 124.2,
+      "heapMB": 14.1,
+      "objects": 127705
+    },
+    {
+      "t": 226,
+      "rssMB": 128.9,
+      "heapMB": 13.5,
+      "objects": 120404
+    },
+    {
+      "t": 241,
+      "rssMB": 125.4,
+      "heapMB": 13.5,
+      "objects": 119808
+    },
+    {
+      "t": 256,
+      "rssMB": 123.2,
+      "heapMB": 14,
+      "objects": 132456
+    },
+    {
+      "t": 271,
+      "rssMB": 124.1,
+      "heapMB": 14.3,
+      "objects": 135300
+    },
+    {
+      "t": 286,
+      "rssMB": 124.9,
+      "heapMB": 13.7,
+      "objects": 124084
+    },
+    {
+      "t": 301,
+      "rssMB": 125.1,
+      "heapMB": 14.2,
+      "objects": 132255
+    },
+    {
+      "t": 316,
+      "rssMB": 126.3,
+      "heapMB": 14.7,
+      "objects": 143677
+    },
+    {
+      "t": 332,
+      "rssMB": 128.1,
+      "heapMB": 14.3,
+      "objects": 132672
+    },
+    {
+      "t": 347,
+      "rssMB": 127.7,
+      "heapMB": 14.6,
+      "objects": 140320
+    },
+    {
+      "t": 362,
+      "rssMB": 123.4,
+      "heapMB": 14.6,
+      "objects": 139679
+    },
+    {
+      "t": 377,
+      "rssMB": 128.5,
+      "heapMB": 14.9,
+      "objects": 143985
+    },
+    {
+      "t": 392,
+      "rssMB": 124.5,
+      "heapMB": 14.8,
+      "objects": 144941
+    },
+    {
+      "t": 407,
+      "rssMB": 126.6,
+      "heapMB": 15.6,
+      "objects": 158440
+    },
+    {
+      "t": 422,
+      "rssMB": 123.5,
+      "heapMB": 14.7,
+      "objects": 141434
+    },
+    {
+      "t": 438,
+      "rssMB": 126.4,
+      "heapMB": 15.6,
+      "objects": 157895
+    },
+    {
+      "t": 453,
+      "rssMB": 131.9,
+      "heapMB": 15.3,
+      "objects": 151025
+    },
+    {
+      "t": 468,
+      "rssMB": 127.4,
+      "heapMB": 15.4,
+      "objects": 155595
+    },
+    {
+      "t": 483,
+      "rssMB": 127.2,
+      "heapMB": 15.4,
+      "objects": 154568
+    },
+    {
+      "t": 498,
+      "rssMB": 130.4,
+      "heapMB": 15.8,
+      "objects": 161311
+    },
+    {
+      "t": 513,
+      "rssMB": 127.4,
+      "heapMB": 15.6,
+      "objects": 158731
+    },
+    {
+      "t": 528,
+      "rssMB": 126.5,
+      "heapMB": 15.4,
+      "objects": 154459
+    },
+    {
+      "t": 543,
+      "rssMB": 127.8,
+      "heapMB": 16.4,
+      "objects": 173971
+    },
+    {
+      "t": 559,
+      "rssMB": 127.3,
+      "heapMB": 15.7,
+      "objects": 162536
+    },
+    {
+      "t": 574,
+      "rssMB": 130.7,
+      "heapMB": 15.9,
+      "objects": 163342
+    },
+    {
+      "t": 589,
+      "rssMB": 129.4,
+      "heapMB": 15.4,
+      "objects": 154900
+    }
+  ]
+}

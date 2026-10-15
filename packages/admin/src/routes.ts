@@ -144,6 +144,12 @@ function resolveList(r: Resource, ctx: Context, q: ListQuery) {
   return { filter, sort: q.sort ?? view?.sort, fields, q: q.q };
 }
 
+/** The row-level read check for embedded relations (`include`): a hidden record becomes null. */
+function includeCheck(ctx: Context): ((target: Resource, rec: AdminRecord) => boolean) | undefined {
+  const can = canOf(ctx);
+  return can ? (target, rec) => !target.permissions || can(target.permissions.read, rec) : undefined;
+}
+
 /** Drops records a row-level policy hides from this user. */
 function visible(r: Resource, ctx: Context, items: AdminRecord[]): AdminRecord[] {
   const can = canOf(ctx);
@@ -202,7 +208,7 @@ export function resourceRoutes(r: Resource, env: RouteEnv): RouteDef[] {
         const repo = await repoFor(c);
         const page = await repo.list({ filter: spec.filter, sort: spec.sort, cursor: q.cursor, limit: q.limit, q: spec.q });
         const items = visible(r, c, page.items);
-        if (include.length) await repo.include(items, include);
+        if (include.length) await repo.include(items, include, includeCheck(c));
         return { items: items.map((rec) => pick(rec, spec.fields)), nextCursor: page.nextCursor };
       },
     }),
@@ -226,7 +232,7 @@ export function resourceRoutes(r: Resource, env: RouteEnv): RouteDef[] {
         const rec = await repo.get(ctx.params.id);
         if (!rec) throw adminErrors.notFound(r.name, ctx.params.id);
         if (perm) authorizeOf(c)?.(perm.read, rec);
-        if (include.length) await repo.include([rec], include);
+        if (include.length) await repo.include([rec], include, includeCheck(c));
         return pick(rec, fields);
       },
     }),

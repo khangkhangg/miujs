@@ -75,7 +75,7 @@ describe("adminTables", () => {
 describe("adminMigrations", () => {
   test("apply to SQLite: tables, FTS and triggers; targets first", async () => {
     const ms = adminMigrations([contacts, companies, notes]);
-    expect(ms.map((m) => m.id)).toEqual(["admin_001_companies", "admin_001_contacts", "admin_001_notes", "admin_system_001_settings"]);
+    expect(ms.map((m) => m.id)).toEqual(["admin_001_companies", "admin_002_companies_sort_indexes", "admin_001_contacts", "admin_002_contacts_sort_indexes", "admin_001_notes", "admin_system_001_settings"]);
     const db = sqlite();
     await migrate(db, ms);
     const schema = await introspect(db);

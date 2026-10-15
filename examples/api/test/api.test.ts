@@ -89,3 +89,14 @@ test("the note-created job keeps only a bounded list of recent titles", async ()
   expect(jobs.ranFor.length).toBe(100);
   expect(jobs.ranFor.at(-1)).toBe("n149");
 });
+
+test("the list is bounded: newest 100 by default, ?limit up to 500 (no unbounded response or cache entry)", async () => {
+  const { call } = setup();
+  await call("/auth/register", { method: "POST", body: { email: "big@example.com", password: "correct horse" } });
+  for (let i = 0; i < 120; i++) await call("/notes", { method: "POST", body: { title: `n${i}` } });
+  const page = await call("/notes");
+  expect(page.body.notes.length).toBe(100);
+  expect(page.body.notes[0].title).toBe("n119");
+  expect((await call("/notes?limit=120")).body.notes.length).toBe(120);
+  expect((await call("/notes?limit=501")).status).toBe(400);
+});

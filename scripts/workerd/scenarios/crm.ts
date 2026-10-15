@@ -110,4 +110,18 @@ export async function run(dev: Dev, _ctx: SuiteContext) {
       1000,
     );
   });
+
+  await S("D1: sort indexes are migrated and serve sorted pages; id lookups use the primary key", async () => {
+    const idx = (await d1(dev, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE '%_sort_idx' ORDER BY name")).map((r) => r[0]);
+    check(idx.includes("contacts_name_sort_idx") && idx.includes("deals_amount_sort_idx"), `sort indexes: ${idx.join(", ")}`);
+    for (const sort of ["name", "-name"]) {
+      const r = await owner.get(`/api/contacts?sort=${sort}&limit=5`, { headers: { "x-org-id": orgId } });
+      check(r.status === 200, `sort=${sort} ${r.status}`);
+    }
+    const plan = (await d1(dev, `EXPLAIN QUERY PLAN SELECT * FROM "contacts" WHERE "org_id" = ? AND "deleted_at" IS NULL AND "name" IS NOT NULL ORDER BY "name" ASC, "id" ASC LIMIT 6`, [orgId])).map((r) => String(r[r.length - 1]));
+    check(plan.some((p) => p.includes("contacts_name_sort_idx")) && !plan.some((p) => p.includes("TEMP B-TREE")), `plan: ${plan.join(" | ")}`);
+    const byId = (await d1(dev, `EXPLAIN QUERY PLAN SELECT * FROM "contacts" WHERE "id" IN (?, ?) AND +"org_id" = ? AND "deleted_at" IS NULL`, ["a", "b", orgId])).map((r) => String(r[r.length - 1]));
+    check(byId.some((p) => /autoindex|PRIMARY/i.test(p)), `id plan: ${byId.join(" | ")}`);
+    return idx.join(", ");
+  });
 }

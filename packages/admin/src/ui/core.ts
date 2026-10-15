@@ -22,6 +22,10 @@ export interface WorkflowsLike {
   unregister(name: string): boolean;
   has(name: string): boolean;
   onUnknown(fn: (what: unknown, env: Record<string, unknown>) => Promise<void> | void): void;
+  listRuns(filter: { workflow?: string; status?: any; before?: number; limit?: number }, env?: any): Promise<any[]>;
+  getRun(id: string, env?: any): Promise<any>;
+  cancel(id: string, env?: any): Promise<unknown>;
+  retry(id: string, env?: any): Promise<unknown>;
 }
 
 export interface Core {

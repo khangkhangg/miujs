@@ -277,9 +277,9 @@ export function workflows(opts: WorkflowsOptions) {
     mcpTools: () => workflowMcpTools({ engine, registry, permissions }),
     /** Runs, manual starts, events and disabling workflows, for @miujs/admin. */
     manage: () => workflowsManage({ engine, registry, store, adapter, disabled }),
-    /** Stop the queue's timers (schedules and delays). */
-    stop() {
-      q.stop();
+    /** Stop the queue (timers, new runs); resolves when steps already running finished. */
+    async stop() {
+      await q.stop();
     },
     /** Memory queue only: run everything due, advancing a test clock through delays. */
     async drain() {

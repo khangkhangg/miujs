@@ -3,7 +3,7 @@
 import type { Context, HeadersLike } from "miujs";
 import { html, render, type HtmlString } from "@miujs/web";
 import type { ResourceMeta } from "../meta.ts";
-import { orgOf, PAGE_HEADERS } from "./http.ts";
+import { orgOf, pageHeaders } from "./http.ts";
 
 export interface Shell {
   path: string;
@@ -58,7 +58,7 @@ export function page(shell: Shell, ctx: Context, p: PageInput): Response {
 <main id="main" tabindex="-1">${p.body}</main></div>
 <div class="sr-only" aria-live="polite" data-live></div>
 </body></html>`;
-  const headers = new Headers(PAGE_HEADERS);
+  const headers = new Headers(pageHeaders(ctx));
   if (p.headers) new Headers(p.headers).forEach((v, k) => headers.append(k, v));
   return render(doc, { status: p.status ?? 200, headers });
 }
@@ -66,7 +66,7 @@ export function page(shell: Shell, ctx: Context, p: PageInput): Response {
 /** A minimal page for signed-out screens (no nav). */
 export function barePage(shell: Shell, ctx: Context, title: string, body: HtmlString, status = 200): Response {
   const doc = html`<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · ${shell.title}</title><link rel="stylesheet" href="${shell.path}/assets/${shell.css}"></head><body><main id="main" class="login">${body}</main></body></html>`;
-  return render(doc, { status, headers: PAGE_HEADERS });
+  return render(doc, { status, headers: pageHeaders(ctx) });
 }
 
 export function alert(messages: string[] | string, kind: "error" | "ok" = "error"): HtmlString {

@@ -13,6 +13,8 @@ export type CryptoKeyLike = Awaited<ReturnType<typeof crypto.subtle.importKey>>;
 export interface ResolvedKey {
   id: string;
   key: CryptoKeyLike;
+  /** The raw secret, for a synchronous HMAC where the runtime has one (Bun). Not enumerable. */
+  readonly secret?: string;
 }
 
 export const MIN_KEY_LENGTH = 32;
@@ -64,7 +66,9 @@ async function resolveOne(id: string | undefined, secret: string): Promise<Resol
   const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   // A derived id is an HMAC of a constant: stable, short, and reveals nothing about the secret.
   const derived = id ?? `k_${hex(await crypto.subtle.sign("HMAC", key, enc.encode("miujs-audit-key-id"))).slice(0, 16)}`;
-  return { id: derived, key };
+  const out: ResolvedKey = { id: derived, key };
+  Object.defineProperty(out, "secret", { value: secret, enumerable: false });
+  return out;
 }
 
 /** Imports keys (cached per id+secret). The first entry signs. */

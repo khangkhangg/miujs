@@ -200,9 +200,9 @@ export function queue(opts: QueueOptions = {}) {
     jobs(): JobDef<any>[] {
       return [...jobs.values()];
     },
-    /** Stop schedule and delay timers. */
-    stop() {
-      adapter.stop?.();
+    /** Stop schedule and delay timers and starting jobs; resolves when running jobs finished. */
+    async stop() {
+      await adapter.stop?.();
     },
     /** Status, job lists, actions and settings for @miujs/admin. */
     manage() {

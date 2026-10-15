@@ -46,12 +46,21 @@ export default miu({
 | --- | --- |
 | `resource()` / `field.*` | Fields, validation, relations, views, actions, hooks, tenancy, soft delete |
 | `admin({ resources })` | REST routes under `basePath` (default `/api`): list/filter/sort/search/cursor, CRUD, bulk, CSV import/export, actions; `GET /api/_admin/schema` |
-| `adminMigrations(resources)` | One migration per resource (`admin_001_<table>`), plus `admin_system_001_settings` |
+| `adminMigrations(resources)` | One migration per resource (`admin_001_<table>`), `admin_002_<table>_sort_indexes` for its sort indexes, plus `admin_system_001_settings` |
 | `crm()` (`@miujs/admin/crm`) | Ready-made companies, contacts, deals, activities and tasks |
 | `adminUI()` (`@miujs/admin/ui`) | Screens under `/admin`: records, kanban, calendar, import, workflows, **System** |
 | `app.service("admin").data(scope)` | Server-side CRUD for jobs and scripts |
 
 Every UI read and write is a sub-request to the API, so permissions, tenancy and validation apply whatever the page shows.
+
+### Performance and security notes
+
+- **Sort indexes.** The title field, money fields, the default sort and every view's sort get an index on `(org_id, field, id)` (`<table>_<column>_sort_idx`). Sorted pages, including nullable fields (values first, NULLs last), are index range reads: at 100k contacts a sorted page takes ~0.4 ms instead of ~26 ms. Mark other fields you sort on often with `field.x({ index: true })`.
+- **Batching.** Bulk updates check each relation target once and read written records back in chunks; CSV import checks uniqueness in batches of 50 values.
+- **Row-level policies** (`@miujs/access` `policy()`) also apply to records embedded with `include` (a hidden one is `null`) and to activities on CRM timelines.
+- **UI workflows belong to an organization.** A workflow built with an active organization is visible, editable and publishable only in that organization; its event trigger and `wait_for_event` steps only see that organization's events (`data.orgId`), and actions whose params have an `orgId` (such as `crm.create_task`) refuse any other organization. Workflows saved without an organization are app-wide. Runs are shown only for workflows the organization owns (code-defined workflows: app-wide users only).
+- **Headers.** Admin pages send their own `Content-Security-Policy` (scripts only from the UI's assets, `frame-ancestors 'none'`) and `X-Frame-Options: DENY` when the app has no `secureHeaders({ csp })`; with it, the app's policy applies.
+- **Rate limits.** Export, import and bulk routes are the expensive ones; limit them per user with `@miujs/ratelimit` (e.g. `{ match: { route: ["contacts_export", "contacts_import", "contacts_bulk"] }, limit: 30, window: "1m", by: "user" }`).
 
 ## The System area
 

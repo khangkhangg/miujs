@@ -149,9 +149,26 @@ function bodyOf(r: AuditRecord | Body): Body {
 }
 
 /** Plain (unkeyed) row hash, or the HMAC of a keyed row when `key` is given. */
+type SyncHasher = new (algorithm: string, hmacKey?: string) => SyncHash;
+interface SyncHash {
+  update(data: string): SyncHash;
+  digest(encoding: "hex"): string;
+}
+/**
+ * Bun's synchronous SHA-256 / HMAC. WebCrypto resolves on a later event-loop turn; rows of a batch
+ * are hashed one after another, so on a busy server every audited write waited many turns.
+ */
+const syncHasher = (globalThis as { Bun?: { CryptoHasher?: SyncHasher } }).Bun?.CryptoHasher;
+
 export function hashRow(prevHash: string, row: AuditRecord | Body, key?: ResolvedKey): Promise<string> {
-  if (key) return hmacHex(key.key, `miujs-audit-v2\n${key.id}\n${prevHash}${canonicalJson(bodyOf(row))}`);
-  return sha256Hex(prevHash + canonicalJson(bodyOf(row)));
+  if (key) {
+    const data = `miujs-audit-v2\n${key.id}\n${prevHash}${canonicalJson(bodyOf(row))}`;
+    if (syncHasher && typeof key.secret === "string") return Promise.resolve(new syncHasher("sha256", key.secret).update(data).digest("hex"));
+    return hmacHex(key.key, data);
+  }
+  const data = prevHash + canonicalJson(bodyOf(row));
+  if (syncHasher) return Promise.resolve(new syncHasher("sha256").update(data).digest("hex"));
+  return sha256Hex(data);
 }
 
 /** Stores remember their configured key here (not enumerable, never serialized). */
@@ -251,22 +268,6 @@ const appendConflict = () =>
 
 function chained(backend: Backend, storeKey?: AuditKeys): AuditStore {
   if (storeKey !== undefined) checkKeys(storeKey);
-  let tail: Promise<unknown> = Promise.resolve();
-  const appendOnce = async (input: AuditInput, env: Env, opts: AppendOptions): Promise<AuditRecord> => {
-    const base = normalizeInput(input);
-    const keys = opts.key ?? storeKey ?? envKeys(env);
-    const signer = keys ? (await resolveKeys(keys))[0] : undefined;
-    for (let attempt = 0; attempt < 25; attempt++) {
-      const head = await backend.head(env);
-      if (head?.keyId && !signer) throw keyMissing();
-      const body: Body = { seq: (head?.seq ?? 0) + 1, ...base };
-      const prevHash = head?.hash ?? GENESIS_HASH;
-      const rec: AuditRecord = { ...body, prevHash, hash: await hashRow(prevHash, body, signer) };
-      if (signer) rec.keyId = signer.id;
-      if (await backend.insert(rec, env)) return structuredClone(rec);
-    }
-    throw appendConflict();
-  };
   const appendManyOnce = async (inputs: AuditInput[], env: Env, opts: AppendOptions): Promise<AuditRecord[]> => {
     const bases = inputs.map(normalizeInput);
     if (bases.length === 0) return [];
@@ -300,18 +301,82 @@ function chained(backend: Backend, storeKey?: AuditKeys): AuditStore {
     }
     throw appendConflict();
   };
+
+  // Group commit. Appends in this isolate are serialized (across isolates the unique seq makes
+  // losers retry), and while one is written the next ones wait; when it is done, everything that
+  // queued up meanwhile (same env and key) is written together: one head read, one transaction.
+  // One round trip per append capped audited writes under load and let the queue grow.
+  interface Pending {
+    inputs: AuditInput[];
+    env: Env;
+    opts: AppendOptions;
+    resolve(r: AuditRecord[]): void;
+    reject(e: unknown): void;
+  }
+  const MAX_GROUP_ROWS = 500;
+  let pending: Pending[] = [];
+  let flushing = false;
+  const enqueue = (inputs: AuditInput[], env: Env, opts: AppendOptions): Promise<AuditRecord[]> => {
+    // Invalid input fails only its own caller, before it can join a group.
+    try {
+      inputs.forEach(normalizeInput);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    if (inputs.length === 0) return Promise.resolve([]);
+    return new Promise<AuditRecord[]>((resolve, reject) => {
+      pending.push({ inputs, env, opts, resolve, reject });
+      if (!flushing) void flush();
+    });
+  };
+  const flush = async () => {
+    flushing = true;
+    try {
+      while (pending.length) {
+        const first = pending[0];
+        let n = 1;
+        let rows = first.inputs.length;
+        while (n < pending.length && pending[n].env === first.env && pending[n].opts.key === first.opts.key && rows + pending[n].inputs.length <= MAX_GROUP_ROWS) rows += pending[n++].inputs.length;
+        const group = pending.slice(0, n);
+        pending = pending.slice(n);
+        try {
+          const recs = await appendManyOnce(
+            group.flatMap((g) => g.inputs),
+            first.env,
+            first.opts,
+          );
+          let at = 0;
+          for (const g of group) {
+            g.resolve(recs.slice(at, at + g.inputs.length));
+            at += g.inputs.length;
+          }
+        } catch (err) {
+          if (group.length === 1) {
+            group[0].reject(err);
+            continue;
+          }
+          // Isolate the failure: each caller on its own.
+          for (const g of group) {
+            try {
+              g.resolve(await appendManyOnce(g.inputs, g.env, g.opts));
+            } catch (e) {
+              g.reject(e);
+            }
+          }
+        }
+      }
+    } finally {
+      flushing = false;
+    }
+  };
+
   const store: AuditStore = {
     kind: backend.kind,
     appendMany(inputs, env = {}, opts = {}) {
-      const p = tail.then(() => appendManyOnce(inputs, env, opts));
-      tail = p.catch(() => {});
-      return p;
+      return enqueue(inputs, env, opts);
     },
     append(input, env = {}, opts = {}) {
-      // Serialize appends in this isolate; across isolates the unique seq makes losers retry.
-      const p = tail.then(() => appendOnce(input, env, opts));
-      tail = p.catch(() => {});
-      return p;
+      return enqueue([input], env, opts).then((r) => r[0]);
     },
     async query(q, env = {}) {
       const nq = normalizeQuery(q);

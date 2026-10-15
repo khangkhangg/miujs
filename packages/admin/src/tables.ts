@@ -2,7 +2,7 @@
 
 import { quoteIdent, tableSql, type ColumnDescription, type IndexDescription, type Migration, type TableDescription } from "@miujs/db";
 import { adminErrors } from "./errors.ts";
-import { sqlType } from "./fields.ts";
+import { isSortable, sqlType } from "./fields.ts";
 import type { Resource } from "./resource.ts";
 import { settingsTable, systemMigration } from "./system-settings.ts";
 
@@ -76,6 +76,7 @@ export function tableDescription(r: Resource, byName: Map<string, Resource>): Ta
       indexes.push({ name: `${r.table}_${f.column}_idx`, columns: [...scope, f.column], unique: false, origin: "c" });
     }
   }
+  indexes.push(...sortIndexes(r));
   const foreignKeys = Object.values(r.fields)
     .filter((f) => f.type === "relation")
     .map((f) => ({
@@ -86,6 +87,31 @@ export function tableDescription(r: Resource, byName: Map<string, Resource>): Ta
       onDelete: (f.options.onDelete ?? "no action").toUpperCase(),
     }));
   return { name: r.table, columns, primaryKey: ["id"], indexes, foreignKeys };
+}
+
+/**
+ * Fields lists are commonly sorted by: the title, money amounts, the default sort and the sort of
+ * every view. Each gets an index on (org, field, id), so a sorted page is a range read instead of
+ * a sort of all of the organization's rows. Fields already indexed (unique, index) are skipped.
+ */
+export function sortKeys(r: Resource): string[] {
+  const keys = new Set<string>();
+  const add = (k: string | undefined) => {
+    if (!k) return;
+    const name = k.startsWith("-") ? k.slice(1) : k;
+    const f = Object.prototype.hasOwnProperty.call(r.fields, name) ? r.fields[name] : undefined;
+    if (f && isSortable(f) && !f.options.unique && !f.options.index && f.type !== "relation") keys.add(name);
+  };
+  add(r.titleField);
+  for (const f of Object.values(r.fields)) if (f.type === "money") add(f.name);
+  add(r.defaultSort);
+  for (const v of Object.values(r.views)) add(v.sort);
+  return [...keys];
+}
+
+function sortIndexes(r: Resource): IndexDescription[] {
+  const scope = r.tenant === "org" ? ["org_id"] : [];
+  return sortKeys(r).map((k) => ({ name: `${r.table}_${r.fields[k].column}_sort_idx`, columns: [...scope, r.fields[k].column, "id"], unique: false, origin: "c" }));
 }
 
 /** Table descriptions for every resource plus `admin_system_settings` (feed them to `diffSchema` from `@miujs/db/drizzle`). */
@@ -128,9 +154,18 @@ export function ftsSql(r: Resource): string[] {
  */
 export function adminMigrations(resources: readonly Resource[]): Migration[] {
   const byName = checkResources(resources);
-  const own = orderByDependencies(resources).map((r) => {
+  const own = orderByDependencies(resources).flatMap((r) => {
     const statements = [...tableSql(tableDescription(r, byName)), ...(r.search ? ftsSql(r) : [])];
-    return { id: `admin_001_${r.table}`, sql: statements.map((s) => `${s};`).join("\n") };
+    const out: Migration[] = [{ id: `admin_001_${r.table}`, sql: statements.map((s) => `${s};`).join("\n") }];
+    // Databases created before the sort indexes existed get them here (a no-op on new ones).
+    const sorts = sortIndexes(r);
+    if (sorts.length) {
+      out.push({
+        id: `admin_002_${r.table}_sort_indexes`,
+        sql: sorts.map((i) => `CREATE INDEX IF NOT EXISTS ${quoteIdent(i.name)} ON ${quoteIdent(r.table)} (${i.columns.map(quoteIdent).join(", ")});`).join("\n"),
+      });
+    }
+    return out;
   });
   return [...own, systemMigration];
 }

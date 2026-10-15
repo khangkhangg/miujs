@@ -50,6 +50,16 @@ describe("localStore", () => {
     expect(await code(localStore(fresh()).put(key, toStream("x")))).toBe("MIU_E_FILES_KEY_INVALID");
   });
 
+  test.each(["CONIN$", "a/conout$.txt", "a/COM¹", "LPT³.log", "a/con .txt"])("rejects the rest of the Windows device names: %p", async (key) => {
+    expect(await code(localStore(fresh()).put(key, toStream("x")))).toBe("MIU_E_FILES_KEY_INVALID");
+  });
+
+  test("rejects keys that are not NFC, so two spellings of one name cannot alias one file (macOS)", async () => {
+    const nfd = "a/café.txt";
+    expect(await code(localStore(fresh()).put(nfd, toStream("x")))).toBe("MIU_E_FILES_KEY_INVALID");
+    expect(await code(localStore(fresh()).put(nfd.normalize("NFC"), toStream("x")))).toBe("none");
+  });
+
   test("writes are atomic: a failed upload leaves no partial or temp file", async () => {
     const dir = fresh();
     const st = localStore(dir);
