@@ -6,3 +6,5 @@ export { sqliteStore } from "./batteries/store/sqlite.ts";
 export type { SqliteStoreOptions } from "./batteries/store/sqlite.ts";
 export { sqliteQueueDriver } from "./batteries/queue/sqlite.ts";
 export type { SqliteQueueOptions } from "./batteries/queue/sqlite.ts";
+export { sqliteRepository } from "./batteries/data/sqlite.ts";
+export type { SqliteRepositoryOptions } from "./batteries/data/sqlite.ts";

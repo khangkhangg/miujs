@@ -17,4 +17,5 @@ export { r2Files, uploadHandler, type R2Files, type R2PutFileOptions, type Serve
 export { defineWorkflow, type MiuWorkflow } from "./workflows.ts";
 export { hyperdriveUrl } from "./hyperdrive.ts";
 export { toWorker, workerEnv, type ToWorkerOptions, type WorkerEnv, type WorkerHandler } from "./worker.ts";
+export { d1Repository, type D1RepositoryOptions } from "./d1-repository.ts";
 export { r2BlobStore } from "./r2-blob.ts";
