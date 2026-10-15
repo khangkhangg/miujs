@@ -133,7 +133,8 @@ function compile(rule: RateLimitRule, i: number, defaultBy: By, store: RateLimit
     by,
     windowSpec: rule.window,
     matches(ctx) {
-      if (methods && !methods.includes(ctx.method)) return false;
+      // HEAD runs the GET handler, so a GET rule counts it too.
+      if (methods && !methods.includes(ctx.method) && !(ctx.method === "HEAD" && methods.includes("GET"))) return false;
       if (routes && !(ctx.route && routes.includes(ctx.route.name))) return false;
       if (tags && !(ctx.route && ctx.route.tags.some((t) => tags.includes(t)))) return false;
       if (pathFns && !pathFns.some((f) => f(ctx.path))) return false;
@@ -218,6 +219,16 @@ export function rateLimit(opts: RateLimitOptions) {
     return ctx.ip;
   }
 
+  /** Buckets a request counts against: one, or none (exempt). */
+  async function identities(ctx: Context, by: By): Promise<string[] | null> {
+    const id = await identity(ctx, by);
+    if (id === null) return null;
+    // A key nobody verified (no signed-in user) could be made up per request to get a fresh
+    // bucket each time, so it also counts against the client's IP.
+    if (by === "apiKey" && id.startsWith("key:") && !ctx.user) return [id, `ip:${clientIp(ctx) ?? "unknown"}`];
+    return [id];
+  }
+
   async function identity(ctx: Context, by: By): Promise<string | null> {
     const ip = () => `ip:${clientIp(ctx) ?? "unknown"}`;
     if (typeof by === "function") {
@@ -269,11 +280,16 @@ export function rateLimit(opts: RateLimitOptions) {
       let denied: Hit | null = null;
       for (const rule of rules) {
         if (!rule.matches(ctx)) continue;
-        const id = await identity(ctx, rule.by);
-        if (id === null) continue;
-        let d: Decision;
+        const ids = await identities(ctx, rule.by);
+        if (ids === null) continue;
+        let d!: Decision;
         try {
-          d = await store.consume(`${rule.name}:${id}`, rule.policy, t, ctx.env);
+          for (const id of ids) {
+            const one = await store.consume(`${rule.name}:${id}`, rule.policy, t, ctx.env);
+            // The tightest bucket decides; a denial ends the rule.
+            if (d === undefined || !one.allowed || (d.allowed && (one.remaining ?? Infinity) < (d.remaining ?? Infinity))) d = one;
+            if (!one.allowed) break;
+          }
         } catch (err) {
           counters.storeErrors++;
           ctx.log.error("rate limit store failed", { err, store: store.kind, rule: rule.name });
@@ -310,7 +326,8 @@ export function rateLimit(opts: RateLimitOptions) {
       if (!hit || mode === false) return;
       const values = headerValues(hit);
       try {
-        for (const [k, v] of Object.entries(values)) res.headers.set(k, v);
+        // for-in, not Object.entries: no [k, v] arrays on every response.
+        for (const k in values) res.headers.set(k, values[k]);
         return;
       } catch {
         // Immutable headers (e.g. a proxied fetch Response): copy.

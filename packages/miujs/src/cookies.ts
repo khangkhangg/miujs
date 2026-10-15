@@ -25,14 +25,19 @@ export function parseCookies(header: string | null): Record<string, string> {
     const eq = part.indexOf("=");
     if (eq === -1) continue;
     const name = part.slice(0, eq).trim();
-    if (!name || name in out) continue;
+    // Own keys only: `in` would see inherited names (`constructor`, `toString`) as present.
+    if (!name || Object.hasOwn(out, name)) continue;
     let value = part.slice(eq + 1).trim();
     if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
-    try {
-      out[name] = decodeURIComponent(value);
-    } catch {
-      out[name] = value;
+    // Most cookie values (signed sessions, ids) have no escapes: skip the decode call.
+    if (value.indexOf("%") !== -1) {
+      try {
+        value = decodeURIComponent(value);
+      } catch {}
     }
+    // defineProperty keeps a `__proto__` cookie as plain data instead of a prototype write.
+    if (name === "__proto__") Object.defineProperty(out, name, { value, enumerable: true, writable: true, configurable: true });
+    else out[name] = value;
   }
   return out;
 }

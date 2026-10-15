@@ -213,11 +213,29 @@ describe("identity (by)", () => {
     const inner = memoryStore();
     const spy: RateLimitStore = { ...inner, kind: "spy", consume: (k, p, n, e) => (seen.push(k), inner.consume(k, p, n, e)) };
     const { app } = makeApp({ store: spy, rules: [{ limit: 1, window: "1m", by: "apiKey" }] });
-    expect((await send(app, "GET", "/api/items", { ip: "1.1.1.1", headers: { "x-api-key": "sk_live_SECRET1" } })).status).toBe(200);
-    expect((await send(app, "GET", "/api/items", { ip: "1.1.1.1", headers: { authorization: "Bearer sk_live_SECRET2" } })).status).toBe(200);
-    expect((await send(app, "GET", "/api/items", { ip: "2.2.2.2", headers: { "x-api-key": "sk_live_SECRET1" } })).status).toBe(429);
+    // Keys auth accepted (a signed-in user): one bucket per key, whatever the IP.
+    const verified = { "x-user": "alice" };
+    expect((await send(app, "GET", "/api/items", { ip: "1.1.1.1", headers: { ...verified, "x-api-key": "sk_live_SECRET1" } })).status).toBe(200);
+    expect((await send(app, "GET", "/api/items", { ip: "1.1.1.1", headers: { ...verified, authorization: "Bearer sk_live_SECRET2" } })).status).toBe(200);
+    expect((await send(app, "GET", "/api/items", { ip: "2.2.2.2", headers: { ...verified, "x-api-key": "sk_live_SECRET1" } })).status).toBe(429);
     expect((await send(app, "GET", "/api/items", { ip: "1.1.1.1" })).status).toBe(200);
     expect(seen.join(" ")).not.toContain("SECRET");
+  });
+
+  test("apiKey: made-up keys cannot escape the limit (unverified keys also count per IP)", async () => {
+    const { app } = makeApp({ rules: [{ limit: 2, window: "1m", by: "apiKey" }] });
+    const got: number[] = [];
+    for (let i = 0; i < 6; i++) got.push((await send(app, "GET", "/api/items", { ip: "6.6.6.6", headers: { "x-api-key": `junk${i}` } })).status);
+    expect(got).toEqual([200, 200, 429, 429, 429, 429]);
+    // Another client is unaffected.
+    expect((await send(app, "GET", "/api/items", { ip: "7.7.7.7", headers: { "x-api-key": "junk0" } })).status).toBe(200);
+  });
+
+  test("HEAD counts toward a GET rule (it runs the GET handler)", async () => {
+    const { app } = makeApp({ rules: [{ limit: 1, window: "1m", match: { method: "GET" } }] });
+    expect((await send(app, "HEAD", "/api/items", { ip: "8.8.8.8" })).status).toBe(200);
+    expect((await send(app, "HEAD", "/api/items", { ip: "8.8.8.8" })).status).toBe(429);
+    expect((await send(app, "GET", "/api/items", { ip: "8.8.8.8" })).status).toBe(429);
   });
 
   test("a function; returning null exempts the request from that rule", async () => {

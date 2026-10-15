@@ -120,7 +120,8 @@ export interface PlatformInfo {
 /** Fast path extraction without building a URL object. */
 export function pathOf(url: string): string {
   // "http://" and "https://" skip the scheme scan; anything else finds its "://".
-  const from = url.charCodeAt(4) === 58 /* : */ ? 7 : url.charCodeAt(5) === 58 ? 8 : url.indexOf("//") + 2;
+  // A relative URL ("/path", which Bun gives for a request with an invalid Host) starts at 0.
+  const from = url.charCodeAt(4) === 58 /* : */ ? 7 : url.charCodeAt(5) === 58 ? 8 : url.charCodeAt(0) === 47 /* / */ ? 0 : url.indexOf("//") + 2;
   const start = url.indexOf("/", from);
   if (start === -1) return "/";
   // Native `indexOf`s beat a JS char loop here (measured ~10–20 ns per request on Bun).
@@ -130,18 +131,29 @@ export function pathOf(url: string): string {
   return url.slice(start, q === -1 ? h : h === -1 || q < h ? q : h);
 }
 
+/**
+ * @internal Adds a repeated field (query, form) to `out`: the first value as is, repeats as an
+ * array. Only own keys count, and `__proto__` is defined as plain data, so client-chosen names
+ * such as `__proto__` or `constructor` can never read or replace the object's prototype.
+ */
+export function addField(out: Record<string, unknown>, k: string, v: unknown): void {
+  if (!Object.hasOwn(out, k)) {
+    if (k === "__proto__") Object.defineProperty(out, k, { value: v, enumerable: true, writable: true, configurable: true });
+    else out[k] = v;
+    return;
+  }
+  const prev = out[k];
+  if (Array.isArray(prev)) prev.push(v);
+  else out[k] = [prev, v];
+}
+
 export function parseQuery(url: string): Record<string, string | string[]> {
   const q = url.indexOf("?");
   const out: Record<string, string | string[]> = {};
   if (q === -1) return out;
   const hash = url.indexOf("#", q);
   const search = new URLSearchParams(hash === -1 ? url.slice(q + 1) : url.slice(q + 1, hash));
-  for (const [k, v] of search) {
-    const prev = out[k];
-    if (prev === undefined) out[k] = v;
-    else if (Array.isArray(prev)) prev.push(v);
-    else out[k] = [prev, v];
-  }
+  for (const [k, v] of search) addField(out, k, v);
   return out;
 }
 
@@ -252,10 +264,13 @@ export class RequestContext {
     const read = () => (parsed ??= parseCookies(this.req.headers.get("cookie")));
     const push = (c: string) => (this._setCookies ??= []).push(c);
     return (this._cookies = {
-      get: (name) => read()[name],
+      get: (name) => {
+        const all = read();
+        return Object.hasOwn(all, name) ? all[name] : undefined;
+      },
       all: () => ({ ...read() }),
       set: (name, value, opts?: CookieOptions) => {
-        read()[name] = value;
+        Object.defineProperty(read(), name, { value, enumerable: true, writable: true, configurable: true });
         push(serializeCookie(name, value, opts));
       },
       delete: (name, opts) => {

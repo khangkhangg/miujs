@@ -88,6 +88,8 @@ function parseRange(header: string, size: number): Range {
  * Split the path below the prefix into decoded segments, refusing anything that could
  * leave the directory. Returns `null` for hidden files (fall through to 404).
  */
+const SHORT_NAME = /^[^.~]{1,6}~\d+(?:\.[^.]{0,3})?$/;
+
 function safeSegments(rest: string): { segs: string[]; raw: string[] } | null {
   const raw = rest.split("/").filter((s) => s !== "");
   const segs: string[] = [];
@@ -100,6 +102,8 @@ function safeSegments(rest: string): { segs: string[]; raw: string[] } | null {
     }
     if (d === "." || d === ".." || /[/\\:\0]/.test(d) || r.includes("\\")) throw webErrors.badPath(rest);
     if (d.startsWith(".") && d !== ".well-known") return null;
+    // NTFS 8.3 short names ("ENV~1" is ".env", "GIT~1" is ".git") would reach hidden files.
+    if (SHORT_NAME.test(d)) return null;
     segs.push(d);
   }
   return { segs, raw };

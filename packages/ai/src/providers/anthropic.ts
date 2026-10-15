@@ -120,7 +120,7 @@ function make(opts: AnthropicOptions, baseUrl: string, gateway: GatewayRoute | u
     if (gateway?.token) headers["cf-aig-authorization"] = `Bearer ${gateway.token}`;
     if (stream) body.stream = true;
     Object.assign(body, req.extra);
-    return { key, init: { method: "POST", headers, body: JSON.stringify(body), signal: req.signal } as RequestInit };
+    return { key: [key, gateway?.token], init: { method: "POST", headers, body: JSON.stringify(body), signal: req.signal } as RequestInit };
   };
 
   return {

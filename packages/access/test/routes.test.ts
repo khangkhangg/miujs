@@ -194,6 +194,21 @@ describe("invitations", () => {
     expect(await s.store.getMembership(s.A.id, "carol")).toEqual({ role: "admin" });
   });
 
+  test("an invite dies with its inviter's right to grant it (removed or demoted)", async () => {
+    for (const change of ["remove", "demote"] as const) {
+      const s = await seeded();
+      const res = await s.call("POST", `/orgs/${s.A.id}/invites`, "dave", { email: "carol@example.com", role: "admin" });
+      expect(res.status).toBe(201);
+      const token = (res.body.inviteUrl as string).split("/invites/")[1];
+      if (change === "remove") expect((await s.call("DELETE", `/orgs/${s.A.id}/members/dave`, "alice")).status).toBe(204);
+      else expect((await s.call("PATCH", `/orgs/${s.A.id}/members/dave`, "alice", { role: "member" })).status).toBe(200);
+      const acc = await s.call("POST", `/invites/${token}/accept`, "carol");
+      expect(acc.status).toBe(410);
+      expect(acc.body.error.code).toBe("MIU_E_ACCESS_INVITE_REVOKED");
+      expect(await s.store.getMembership(s.A.id, "carol")).toBeNull();
+    }
+  });
+
   test("accept is single-use", async () => {
     const s = await seeded();
     const token = await invite(s, "carol@example.com");

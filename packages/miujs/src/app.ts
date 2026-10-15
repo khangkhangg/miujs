@@ -1,4 +1,4 @@
-import { RequestContext, pathOf, type Context, type PlatformInfo, type RouteInfo, type Services, type TrustProxy } from "./context.ts";
+import { RequestContext, addField, pathOf, type Context, type PlatformInfo, type RouteInfo, type Services, type TrustProxy } from "./context.ts";
 import { MiuError, errors, isMiuError, type HeadersLike } from "./errors.ts";
 import { createLogger, type LogLevel, type Logger } from "./logger.ts";
 import { createMcpHandler, buildRouteTool, routeToolRequest, type McpOptions } from "./mcp.ts";
@@ -190,12 +190,7 @@ async function readBody(req: Request, limit: number): Promise<{ value: unknown; 
     const bytes = await readLimited(req, limit);
     const fd = await new Response(bytes as BodyInit, { headers: { "content-type": req.headers.get("content-type") ?? type } }).formData();
     const out: Record<string, unknown> = {};
-    for (const [k, v] of fd as unknown as Iterable<[string, unknown]>) {
-      const prev = out[k];
-      if (prev === undefined) out[k] = v;
-      else if (Array.isArray(prev)) prev.push(v);
-      else out[k] = [prev, v];
-    }
+    for (const [k, v] of fd as unknown as Iterable<[string, unknown]>) addField(out, k, v);
     return { value: out, form: true };
   }
   if (type.startsWith("text/")) return { value: await readTextLimited(req, limit), form: false };
@@ -413,6 +408,14 @@ export class App {
     }
 
     const auth = (cfg.auth ?? false) as AuthRequirement;
+    // Fail closed: an unknown value (`true`, a typo, `{ roles }`) must never compile to a public route.
+    if (!(auth === false || auth === "optional" || auth === "required" || (typeof auth === "object" && auth !== null && Object.hasOwn(auth, "role")))) {
+      throw errors.config(
+        "MIU_E_AUTH_INVALID",
+        `Route ${def.method} ${path} has auth: ${JSON.stringify(auth)}, which is not a valid requirement`,
+        'Use auth: "required", "optional", false, or { role: "admin" } (a string or an array of roles).',
+      );
+    }
     const roles = typeof auth === "object" && auth ? ([] as string[]).concat(auth.role) : null;
     const needsUser = auth === "required" || roles !== null;
     const status = cfg.status ?? 200;
@@ -567,6 +570,9 @@ export class App {
         {
           name: this.name,
           version: this.version,
+          dev: this.dev,
+          maxBodySize: this.maxBodySize,
+          readText: readTextLimited,
           tools: () => this.mcpTools(opts),
           dispatch: async (r, ctx) => this.dispatch(r, (ctx as unknown as RequestContext).env, (ctx as unknown as RequestContext)._platform),
         },
@@ -847,8 +853,14 @@ export class App {
       .map((r) => {
         const rt = buildRouteTool(r);
         const call = async (args: Record<string, unknown> = {}, opts: { headers?: HeadersLike; env?: unknown; origin?: string } = {}) => {
-          const req = routeToolRequest(rt, args, opts.origin ?? "http://localhost", new Headers(opts.headers));
-          const res = await this.dispatch(req, opts.env ?? this.staticEnv, this.basePlatform);
+          let res: Response;
+          try {
+            const req = routeToolRequest(rt, args, opts.origin ?? "http://localhost", new Headers(opts.headers));
+            res = await this.dispatch(req, opts.env ?? this.staticEnv, this.basePlatform);
+          } catch (err) {
+            if (!isMiuError(err)) throw err;
+            res = err.toResponse(); // e.g. a dot-segment path argument
+          }
           const text = await res.text();
           let body: unknown = text;
           try {

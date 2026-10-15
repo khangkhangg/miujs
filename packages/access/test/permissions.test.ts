@@ -112,6 +112,18 @@ describe("policies (row-level, on top of role permissions)", () => {
     const r = evaluate({ roles, policies: [weird], user: { id: "u1", roles: [] }, org: null, roleNames: ["admin"] }, "deals:update", {});
     expect(r.ok).toBe(false);
   });
+  test("a wildcard request with a record runs every rule it covers (no policy bypass)", () => {
+    const r2 = defineRoles({ boss: ["*"], cm: ["contacts:*"] });
+    const e = (role: string, perm: string, record: any) => evaluate({ roles: r2, policies, user: { id: "u1", roles: [] }, org: { id: "o1", role }, roleNames: [role] }, perm, record);
+    // "contacts:update" denies u1 on u2's record (u1 lacks contacts:manage under cm? cm has contacts:* so can() passes)
+    const own = policy("deals", { update: ({ user, record }) => record.ownerId === user.id, read: () => true });
+    const e2 = (perm: string, record: any) => evaluate({ roles: r2, policies: [own], user: { id: "u1", roles: [] }, org: { id: "o1", role: "boss" }, roleNames: ["boss"] }, perm, record);
+    expect(e2("deals:update", { ownerId: "u2" }).ok).toBe(false);
+    expect(e2("deals:*", { ownerId: "u2" }).ok).toBe(false);
+    expect(e2("*", { ownerId: "u2" }).ok).toBe(false);
+    expect(e2("deals:*", { ownerId: "u1" }).ok).toBe(true);
+    expect(e("cm", "contacts:*", { ownerId: "u2" }).ok).toBe(true); // contacts:manage via can() allows
+  });
   test("no user → never allowed", () => {
     expect(evaluate({ roles, policies, user: undefined, org: null, roleNames: ["owner"] }, "contacts:read").ok).toBe(false);
   });

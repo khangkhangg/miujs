@@ -319,6 +319,38 @@ describe("signed-in users", () => {
     expect(calls.post).toBe(2);
   });
 
+  for (const [name, value] of [["cookie", "miu_session=victim"], ["proxy-authorization", "Basic eA=="], ["x-api-key", "k_live_1"]]) {
+    test(`requests carrying ${name} are never served from or stored in the bot cache`, async () => {
+      // Audit 2026-10-16: a cookie-bearing "unknown" client (mobile app, curl) had its personalized
+      // page cached and served to every other bot.
+      const { app, calls } = makeApp();
+      await get(app, "/posts/1", CURL);
+      await app.drain();
+      const withCred = await get(app, "/posts/1", { ...CURL, [name]: value });
+      expect(withCred.headers.get("x-miu-bot-cache")).toBeNull();
+      expect(calls.post).toBe(2);
+      await get(app, "/posts/2", { ...CURL, [name]: value });
+      await app.drain();
+      expect((await get(app, "/posts/2", CURL)).headers.get("x-miu-bot-cache")).toBe("miss");
+    });
+  }
+
+  test("responses with a CSP nonce are not stored (a cached nonce would be replayed)", async () => {
+    const nonce = definePlugin({
+      name: "csp",
+      onResponse(_ctx, res) {
+        const r = new Response(res.body, res);
+        r.headers.set("content-security-policy", "script-src 'nonce-abc123'");
+        return r;
+      },
+    });
+    const { app, calls } = makeApp({}, { before: [testAuth, nonce] });
+    await get(app, "/posts/1", CURL);
+    await app.drain();
+    expect((await get(app, "/posts/1", CURL)).headers.get("x-miu-bot-cache")).toBe("miss");
+    expect(calls.post).toBe(2);
+  });
+
   test("auth() listed after bots() fails at startup", async () => {
     const { app } = makeApp({}, { before: [], after: [testAuth] });
     expect(app.ready()).rejects.toMatchObject({ code: "MIU_E_BOTS_ORDER" });

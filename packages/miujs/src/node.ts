@@ -22,6 +22,9 @@ function capped(stream: ReadableStream<Uint8Array>, limit: number): ReadableStre
   );
 }
 
+/** A hostname or IPv4 / [IPv6] address with an optional port: nothing that ends the authority. */
+const HOST_RE = /^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/;
+
 function toRequest(req: IncomingMessage, origin: string, limit: number): Request {
   const headers = new Headers();
   for (const [k, v] of Object.entries(req.headers)) {
@@ -62,7 +65,10 @@ async function send(res: ServerResponse, response: Response): Promise<void> {
 
 export async function serveNode(app: App, opts: { port: number; hostname?: string }) {
   const server = createServer(async (req, res) => {
-    const host = req.headers.host ?? `localhost:${opts.port}`;
+    // The Host header is client input: anything but host[:port] ("x/admin?", "a@b") would move
+    // the path the app routes away from the request line, so it falls back to localhost.
+    const given = req.headers.host;
+    const host = given !== undefined && HOST_RE.test(given) ? given : `localhost:${opts.port}`;
     try {
       const response = await app.fetch(toRequest(req, `http://${host}`, app.maxRequestBodySize), { remoteAddr: { hostname: req.socket.remoteAddress ?? "" } });
       await send(res, response);

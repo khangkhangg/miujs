@@ -46,3 +46,18 @@ describe("aiGateway()", () => {
     }
   });
 });
+
+describe("gateway token stays out of errors (audit 2026-10-16)", () => {
+  const echo = json({ error: { message: "bad auth: gateway Bearer gw-token-SECRET999 key sk-SECRETKEY123456" } }, 401);
+  for (const [name, make] of [
+    ["anthropic", () => aiGateway({ ...gw, token: "gw-token-SECRET999" }, anthropic({ apiKey: "sk-SECRETKEY123456" }))],
+    ["openai-compatible", () => aiGateway({ ...gw, token: "gw-token-SECRET999" }, openaiCompatible({ baseUrl: "https://api.openai.com/v1", gatewaySlug: "openai", apiKey: "sk-SECRETKEY123456" }))],
+  ] as const) {
+    test(`${name}: both the provider key and the gateway token are redacted`, async () => {
+      const err = await make().generate(req("m"), runtime({ fetch: fakeFetch(echo) })).catch((e) => e);
+      const text = JSON.stringify({ m: err.message, d: err.details });
+      expect(text).not.toContain("gw-token-SECRET999");
+      expect(text).not.toContain("SECRETKEY123456");
+    });
+  }
+});

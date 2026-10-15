@@ -73,7 +73,7 @@ function make(opts: OpenAICompatibleOptions, baseUrl: string, gateway: GatewayRo
     const headers: Record<string, string> = { ...opts.headers, "content-type": "application/json" };
     if (key) headers.authorization = `Bearer ${key}`;
     if (gateway?.token) headers["cf-aig-authorization"] = `Bearer ${gateway.token}`;
-    return { key, headers };
+    return { key: [key, gateway?.token], headers };
   };
 
   const build = (req: ProviderRequest, rt: ProviderRuntime, stream: boolean) => {

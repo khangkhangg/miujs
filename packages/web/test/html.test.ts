@@ -98,3 +98,33 @@ describe("render", () => {
     expect(await res.text()).toBe("<h1>Hi</h1>");
   });
 });
+
+describe("html: attribute contexts (audit 2026-10-16)", () => {
+  test("script URLs in URL attributes are neutralized, quoted or not", () => {
+    for (const bad of ["javascript:alert(1)", " JaVaScRiPt:alert(1)", "java\tscript:alert(1)", "\u0001javascript:x", "vbscript:x", "data:text/html,<script>x</script>"]) {
+      const a = String(html`<a href="${bad}">x</a>`);
+      expect(a).toBe('<a href="about:invalid#miu-unsafe-url">x</a>');
+      expect(String(html`<form><button formaction=${bad}>x</button></form>`)).toContain('formaction="about:invalid#miu-unsafe-url"');
+      expect(String(html`<img src='${bad}'>`)).toBe("<img src='about:invalid#miu-unsafe-url'>");
+    }
+  });
+
+  test("safe URLs pass unchanged", () => {
+    for (const ok of ["/x?a=1", "https://example.com/p", "mailto:a@b.c", "tel:+123", "#top", "data:image/png;base64,AAAA", "relative/javascript:x"]) {
+      expect(String(html`<a href="${ok}">x</a>`)).toBe(`<a href="${escapeHtml(ok)}">x</a>`);
+    }
+  });
+
+  test("an unquoted attribute value is quoted, so it cannot add attributes", () => {
+    expect(String(html`<div class=${"x onmouseover=alert(1) y"}>t</div>`)).toBe('<div class="x onmouseover=alert(1) y">t</div>');
+    expect(String(html`<p id=${"a"} title=${"b c"}>t</p>`)).toBe('<p id="a" title="b c">t</p>');
+  });
+
+  test("text and script contents that look like attributes are left alone", () => {
+    expect(String(html`<p>a=${"x"}</p>`)).toBe("<p>a=x</p>");
+    expect(String(html`<p>href=${"javascript:x"}</p>`)).toBe("<p>href=javascript:x</p>");
+    expect(String(html`<script>if (a<b) x=${1}</script>`)).toBe("<script>if (a<b) x=1</script>");
+    expect(String(html`<style>a{b:c}</style><i class=${"q"}>z</i>`)).toBe('<style>a{b:c}</style><i class="q">z</i>');
+    expect(String(html`<!-- a<b c=${"d"} -->`)).toBe("<!-- a<b c=d -->");
+  });
+});

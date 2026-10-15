@@ -17,7 +17,11 @@ export interface McpOptions {
   instructions?: string;
   /** Filter which routes become tools. Routes with `mcp: false` are always excluded. */
   include?: (route: DescribedRoute) => boolean;
-  /** Origins allowed to call the endpoint from a browser, in addition to same-origin. */
+  /**
+   * Origins allowed to call the endpoint from a browser. Without a listing, only same-origin pages
+   * on a loopback host (localhost, *.localhost, 127.x, [::1]) may call it: a same-origin check on
+   * any other host is defeated by DNS rebinding, where the attacker's domain is the Host.
+   */
   allowedOrigins?: string[];
 }
 
@@ -99,6 +103,12 @@ export function buildRouteTool(r: DescribedRoute): RouteTool {
 export interface McpHost {
   name: string;
   version: string;
+  /** Dev mode: plugin tool errors show their message. Off: a generic internal error. */
+  dev?: boolean;
+  /** Largest JSON-RPC body in bytes. */
+  maxBodySize?: number;
+  /** Reads the body as text, never more than `limit` bytes (413 MiuError otherwise). */
+  readText?: (req: Request, limit: number) => Promise<string>;
   tools(): { routeTools: RouteTool[]; pluginTools: McpTool[] };
   dispatch(req: Request, ctx: Context): Promise<Response>;
 }
@@ -117,6 +127,20 @@ function rpcError(id: unknown, code: number, message: string, status = 200): Res
 }
 
 
+/** "." and ".." (also percent-encoded) are dot segments: URL parsing would move the path to another route. */
+const DOT_SEGMENT = /^(?:\.|%2e){1,2}$/i;
+
+function pathValue(name: string, v: unknown): string {
+  const s = String(v);
+  const parts = s.split("/");
+  for (const p of parts) {
+    if (DOT_SEGMENT.test(p)) {
+      throw errors.validation("params", [{ path: `params.${name}`, message: "must not be a dot segment (. or ..)" }]);
+    }
+  }
+  return s;
+}
+
 /** The HTTP request a tool call makes: args placed into path, query and JSON body. */
 export function routeToolRequest(t: RouteTool, args: Record<string, unknown>, origin: string, headers: Headers): Request {
   args ??= {};
@@ -124,10 +148,12 @@ export function routeToolRequest(t: RouteTool, args: Record<string, unknown>, or
     .split("/")
     .map((seg) => {
       if (seg[0] !== ":" && seg[0] !== "*") return seg;
-      const v = args[pathArg(seg.slice(1) || "*")];
+      const name = pathArg(seg.slice(1) || "*");
+      const v = args[name];
       if (v === undefined) return seg;
+      const s = pathValue(name, v);
       // Wildcards may span segments: keep their slashes.
-      return seg[0] === "*" ? String(v).split("/").map(encodeURIComponent).join("/") : encodeURIComponent(String(v));
+      return seg[0] === "*" ? s.split("/").map(encodeURIComponent).join("/") : encodeURIComponent(s);
     })
     .join("/");
   const search = new URLSearchParams();
@@ -162,7 +188,13 @@ async function callRouteTool(t: RouteTool, args: Record<string, unknown>, ctx: C
     const v = ctx.req.headers.get(h);
     if (v) headers.set(h, v);
   }
-  const req = routeToolRequest(t, args ?? {}, ctx.url.origin, headers);
+  let req: Request;
+  try {
+    req = routeToolRequest(t, args ?? {}, ctx.url.origin, headers);
+  } catch (err) {
+    if (!isMiuError(err)) throw err;
+    return { content: [{ type: "text", text: JSON.stringify(err.toJSON()) }], isError: true };
+  }
   const res = await host.dispatch(req, ctx);
   const text = await res.text();
   let parsed: unknown;
@@ -190,6 +222,11 @@ async function callRouteTool(t: RouteTool, args: Record<string, unknown>, ctx: C
   return result;
 }
 
+/** Hosts a browser can only reach on this machine; DNS rebinding cannot produce them as an Origin. */
+function isLoopback(hostname: string): boolean {
+  return hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
+}
+
 export function createMcpHandler(host: McpHost, opts: McpOptions) {
   const allowed = new Set(opts.allowedOrigins ?? []);
   return async (ctx: Context): Promise<Response> => {
@@ -198,7 +235,8 @@ export function createMcpHandler(host: McpHost, opts: McpOptions) {
       // DNS-rebinding protection required by the MCP spec: browsers must be same-origin.
       let sameHost = false;
       try {
-        sameHost = new URL(origin).host === ctx.url.host;
+        const o = new URL(origin);
+        sameHost = o.host === ctx.url.host && isLoopback(o.hostname);
       } catch {}
       if (!sameHost) return rpcError(null, -32000, `Origin ${origin} is not allowed`, 403);
     }
@@ -206,8 +244,15 @@ export function createMcpHandler(host: McpHost, opts: McpOptions) {
       return new Response(null, { status: 405, headers: { allow: "POST" } });
     }
     let msg: any;
+    let text: string;
     try {
-      msg = await ctx.req.json();
+      text = host.readText ? await host.readText(ctx.req, host.maxBodySize ?? 10 * 1024 * 1024) : await ctx.req.text();
+    } catch (err) {
+      if (isMiuError(err)) return rpcError(null, -32600, err.message, err.status);
+      return rpcError(null, -32700, "Parse error: body must be JSON-RPC 2.0", 400);
+    }
+    try {
+      msg = JSON.parse(text);
     } catch {
       return rpcError(null, -32700, "Parse error: body must be JSON-RPC 2.0", 400);
     }
@@ -252,7 +297,13 @@ export function createMcpHandler(host: McpHost, opts: McpOptions) {
             const text = typeof out === "string" ? out : JSON.stringify(out);
             return rpcResult(msg.id, { content: [{ type: "text", text }], isError: false, ...(isPlainObject(out) ? { structuredContent: out } : {}) });
           } catch (err) {
-            const text = isMiuError(err) ? JSON.stringify(err.toJSON()) : err instanceof Error ? err.message : String(err);
+            // Outside dev an unexpected error's message may carry internals (SQL, hosts, secrets).
+            const text = isMiuError(err)
+              ? JSON.stringify(err.toJSON())
+              : host.dev
+                ? err instanceof Error ? err.message : String(err)
+                : JSON.stringify({ error: { code: "MIU_E_INTERNAL", message: "Internal server error" } });
+            if (!isMiuError(err)) ctx.log.error("MCP tool failed", { tool: pt.name, err });
             return rpcResult(msg.id, { content: [{ type: "text", text }], isError: true });
           }
         }

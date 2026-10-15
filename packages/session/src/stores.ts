@@ -64,8 +64,9 @@ const userOf = (d: Record<string, unknown> | undefined): string | null => {
  * Expired sessions are swept whenever the store has doubled since the last sweep, so it holds at
  * most about twice the live sessions.
  */
-export function memorySessionStore(opts: { now?: () => number } = {}): SessionStore & { readonly size: number } {
+export function memorySessionStore(opts: { now?: () => number; /** Most sessions kept (default 100,000); the least recently written go first. */ maxEntries?: number } = {}): SessionStore & { readonly size: number } {
   const now = opts.now ?? Date.now;
+  const maxEntries = Math.max(1, opts.maxEntries ?? 100_000);
   const map = new Map<string, SessionRecord>();
   let sweepAt = 64;
   const sweep = () => {
@@ -88,8 +89,17 @@ export function memorySessionStore(opts: { now?: () => number } = {}): SessionSt
       return structuredClone(r);
     },
     async set(id, record) {
+      // Delete first so a rewrite moves the session to the end: Map order is then write order.
+      map.delete(id);
       map.set(id, structuredClone(record));
       if (map.size >= sweepAt) sweep();
+      // Unique visitors (anonymous carts, OAuth state) must not grow memory without bound.
+      if (map.size > maxEntries) {
+        for (const k of map.keys()) {
+          map.delete(k);
+          if (map.size <= maxEntries) break;
+        }
+      }
     },
     async delete(id) {
       map.delete(id);
@@ -126,7 +136,7 @@ export function memorySessionStore(opts: { now?: () => number } = {}): SessionSt
       }
       return n;
     },
-    inspect: () => ({ store: "memory" }),
+    inspect: () => ({ store: "memory", maxEntries }),
   };
 }
 

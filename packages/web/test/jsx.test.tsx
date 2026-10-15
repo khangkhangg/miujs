@@ -128,3 +128,18 @@ describe("JSX via @jsxImportSource @miujs/web", () => {
     expect(s(jsxDEV("i", { children: "x" }, undefined, false, undefined, undefined))).toBe("<i>x</i>");
   });
 });
+
+describe("JSX URL attributes (audit 2026-10-16)", () => {
+  test("javascript: and other script URLs are neutralized", () => {
+    for (const bad of ["javascript:alert(document.cookie)", "java\tscript:x", "  JAVASCRIPT:x", "vbscript:x", "data:text/html;base64,PHNjcmlwdD4="]) {
+      expect(s(<a href={bad}>x</a>)).toBe('<a href="about:invalid#miu-unsafe-url">x</a>');
+      expect(s(<button formAction={bad}>x</button>)).toContain('"about:invalid#miu-unsafe-url"');
+      expect(s(<iframe src={bad}></iframe>)).toBe('<iframe src="about:invalid#miu-unsafe-url"></iframe>');
+    }
+  });
+  test("ordinary URLs are unchanged", () => {
+    expect(s(<a href="/p?a=1&b=2">x</a>)).toBe('<a href="/p?a=1&amp;b=2">x</a>');
+    expect(s(<img src="data:image/png;base64,AA" />)).toBe('<img src="data:image/png;base64,AA">');
+    expect(s(<a href="https://ex.com">x</a>)).toBe('<a href="https://ex.com">x</a>');
+  });
+});

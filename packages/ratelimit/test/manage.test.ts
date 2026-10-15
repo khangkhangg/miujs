@@ -191,7 +191,8 @@ describe("rateLimit manage()", () => {
     await app.dispatch(new Request("http://localhost/api/items", { headers: { "x-api-key": "sk_live_supersecret" } }), {}, { runtime: "bun" });
     const ctx = await manageCtx(plugin);
     const page = await listOf(section(plugin, "ratelimit"), "keys").list({ limit: 10, filters: { state: "all" } }, ctx);
-    expect(page.rows.length).toBe(1);
+    // The hashed key's bucket, plus the client's IP bucket (an unverified key also counts per IP).
+    expect(page.rows.length).toBe(2);
     expect(JSON.stringify(page)).not.toContain("supersecret");
   });
 });

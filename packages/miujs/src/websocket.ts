@@ -17,6 +17,14 @@ export interface MiuSocket<D = any> {
 export interface WebSocketHandlers<D = any> {
   /** Initial value of `socket.data`. */
   data?: D;
+  /**
+   * Browser origins (exact, e.g. "https://play.example") allowed to open this socket while
+   * carrying cookies, besides the page's own origin; "*" allows any. A cross-origin handshake
+   * with cookies is otherwise refused (403), which stops cross-site WebSocket hijacking: a
+   * hostile page riding the player's session. Handshakes without cookies (token auth) are not
+   * affected.
+   */
+  origins?: readonly string[] | "*";
   open?(socket: MiuSocket<D>): void | Promise<void>;
   message?(socket: MiuSocket<D>, message: SocketMessage): void | Promise<void>;
   close?(socket: MiuSocket<D>, code: number, reason: string): void | Promise<void>;
@@ -91,6 +99,25 @@ function run(d: BunSocketData, p: void | Promise<void>) {
   if (p && typeof (p as Promise<void>).catch === "function") (p as Promise<void>).catch(d.onError);
 }
 
+function checkOrigin(ctx: RequestContext, origins: WebSocketHandlers["origins"]): void {
+  const headers = ctx.req.headers;
+  const origin = headers.get("origin");
+  // Only a browser sends Origin, and only ambient cookies make a cross-site handshake dangerous.
+  if (origin === null || origins === "*" || !headers.has("cookie")) return;
+  if (origins && origins.includes(origin)) return;
+  let same = false;
+  try {
+    same = new URL(origin).host === ctx.url.host;
+  } catch {}
+  if (same) return;
+  throw errors.custom({
+    code: "MIU_E_WS_ORIGIN",
+    status: 403,
+    message: `WebSocket connections with cookies from ${origin} are not allowed`,
+    fix: 'Serve the page from the same origin, or list it: ctx.upgrade({ origins: ["https://your.site"], ... }).',
+  });
+}
+
 function upgrade(ctx: RequestContext, handlers: WebSocketHandlers): Response {
   if (ctx.req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
     throw errors.custom({
@@ -100,6 +127,7 @@ function upgrade(ctx: RequestContext, handlers: WebSocketHandlers): Response {
       fix: "Connect with a WebSocket client (ws:// or wss://), not plain HTTP.",
     });
   }
+  checkOrigin(ctx, handlers.origins);
   const onError = (err: unknown) => ctx.log.error("websocket handler failed", { err });
   const platform = ctx._platform;
 

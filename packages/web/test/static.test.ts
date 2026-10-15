@@ -344,6 +344,14 @@ describe("staticFiles: path safety", () => {
     expect((await get(app, "/.git/config")).status).toBe(404);
   });
 
+  test("Windows 8.3 short names cannot reach dotfiles (ENV~1 is .env on NTFS)", async () => {
+    const app = appWith();
+    for (const p of ["/ENV~1", "/env~1", "/GIT~1/config", "/ENV~12.TXT"]) {
+      const res = await get(app, p);
+      expect(res.status).toBe(404);
+    }
+  });
+
   test("malformed percent-encoding is a 400", async () => {
     const res = await appWith().request(new Request("http://localhost/%E0%A4%A"));
     expect(res.status).toBe(400);

@@ -1,7 +1,7 @@
 // Org, member and invitation routes.
 
 import { errors, route, t, type Context } from "miujs";
-import { roleCovers, type OrgInfo } from "./permissions.ts";
+import { roleAllows, roleCovers, type OrgInfo } from "./permissions.ts";
 import { notMember, storeFor, type AccessOptions } from "./plugin.ts";
 
 export interface RouteState {
@@ -230,6 +230,17 @@ export function accessRoutes(opts: AccessOptions, state: RouteState) {
       if (invite.acceptedAt !== null) throw used();
       if (invite.expiresAt <= now) {
         throw errors.custom({ code: "MIU_E_ACCESS_INVITE_EXPIRED", status: 410, message: "This invitation has expired", fix: "Ask an organization owner to send a new invitation." });
+      }
+      // The inviter must still be allowed to grant this role: removing or demoting an admin
+      // also cancels what they handed out.
+      const inviter = await store.getMembership(invite.orgId, invite.invitedBy);
+      if (!inviter || !roleAllows(opts.roles, inviter.role, "members:invite") || !roleCovers(opts.roles, inviter.role, invite.role)) {
+        throw errors.custom({
+          code: "MIU_E_ACCESS_INVITE_REVOKED",
+          status: 410,
+          message: "This invitation is no longer valid: the person who sent it can no longer grant this role",
+          fix: "Ask a current organization admin or owner for a new invitation.",
+        });
       }
       if (!(await store.consumeInvite(invite.id, ctx.user.id, now))) throw used();
       await store.addMember(invite.orgId, ctx.user.id, invite.role, ctx.user.email ?? null);

@@ -20,6 +20,19 @@ describe("memoryStore", () => {
     expect(store.size!()).toBeLessThanOrEqual(100);
   });
 
+  test("never holds more than maxBytes of values (large values cannot exhaust memory)", async () => {
+    const store = memoryStore({ maxEntries: 100_000, maxBytes: 10_000 });
+    const big = "x".repeat(1000);
+    for (let i = 0; i < 200; i++) await store.set(`b${i}`, big);
+    expect(store.bytes!()).toBeLessThanOrEqual(10_000);
+    expect(await store.get("b199")).toBe(big); // newest kept
+    expect(await store.get("b0")).toBeUndefined();
+    await store.set("huge", "y".repeat(20_000)); // larger than the whole budget: not stored
+    expect(await store.get("huge")).toBeUndefined();
+    expect(await store.get("b199")).toBe(big);
+    expect(memoryStore().inspect!()).toMatchObject({ maxEntries: 1000, maxBytes: 64 * 1024 * 1024 });
+  });
+
   test("expiring keys and tag invalidations plateau", async () => {
     let now = 0;
     const c = createCache(memoryStore({ maxEntries: 100_000, now: () => now }));

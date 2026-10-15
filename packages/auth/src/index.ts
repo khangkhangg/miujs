@@ -450,6 +450,15 @@ export function auth(opts: AuthOptions = {}) {
     body: t.object({ name: t.string({ minLength: 1, maxLength: 100 }), expiresInDays: t.optional(t.integer({ min: 1, max: 3650 })) }),
     response: t.object({ id: t.string(), name: t.string(), token: t.string(), expiresAt: t.nullable(t.number()) }),
     handler: async (ctx) => {
+      // A token that could mint tokens would survive its own revocation through its children.
+      if (ctx.state.authMethod !== "session") {
+        throw errors.custom({
+          code: "MIU_E_AUTH_TOKEN_SESSION_REQUIRED",
+          status: 403,
+          message: "API tokens can only be created from a signed-in browser session",
+          fix: "Sign in in the browser (not with an API token) and create the token there.",
+        });
+      }
       const token = prefix + base64urlEncode(randomBytes(32));
       const id = randomId(12);
       const expiresAt = ctx.body.expiresInDays ? Date.now() + ctx.body.expiresInDays * 86_400_000 : null;
@@ -549,7 +558,8 @@ export function auth(opts: AuthOptions = {}) {
       const appUrl = appUrlFor(c);
       inBackground(c, async () => {
         const user = await users.findUserByEmail(email, ctx.env);
-        if (!user) return;
+        // Disabled accounts get nothing: a reset must not become a way back in.
+        if (!user || user.disabledAt != null) return;
         const token = await issueToken(user.id, "reset", ctx.env);
         await mailer.send({ to: user.email, ...emails.resetPassword({ link: link(appUrl, pages.resetPassword, token), appUrl }) });
       });
@@ -568,7 +578,9 @@ export function auth(opts: AuthOptions = {}) {
       // Before using up the token, so a weak password can be retried with the same link.
       checkPassword(ctx.body.password);
       const rec = await consumeToken(ctx.body.token, "reset", ctx.env);
-      const user = rec ? await users.findUserById(rec.userId, ctx.env) : null;
+      const found = rec ? await users.findUserById(rec.userId, ctx.env) : null;
+      // A link issued before the account was disabled is as dead as an expired one.
+      const user = found && found.disabledAt == null ? found : null;
       if (!user) {
         throw errors.custom({
           code: "MIU_E_AUTH_RESET_INVALID",
@@ -583,6 +595,12 @@ export function auth(opts: AuthOptions = {}) {
       // A reset means the account may have been taken over: API tokens an attacker made must stop working.
       // (A normal change, made with the current password, keeps them.)
       await store.deleteUserTokens(user.id, ctx.env);
+      // ...and so must sign-in methods they could have added with a stolen session: passkeys and
+      // linked providers. The owner adds their own again after signing in with the new password.
+      await users.deleteUserPasskeys?.(user.id, ctx.env);
+      if (users.listOAuthAccounts && users.deleteOAuthAccount) {
+        for (const a of await users.listOAuthAccounts(user.id, ctx.env)) await users.deleteOAuthAccount(user.id, a.provider, ctx.env);
+      }
       // Opening the emailed link proves the address belongs to them.
       const emailVerifiedAt = user.emailVerifiedAt ?? Date.now();
       if (user.emailVerifiedAt == null) await store.markEmailVerified(user.id, emailVerifiedAt, ctx.env);

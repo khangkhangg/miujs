@@ -308,3 +308,45 @@ describe("CSRF", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("verified-cookie cache (perf, audit 2026-10-16)", () => {
+  const app = () =>
+    miu({
+      logLevel: "silent",
+      dev: false,
+      plugins: [session()],
+      routes: [
+        route.post("/set", { handler: (ctx) => (ctx.session.set("u", "alice"), "ok") }),
+        route.get("/get", { handler: (ctx) => ({ u: ctx.session.get("u") ?? null }) }),
+      ],
+    });
+  const A = "a".repeat(40);
+  const B = "b".repeat(40);
+  const send = (a: ReturnType<typeof app>, path: string, env: Record<string, string>, headers: Record<string, string> = {}, method = "GET") =>
+    a.dispatch(new Request(BASE + path, { method, headers: { origin: BASE, ...headers } }), env, { runtime: "bun" });
+
+  test("a cookie verified once is rejected after its secret is rotated out", async () => {
+    const a = app();
+    const set = await send(a, "/set", { SESSION_SECRET: A }, {}, "POST");
+    const cookie = set.headers.getSetCookie()[0].split(";")[0];
+    expect(await (await send(a, "/get", { SESSION_SECRET: A }, { cookie })).json()).toEqual({ u: "alice" });
+    expect(await (await send(a, "/get", { SESSION_SECRET: A }, { cookie })).json()).toEqual({ u: "alice" });
+    // Rotated: B signs, A still verifies.
+    expect(await (await send(a, "/get", { SESSION_SECRET: [B, A] as any }, { cookie })).json()).toEqual({ u: "alice" });
+    // A removed: the cached verification must not survive.
+    expect(await (await send(a, "/get", { SESSION_SECRET: B }, { cookie })).json()).toEqual({ u: null });
+    expect(await (await send(a, "/get", { SESSION_SECRET: A }, { cookie })).json()).toEqual({ u: "alice" });
+  });
+
+  test("a tampered copy of a cached cookie is still rejected, and changes do not leak between requests", async () => {
+    const a = app();
+    const set = await send(a, "/set", { SESSION_SECRET: A }, {}, "POST");
+    const cookie = set.headers.getSetCookie()[0].split(";")[0];
+    await send(a, "/get", { SESSION_SECRET: A }, { cookie });
+    const [name, value] = cookie.split("=");
+    const dot = value.lastIndexOf(".");
+    const tampered = `${name}=${value.slice(0, dot - 2)}xx${value.slice(dot)}`;
+    expect(await (await send(a, "/get", { SESSION_SECRET: A }, { cookie: tampered })).json()).toEqual({ u: null });
+    expect(await (await send(a, "/get", { SESSION_SECRET: A }, { cookie })).json()).toEqual({ u: "alice" });
+  });
+});

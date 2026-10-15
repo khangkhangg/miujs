@@ -4,7 +4,7 @@
  * `"jsx": "react-jsx", "jsxImportSource": "@miujs/web"` in tsconfig.json).
  */
 import { webErrors } from "./errors.ts";
-import { HtmlString, appendValue, escapeHtml } from "./html.ts";
+import { HtmlString, URL_ATTRS, appendValue, escapeHtml, safeUrl } from "./html.ts";
 
 type Props = Record<string, unknown> & { children?: unknown };
 type Component = (props: any) => unknown;
@@ -57,7 +57,9 @@ function attrs(props: Props): string {
       if (css) out += ` style="${escapeHtml(css)}"`;
       continue;
     }
-    out += ` ${name}="${escapeHtml(String(v))}"`;
+    const text = String(v);
+    // Script URLs (javascript:, vbscript:, data: other than images) never reach href, src, ...
+    out += ` ${name}="${escapeHtml(URL_ATTRS.has(name.toLowerCase()) ? safeUrl(text) : text)}"`;
   }
   return out;
 }

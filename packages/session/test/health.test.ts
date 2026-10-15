@@ -86,6 +86,20 @@ describe("memorySessionStore", () => {
     expect(store.size).toBeLessThan(100);
   });
 
+  test("stays bounded under unique live sessions (maxEntries, oldest written first out)", async () => {
+    const store = memorySessionStore({ maxEntries: 1000 });
+    const e = Date.now() + 86_400_000;
+    for (let i = 0; i < 5000; i++) await store.set(`id${i}`, { d: { i }, e }, 86_400, {});
+    expect(store.size).toBeLessThanOrEqual(1000);
+    expect(await store.get("id4999", {})).not.toBeNull();
+    expect(await store.get("id0", {})).toBeNull();
+    // Writing a session again makes it the newest, so an active user is evicted last.
+    await store.set("id4000", { d: { i: 4000 }, e }, 86_400, {});
+    for (let i = 5000; i < 5999; i++) await store.set(`id${i}`, { d: { i }, e }, 86_400, {});
+    expect(await store.get("id4000", {})).not.toBeNull();
+    expect(memorySessionStore().inspect?.()).toMatchObject({ maxEntries: 100_000 });
+  });
+
   test("still returns live sessions and drops expired ones on read", async () => {
     let now = 0;
     const store = memorySessionStore({ now: () => now });

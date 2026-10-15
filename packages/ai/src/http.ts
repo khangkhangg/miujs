@@ -10,9 +10,14 @@ export const MAX_RETRY_DELAY_MS = 30_000;
 const BASE_DELAY_MS = 500;
 const MAX_BACKOFF_MS = 8_000;
 
-/** Replaces every occurrence of `secret` in `text`. */
-export function redact(text: string, secret?: string): string {
-  return secret && secret.length >= 4 ? text.split(secret).join("[redacted]") : text;
+/** Credentials to scrub: the provider key and, behind an AI Gateway, its token too. */
+export type Secrets = string | readonly (string | undefined)[] | undefined;
+
+/** Replaces every occurrence of each secret in `text`. */
+export function redact(text: string, secret?: Secrets): string {
+  if (secret === undefined) return text;
+  for (const s of typeof secret === "string" ? [secret] : secret) if (s && s.length >= 4) text = text.split(s).join("[redacted]");
+  return text;
 }
 
 function retryAfterMs(res: Response): number | undefined {
@@ -29,7 +34,7 @@ function backoff(attempt: number): number {
   return Math.round(base * (0.75 + Math.random() * 0.25));
 }
 
-async function errorMessage(res: Response, secret?: string): Promise<string> {
+async function errorMessage(res: Response, secret?: Secrets): Promise<string> {
   let text = "";
   try {
     text = await res.text();
@@ -69,7 +74,7 @@ async function pause(rt: ProviderRuntime, ms: number, signal: AbortSignal | null
  * a MiuError. The timeout covers the time to response headers, so streamed bodies may run longer;
  * `init.signal` stays linked for the whole body, so aborting it also stops a streamed response.
  */
-export async function send(rt: ProviderRuntime, provider: string, url: string, init: RequestInit, secret?: string): Promise<Response> {
+export async function send(rt: ProviderRuntime, provider: string, url: string, init: RequestInit, secret?: Secrets): Promise<Response> {
   const outer = init.signal;
   for (let attempt = 0; ; attempt++) {
     if (outer?.aborted) throw abortReason(outer);
@@ -160,7 +165,7 @@ export async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncIterable
 }
 
 /** Wraps a non-MiuError thrown mid-stream (e.g. a dropped connection) as a provider error. */
-export function streamError(provider: string, err: unknown, secret?: string) {
+export function streamError(provider: string, err: unknown, secret?: Secrets) {
   if (isMiuError(err)) return err;
   return aiErrors.provider(provider, undefined, redact(err instanceof Error ? err.message : String(err), secret));
 }

@@ -86,7 +86,7 @@ describe("cache() plugin", () => {
     await app.call(counter, { params: { id: "a" } });
     await app.ready();
     const info = app.inspect().plugins.find((p) => p.name === "cache")!.info as any;
-    expect(info).toEqual({ adapter: "memory", size: 1, maxEntries: 50 });
+    expect(info).toEqual({ adapter: "memory", size: 1, maxEntries: 50, maxBytes: 64 * 1024 * 1024 });
   });
 
   test("inspect for the default and for KV", () => {

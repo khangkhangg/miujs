@@ -471,8 +471,17 @@ export function bots(opts: BotsOptions = {}) {
     return errors.tooManyRequests(r.retryAfter).toResponse({ "retry-after": String(r.retryAfter) });
   }
 
+  /**
+   * A request that carries credentials may get a personalized page: it is never answered from the
+   * cache (it could receive someone else's page) nor stored (others would receive its page).
+   * Cookies count even without a session plugin: any cookie can select per-user content.
+   */
+  function hasCredentials(h: Headers): boolean {
+    return h.has("cookie") || h.has("authorization") || h.has("proxy-authorization") || h.has("x-api-key");
+  }
+
   function storable(ctx: Context, res: Response, st: State): boolean {
-    if (!statuses.has(res.status) || st.cookie || ctx.user || ctx.headers.has("authorization")) return false;
+    if (!statuses.has(res.status) || st.cookie || ctx.user || hasCredentials(ctx.headers)) return false;
     const h = res.headers;
     if (h.has("set-cookie")) return false;
     const cc = h.get("cache-control");
@@ -480,6 +489,9 @@ export function bots(opts: BotsOptions = {}) {
     const vary = h.get("vary");
     if (vary !== null && vary.split(",").some((x) => x.trim() !== "" && x.trim().toLowerCase() !== "accept-encoding")) return false;
     if (h.get("content-type")?.startsWith("text/event-stream")) return false;
+    // A per-response CSP nonce would be replayed to every visitor served from the cache.
+    const csp = h.get("content-security-policy");
+    if (csp !== null && csp.includes("'nonce-")) return false;
     const len = h.get("content-length");
     if (len !== null && Number(len) > maxEntryBytes) return false;
     return true;
@@ -564,7 +576,7 @@ export function bots(opts: BotsOptions = {}) {
       ctx.state[STATE] = st;
       const method = ctx.method;
       const head = method === "HEAD";
-      const cacheable = c !== null && (method === "GET" || head) && ctx.route !== null && !ctx.user && !ctx.headers.has("authorization") && !ctx.headers.has("upgrade");
+      const cacheable = c !== null && (method === "GET" || head) && ctx.route !== null && !ctx.user && !hasCredentials(ctx.headers) && !ctx.headers.has("upgrade");
       if (cacheable) {
         const key = keyFor(ctx, action);
         const store = storeFor(ctx);

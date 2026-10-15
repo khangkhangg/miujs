@@ -4,6 +4,11 @@ import type { CacheKeyInfo, CacheStore } from "./store.ts";
 export interface MemoryStoreOptions {
   /** Most entries kept before the least recently used one is evicted. Default 1000. */
   maxEntries?: number;
+  /**
+   * Most total value length (UTF-16 units, ~bytes for ASCII/JSON) kept; the least recently used
+   * entries go first, and a single value over the budget is not stored. Default 64 MiB.
+   */
+  maxBytes?: number;
   /** Clock in milliseconds. Tests pass a fake one. Default `Date.now`. */
   now?: () => number;
 }
@@ -22,6 +27,10 @@ export function memoryStore(opts: MemoryStoreOptions = {}): CacheStore {
   const maxEntries = opts.maxEntries ?? 1000;
   if (!Number.isInteger(maxEntries) || maxEntries < 1) {
     throw cacheErrors.config(`memoryStore maxEntries must be a positive integer, got ${String(maxEntries)}`, "Pass `maxEntries` >= 1, e.g. memoryStore({ maxEntries: 1000 }).");
+  }
+  const maxBytes = opts.maxBytes ?? 64 * 1024 * 1024;
+  if (!(maxBytes > 0)) {
+    throw cacheErrors.config(`memoryStore maxBytes must be positive, got ${String(maxBytes)}`, "Pass `maxBytes` > 0, e.g. memoryStore({ maxBytes: 64 * 1024 * 1024 }).");
   }
   const now = opts.now ?? Date.now;
   const map = new Map<string, Entry>();
@@ -53,9 +62,11 @@ export function memoryStore(opts: MemoryStoreOptions = {}): CacheStore {
     },
     async set(key, value, o) {
       drop(key);
+      if (value.length > maxBytes) return;
       map.set(key, { value, exp: o?.ttl ? now() + o.ttl * 1000 : Infinity });
       chars += value.length;
       if (map.size > maxEntries) drop(map.keys().next().value as string);
+      while (chars > maxBytes) drop(map.keys().next().value as string);
     },
     async delete(key) {
       drop(key);
@@ -91,6 +102,6 @@ export function memoryStore(opts: MemoryStoreOptions = {}): CacheStore {
       chars = 0;
       return n;
     },
-    inspect: () => ({ maxEntries }),
+    inspect: () => ({ maxEntries, maxBytes }),
   };
 }

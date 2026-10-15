@@ -57,6 +57,7 @@ const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const MAX_COOKIE = 4000;
 const MIN_SECRET = 32;
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 /** Per-request session state. */
 class SessionImpl implements Session {
@@ -186,8 +187,24 @@ export function session(opts: SessionOptions = {}) {
 
   const KEY = Symbol("session");
 
+  // The secrets list is rebuilt only when its source changes (opts are fixed; env is per request
+  // on Workers but almost always the same value), so the verified-cookie cache below can tell
+  // a rotation by identity.
+  let lastKey: string | undefined;
+  let lastList: string[] | undefined;
+
   function secretsFor(ctx: Context): string[] {
-    const raw = opts.secret ?? (ctx.env?.SESSION_SECRET as string | undefined);
+    const raw = opts.secret ?? (ctx.env?.SESSION_SECRET as string | string[] | undefined);
+    // Compared by value (never by reference), so a list edited in place still counts as new.
+    const key = typeof raw === "string" ? raw : Array.isArray(raw) ? raw.join("\u0000") : undefined;
+    if (key !== undefined && key === lastKey && lastList !== undefined) return lastList;
+    const list = buildSecrets(ctx, raw);
+    lastKey = key;
+    lastList = list;
+    return list;
+  }
+
+  function buildSecrets(ctx: Context, raw: unknown): string[] {
     const list = (Array.isArray(raw) ? raw : raw ? [raw] : []).filter(Boolean);
     if (list.length === 0) {
       if (!dev) {
@@ -246,23 +263,56 @@ export function session(opts: SessionOptions = {}) {
     }
   }
 
-  async function load(ctx: Context, raw: string, secrets: string[]): Promise<SessionImpl | null> {
+  // Cookies whose signature was already verified, by exact cookie string, for the secrets list
+  // they were verified with: a returning client skips the HMAC and (cookie mode) the base64
+  // decode. Expiry, the server store and auth's own checks still run on every request. Bounded,
+  // oldest first out; a different secrets list empties it, so a rotated-out secret stops working.
+  const verified = new Map<string, string>();
+  let verifiedFor: string[] | undefined;
+  const VERIFIED_MAX = 1024;
+
+  async function verify(raw: string, secrets: string[]): Promise<string | null> {
+    if (verifiedFor !== secrets) {
+      verified.clear();
+      verifiedFor = secrets;
+    }
+    const hit = verified.get(raw);
+    if (hit !== undefined) return hit;
     const value = await unsign(raw, secrets);
+    if (value === null) return null;
+    const text = store ? value : decodePayload(value);
+    if (text === null) return null;
+    if (verified.size >= VERIFIED_MAX) verified.delete(verified.keys().next().value as string);
+    verified.set(raw, text);
+    return text;
+  }
+
+  async function load(ctx: Context, raw: string, secrets: string[]): Promise<SessionImpl | null> {
+    const value = await verify(raw, secrets);
     if (value === null) return null;
     if (store) {
       const rec = await store.get(value, ctx.env);
       return rec && rec.e > Date.now() ? new SessionImpl(value, rec) : null;
     }
-    const bytes = base64urlDecode(value);
-    if (!bytes) return null;
     let p: { i?: unknown; d?: unknown; f?: unknown; e?: unknown };
     try {
-      p = JSON.parse(new TextDecoder().decode(bytes));
+      p = JSON.parse(value);
     } catch {
       return null;
     }
     if (typeof p?.i !== "string" || typeof p.e !== "number" || p.e <= Date.now() || typeof p.d !== "object" || p.d === null) return null;
     return new SessionImpl(p.i, { d: p.d as Record<string, unknown>, f: p.f as Record<string, unknown> | undefined, e: p.e });
+  }
+
+  /** A cookie-mode payload as JSON text, or null when it is not base64url UTF-8. */
+  function decodePayload(value: string): string | null {
+    const bytes = base64urlDecode(value);
+    if (!bytes) return null;
+    try {
+      return utf8Decoder.decode(bytes);
+    } catch {
+      return null;
+    }
   }
 
   return definePlugin({
@@ -284,6 +334,8 @@ export function session(opts: SessionOptions = {}) {
       const st = ctx.state[KEY as unknown as string] as { s: SessionImpl; secrets: string[]; hadCookie: boolean; valid: boolean } | undefined;
       if (!st) return;
       const { s, secrets } = st;
+      // Most responses change nothing: return before building the URL and cookie attributes.
+      if (!s.destroyed && !s.changed && !(st.hadCookie && !st.valid) && s.stale.length === 0) return;
       const url = ctx.url;
       const attrs = {
         path: opts.path ?? "/",

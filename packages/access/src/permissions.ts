@@ -127,16 +127,21 @@ export function evaluate(input: EvaluateInput, permission: Permission, record?: 
   const can = (p: Permission) => roleNames.some((r) => roleAllows(roles, r, p));
   if (!can(permission)) return { ok: false, reason: "role" };
   if (record === undefined) return { ok: true };
-  const [resource, action] = permission.split(":");
+  const [resource, action = "*"] = permission.split(":");
   for (const pol of policies) {
-    if (pol.resource !== resource || !Object.prototype.hasOwnProperty.call(pol.rules, action)) continue;
-    let allowed: unknown = false;
-    try {
-      allowed = pol.rules[action]({ user, record, org, can });
-    } catch {
-      allowed = false; // A buggy policy denies rather than grants.
+    if (resource !== "*" && pol.resource !== resource) continue;
+    // A wildcard ("contacts:*", "*") asks for every action, so every rule it covers must pass;
+    // skipping them would let `can("contacts:*", record)` bypass row-level rules.
+    const actions = action === "*" ? Object.keys(pol.rules) : Object.prototype.hasOwnProperty.call(pol.rules, action) ? [action] : [];
+    for (const a of actions) {
+      let allowed: unknown = false;
+      try {
+        allowed = pol.rules[a]({ user, record, org, can });
+      } catch {
+        allowed = false; // A buggy policy denies rather than grants.
+      }
+      if (allowed !== true) return { ok: false, reason: "policy" };
     }
-    if (allowed !== true) return { ok: false, reason: "policy" };
   }
   return { ok: true };
 }
