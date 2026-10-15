@@ -512,6 +512,13 @@ export class RoomInstance<S = any, X = any> {
     return this.conns.size;
   }
 
+  /** Players whose socket dropped and whose seat is held for the reconnect grace period. */
+  get inGrace(): number {
+    let n = 0;
+    for (const s of this.seats.values()) if (s.graceUntil !== null) n++;
+    return n;
+  }
+
   /** Full view for agents and tools (state plus players). */
   describe(): { type: string; id: string; createdAt: number; state: S; players: Player[] } {
     return { type: this.type, id: this.id, createdAt: this.createdAt, state: clone(this.state), players: [...this.seats.values()].map((s) => ({ ...s.player })) };

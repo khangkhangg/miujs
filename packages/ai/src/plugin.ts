@@ -1,5 +1,7 @@
 import { definePlugin, type App, type CloudflareNeeds, type Context } from "miujs";
 import { makeClient, type AIClient, type AIOptions } from "./client.ts";
+import { aiManage } from "./manage.ts";
+import { AIMetrics } from "./metrics.ts";
 import type { VectorStore } from "./vectors.ts";
 
 export interface AIPluginOptions extends AIOptions {
@@ -28,6 +30,10 @@ declare module "miujs" {
 export function ai(opts: AIPluginOptions) {
   let app: App | undefined;
   const { env: _env, log: _log, stores = [], ...shared } = opts;
+  /** Operator overrides from manage() settings (model, maxTokens, temperature). */
+  const overrides: { model?: string; maxTokens?: number; temperature?: number } = {};
+  const effective = () => ({ ...shared, ...overrides });
+  const metrics = new AIMetrics();
   return definePlugin({
     name: "ai",
     setup(a: App) {
@@ -39,12 +45,14 @@ export function ai(opts: AIPluginOptions) {
       Object.defineProperty(ctx, "ai", {
         configurable: true,
         enumerable: false,
-        get: () => (client ??= makeClient(shared, { env: ctx.env, log: ctx.log, ctx, app })),
+        get: () => (client ??= makeClient(effective(), { env: ctx.env, log: ctx.log, ctx, app, metrics })),
       });
     },
     inspect() {
       return makeClient(shared, { env: {}, log: undefined as never }).inspect();
     },
+    /** Operator view for @miujs/admin: usage counters, default model / max tokens / temperature, test prompt. */
+    manage: () => aiManage({ base: shared, effective, overrides, metrics }),
     cloudflare(): CloudflareNeeds {
       // Workers AI's [ai] binding (chat or embeddings provider) and listed Vectorize indexes.
       const parts = [shared.provider, shared.embeddings?.provider, ...stores].map((x) => x?.cloudflare?.() ?? {});

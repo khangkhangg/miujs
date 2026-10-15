@@ -27,6 +27,7 @@ import { durableHost, type MatchHost, type NamespaceLike } from "./cloudflare.ts
 import { defaultDatabase, isD1Ref } from "./db.ts";
 import { gameErrors } from "./errors.ts";
 import { ticketGate } from "./gate.ts";
+import { matchmakerManage } from "./manage.ts";
 import { QueueCore, checkQueueConfig, type Assignment, type MatchSpec, type QueueConfig, type QueueEntry, type QueueStatus } from "./queue.ts";
 import { registerResultSink, type GameRoomData, type MatchInfo } from "./room.ts";
 import { gameSecret, hmac, hmacVerify, issueTicket } from "./sign.ts";
@@ -35,7 +36,7 @@ import { storeFor, type GameStore, type Result, type ResultSummary } from "./sto
 /** The parts of the `rooms()` plugin the matchmaker uses. */
 export interface RoomsLike {
   createRoom(type: string, o: { data?: unknown; env?: Record<string, unknown>; code: false }): Promise<{ id: string }>;
-  registry: { has(type: string): boolean };
+  registry: { has(type: string): boolean; instances?(): Iterable<{ type: string; isClosed: boolean; room: any; close(reason?: string): void }> };
   /** Route prefix of the rooms plugin, e.g. `/rooms`. */
   path?: string;
   inspect?(): unknown;
@@ -132,6 +133,11 @@ class LocalHost implements MatchHost {
     if (!set) return;
     const s = this.cores.get(queue)!.status(userId, this.inner.clock.now());
     for (const fn of [...set]) fn(s);
+  }
+
+  /** Re-run matching for a queue now (after its knobs changed). */
+  refresh(queue: string): void {
+    this.pump(queue);
   }
 
   /** Run matching for one queue now; create rooms for new matches. */
@@ -440,6 +446,17 @@ export function matchmaker(opts: MatchmakerOptions) {
       durableObject: { binding, className },
       routes: routes.filter((r) => !r.config.internal).map((r) => `${r.method} ${r.path}`),
     }),
+    /** Operator view for @miujs/admin: queues, waiting players, matching knobs. */
+    manage: () =>
+      matchmakerManage({
+        queues: opts.queues,
+        clock,
+        local: localHost,
+        namespace: (ctx: Context) => nsFrom(ctx, binding),
+        host,
+        longPolls: () => waiting.size,
+        rooms: () => opts.rooms.registry.instances?.() ?? null,
+      }),
     cloudflare: (): CloudflareNeeds => {
       const needs: CloudflareNeeds = { durableObjects: [{ binding, className }] };
       if (isD1Ref(source)) needs.d1 = [source.binding];

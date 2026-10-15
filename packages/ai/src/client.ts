@@ -4,6 +4,7 @@ import { createLogger, processEnv, validate, type App, type Context, type Env, t
 import { runLoop, type RunOptions, type RunResult } from "./agent.ts";
 import { answer, indexDocs, type IndexOptions, type RagOptions, type RagResult } from "./rag.ts";
 import { aiErrors } from "./errors.ts";
+import type { AIMetrics } from "./metrics.ts";
 import { jsonInstruction } from "./providers/openai.ts";
 import { closedSchema, feedback, parseJsonOutput } from "./structured.ts";
 import type { AIMessage, GenerateResult, Provider, ProviderRequest, ProviderRuntime, StreamEvent, ToolSpec, Usage } from "./types.ts";
@@ -22,6 +23,8 @@ export interface AIOptions {
   embeddings?: { provider?: Provider; model?: string };
   /** Default `max_tokens` for generate/object/run/rag. Default 16000 (64000 for stream). */
   maxTokens?: number;
+  /** Default sampling temperature when a call does not pass one. Default: the provider's. */
+  temperature?: number;
   /** Milliseconds to wait for a response (for streams: for the headers). Default 120000. */
   timeoutMs?: number;
   /** Retries on 429/5xx/network errors, with backoff honoring `retry-after`. Default 2. */
@@ -65,6 +68,8 @@ export interface Scope {
   ctx?: Context;
   /** The app, for `appTools()` without an explicit app. */
   app?: App;
+  /** Usage counters for the operator view (the ai() plugin's manage()). */
+  metrics?: AIMetrics;
 }
 
 export interface AIClient {
@@ -129,7 +134,8 @@ export function internals(opts: AIOptions, scope: Scope): Internals {
       if (!messages.length) throw aiErrors.config("No input for the model", "Pass `prompt` (a string) or `messages` (an array of { role, content }).");
       const req: ProviderRequest = { model: self.modelFor(o.model), messages, maxTokens: o.maxTokens ?? opts.maxTokens ?? defaultMax };
       if (o.system) req.system = o.system;
-      if (o.temperature !== undefined) req.temperature = o.temperature;
+      const temperature = o.temperature ?? opts.temperature;
+      if (temperature !== undefined) req.temperature = temperature;
       if (o.tools?.length) req.tools = o.tools;
       if (o.cache) req.cache = o.cache;
       if (o.signal) req.signal = o.signal;
@@ -137,6 +143,7 @@ export function internals(opts: AIOptions, scope: Scope): Internals {
       return req;
     },
     logUsage(op, model, usage, started) {
+      scope.metrics?.usage(model, usage);
       scope.log.debug("ai.usage", { provider: p.name, model, op, ...usage, ms: Math.round(performance.now() - started) });
     },
   };
@@ -147,10 +154,20 @@ export function makeClient(opts: AIOptions, scope: Scope): AIClient {
   const p = opts.provider;
   const it = internals(opts, scope);
 
+  /** Count a failed provider call (code only) and rethrow. */
+  const counted = async <T>(model: string | undefined, fn: () => Promise<T>): Promise<T> => {
+    try {
+      return await fn();
+    } catch (err) {
+      scope.metrics?.error(model, err);
+      throw err;
+    }
+  };
+
   const generate = async (o: GenerateOptions): Promise<GenerateResult> => {
     const req = it.request(o, DEFAULT_MAX_TOKENS);
     const started = performance.now();
-    const out = await p.generate(req, it.runtime());
+    const out = await counted(req.model, () => p.generate(req, it.runtime()));
     it.logUsage("generate", out.model, out.usage, started);
     return out;
   };
@@ -158,9 +175,14 @@ export function makeClient(opts: AIOptions, scope: Scope): AIClient {
   async function* events(o: GenerateOptions, signal: AbortSignal): AsyncGenerator<StreamEvent> {
     const req = it.request({ ...o, signal }, DEFAULT_STREAM_MAX_TOKENS);
     const started = performance.now();
-    for await (const ev of p.stream(req, it.runtime())) {
-      if (ev.type === "finish") it.logUsage("stream", ev.model, ev.usage, started);
-      yield ev;
+    try {
+      for await (const ev of p.stream(req, it.runtime())) {
+        if (ev.type === "finish") it.logUsage("stream", ev.model, ev.usage, started);
+        yield ev;
+      }
+    } catch (err) {
+      if (!signal.aborted) scope.metrics?.error(req.model, err);
+      throw err;
     }
   }
 
@@ -229,7 +251,7 @@ export function makeClient(opts: AIOptions, scope: Scope): AIClient {
     let issues: Issue[] = [];
     for (let attempt = 0; attempt < 2; attempt++) {
       const started = performance.now();
-      const out = await p.generate({ ...base, messages }, it.runtime());
+      const out = await counted(base.model, () => p.generate({ ...base, messages }, it.runtime()));
       it.logUsage("object", out.model, out.usage, started);
       if (out.stopReason === "refusal") throw aiErrors.refused(p.name);
       lastText = out.text;
@@ -261,7 +283,8 @@ export function makeClient(opts: AIOptions, scope: Scope): AIClient {
     const list = typeof texts === "string" ? [texts] : texts;
     if (!list.length) return [];
     const started = performance.now();
-    const out = await ep.embed(list, model, it.runtime());
+    const out = await counted(undefined, () => ep.embed!(list, model, it.runtime()));
+    scope.metrics?.embed();
     scope.log.debug("ai.usage", { provider: ep.name, model, op: "embed", inputs: list.length, ms: Math.round(performance.now() - started) });
     return out;
   }

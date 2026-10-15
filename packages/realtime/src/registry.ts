@@ -128,6 +128,11 @@ export class LocalRooms {
     if (room.isEmpty) this.scheduleDispose(room);
   }
 
+  /** Open room instances, in creation order (shard rooms included). */
+  *instances(): IterableIterator<RoomInstance> {
+    for (const r of this.rooms.values()) if (!r.isClosed) yield r;
+  }
+
   list(): RoomInfo[] {
     return [...this.rooms.values()].map((r) => r.info());
   }

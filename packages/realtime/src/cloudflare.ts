@@ -14,6 +14,7 @@ import type { RoomStorage, RoomType } from "./define.ts";
 import { jsonEqual } from "./diff.ts";
 import { joinParamsFrom, ROOM_ID_RE, type DurableObjectNamespaceLike } from "./plugin.ts";
 import { parseQueryObject } from "./query.ts";
+import { applyRoomOp, type RoomOp } from "./manage.ts";
 import { RoomInstance, type Encoding, type RoomSnapshot } from "./room.ts";
 import { parseShardId, pickShard, shardConfig, shardId, shardTokenPrefix, type ShardConfig, type ShardInfo } from "./shard.ts";
 
@@ -221,6 +222,16 @@ export function createRoomDurableObject(roomTypes: readonly RoomType<any, any, a
           const inst = await this.load(type, id, false);
           if (!inst) return errors.custom({ code: "MIU_E_ROOM_NOT_FOUND", status: 404, message: "No active room here", fix: "Join the room first." }).toResponse();
           return Response.json(inst.describe());
+        }
+        case "/_miu/admin": {
+          // rooms().manage() actions: broadcast / kick / close this room.
+          const op = body as RoomOp;
+          if (op.op !== "broadcast" && op.op !== "kick" && op.op !== "close") return errors.badRequest("Unknown room operation", "Use broadcast, kick or close.").toResponse();
+          const inst = await this.load(type, id, false);
+          if (!inst && op.op !== "close") return errors.custom({ code: "MIU_E_ROOM_NOT_FOUND", status: 404, message: "No active room here", fix: "Check the room type and id." }).toResponse();
+          const message = applyRoomOp(inst, `${type}:${id}`, op);
+          await this.persist();
+          return Response.json({ message });
         }
         case "/_miu/shard/assign": {
           if (!cfg) break;

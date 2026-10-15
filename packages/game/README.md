@@ -240,6 +240,23 @@ Rooms get the Durable Object's `env` as `room.env`, so `reportResult(room)` and
 without a join code (`createRoom(type, { code: false })`). To kick a player, use realtime's
 `room.kick(playerId)` (close 4009, no resume).
 
+## Admin
+
+`matchmaker()` and `leaderboard()` implement `manage()` for `@miujs/admin`. Tickets and secrets are never shown.
+
+**Matchmaking** section:
+
+- **Status**: waiting players, matches in the last minute, long-polls in flight, live game rooms, and per queue: waiting, oldest and average wait, matches per minute. On Cloudflare the queue numbers come from each queue's Durable Object; long-polls are 0 (status reads do not long-poll there) and live game rooms are unknown (rooms cannot be listed).
+- **List** `queue`: waiting players (queue, user, name, rating, region, wait, rating window), filter by queue, search by user or name. Row action `remove` takes a player out of the queue.
+- **Settings**: per queue `widenAfterMs`, `maxWaitMs`, `initialWindow`, `widenBy`, `maxWindow` (`null` = unlimited), applied at once (matching re-runs). On Cloudflare they are stored in each queue's Durable Object. Per game room type `closeAfterResultMs` (or `false`): this applies in the isolate that runs the room, so on Cloudflare a room Durable Object in another isolate keeps the deployed value.
+- **Action** `closeFinishedRooms` (danger): closes in-process game rooms whose result was reported, after a `game.closed` event.
+
+**Leaderboard** section (one per board):
+
+- **Status**: current period, entries this period, top score.
+- **List** `entries`: current period in rank order (ties share a rank), search by player id. Row action `remove` (danger) deletes one entry.
+- **Action** `reset` (danger, `{ period? }`): deletes every score of a period, the current one by default.
+
 ## Errors
 
 | Code | When |

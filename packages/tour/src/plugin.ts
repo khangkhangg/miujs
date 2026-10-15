@@ -3,6 +3,7 @@ import { describeDatabase } from "@miujs/db";
 import { aggregateAll, analyticsRoutes } from "./analytics.ts";
 import { tourErrors } from "./errors.ts";
 import { createJobs } from "./jobs.ts";
+import { tourManage } from "./manage.ts";
 import { adminRoutes } from "./routes/admin.ts";
 import { assetRoutes } from "./routes/assets.ts";
 import { liveRoutes } from "./live.ts";
@@ -75,6 +76,8 @@ export function tour(opts: TourOptions = {}) {
         live: !!opts.live,
       };
     },
+    /** Operator view for @miujs/admin: counts, tours list, publish / unpublish, reprocess, revoke shares. */
+    manage: () => tourManage(rt, jobs),
     cloudflare(): CloudflareNeeds {
       const needs: CloudflareNeeds = {};
       const db = describeDatabase(rt.source());

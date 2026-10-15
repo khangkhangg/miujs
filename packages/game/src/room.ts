@@ -180,6 +180,21 @@ export function matchOf(room: Room): MatchInfo | undefined {
   return m ? structuredClone(m) : undefined;
 }
 
+/** True once `reportResult()` succeeded for this room (the game is over). */
+export function isReported(room: Room): boolean {
+  return gameOf(room)?.reported === true;
+}
+
+/** @internal The game room type's `closeAfterResultMs` in this isolate (default 5000). */
+export function closeAfterResultOf(type: string): number | false {
+  return options.get(type)?.closeAfterResultMs ?? 5_000;
+}
+
+/** @internal Change `closeAfterResultMs` for a game room type at runtime (used by manage()). */
+export function setCloseAfterResult(type: string, ms: number | false): void {
+  options.set(type, { ...options.get(type), closeAfterResultMs: ms });
+}
+
 /**
  * Report the match outcome from the authoritative room. Ids may be player ids (mapped through
  * seats) or user ids of the roster. Only the first report counts. `summary` is what the store

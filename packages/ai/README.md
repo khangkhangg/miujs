@@ -137,12 +137,21 @@ Vector stores: `memoryVectors()` (in-process), `sqliteVectors(db, { table })` (f
 | `maxTokens` | `number` | `16000` (`64000` for `stream`) | Default `max_tokens`. |
 | `timeoutMs` | `number` | `120000` | Request timeout (for streams: until headers arrive). |
 | `retries` | `number` | `2` | Retries on 429, 5xx and network errors, honoring `retry-after`. |
+| `temperature` | `number` | the provider's | Default sampling temperature when a call passes none. |
 | `fetch` | `typeof fetch` | global `fetch` | Injected fetch (tests, proxies). |
 | `env` | `Env` | process env | `createAI` only: where API keys and bindings are read. |
 | `log` | `Logger` | a `createLogger("info")` | `createAI` only: usage is logged at debug level. |
 | `stores` | `VectorStore[]` | `[]` | `ai()` only: stores whose bindings `miu deploy cloudflare` should declare. |
 
 Per-call options for `generate` / `stream` / `object`: `system`, `prompt`, `messages`, `model`, `maxTokens`, `temperature`, `tools`, `cache`, `signal`, `extra`. `run` adds `tools` (required), `maxSteps` (default 10) and `limits: { totalTokens, timeMs }`. `rag` takes `query`, `store`, `topK` (default 4) and `filter`.
+
+## Admin
+
+`ai()` implements `manage()`, so `@miujs/admin` shows an **AI** section:
+
+- **Status**: provider, model and embeddings names; completed requests, input/output tokens, tool calls, embedding calls, errors and the last error code, plus a per-model table (20 models, the rest under `(other)`). Counters are in memory, per process (per isolate on Workers). Keys, prompts, replies and provider error messages are never kept.
+- **Settings**: default `model` (`null` = configured default), `maxTokens` and `temperature` (`null` = provider default), applied to later requests without a deploy.
+- **Action** `testPrompt` (`{ prompt, maxTokens? }`, default 256 tokens): sends a prompt with the current settings and returns the reply (2000 characters at most), model, usage and stop reason. At most 5 per minute per process (`MIU_E_AI_TEST_RATE_LIMITED`).
 
 ## Errors
 

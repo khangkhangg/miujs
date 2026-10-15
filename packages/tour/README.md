@@ -192,6 +192,14 @@ miu({ plugins: [staticFiles({ dir: "public" }), tour({ viewerAssets: { basePath:
 
 The SRI hashes still apply to self-hosted files, so a modified copy fails to load.
 
+## Admin
+
+`tour()` implements `manage()`, so `@miujs/admin` shows a **Tours** section. Operators act across every org.
+
+- **Status**: tours, published tours, scenes, hotspots, assets, failed assets, and assets by status with their source size.
+- **List** `tours`: id, slug, title, status, visibility, org, scenes, failed assets, whether a password is set, last update. Filter by status and visibility; search title, slug or id. Password hashes, share versions and secrets are never shown.
+- **Row actions**: `publish`, `unpublish` (danger), `reprocess` (`{ only: "failed" | "all" }`, queues tiling / model optimization again through `@miujs/queue`) and `revokeShares` (danger, invalidates every share link). Publishing a published tour (and the like) is a no-op with a message.
+
 ## Errors
 
 Every error is a `MiuError` with a `MIU_E_TOUR_*` code and a `fix` (see `tourErrors`).

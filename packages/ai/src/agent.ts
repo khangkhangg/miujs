@@ -73,12 +73,15 @@ export async function runLoop(it: Internals, o: RunOptions, app: App | undefined
     }
     let out: GenerateResult;
     const t0 = performance.now();
+    let model: string | undefined;
     try {
       const req = it.request({ ...gen, messages: transcript, prompt: undefined, signal }, DEFAULT_MAX_TOKENS);
+      model = req.model;
       if (specs.length) req.tools = specs;
       out = await it.opts.provider.generate(req, it.runtime());
     } catch (err) {
       if (timeUp() && !gen.signal?.aborted) return done("time_limit", step);
+      if (model) scope.metrics?.error(model, err);
       throw err;
     } finally {
       clearTimeout(timer);
@@ -105,6 +108,7 @@ export async function runLoop(it: Internals, o: RunOptions, app: App | undefined
     const results: AIPart[] = [];
     for (const { call, r, ms } of ran) {
       records.push({ id: call.id, name: call.name, args: call.args, result: r.content, isError: r.isError, ms });
+      scope.metrics?.tool(r.isError);
       results.push({ type: "tool_result", id: call.id, name: call.name, content: r.content, ...(r.isError ? { isError: true } : {}) });
     }
     transcript.push({ role: "user", content: results });

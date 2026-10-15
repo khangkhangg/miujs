@@ -93,6 +93,35 @@ export interface QueueSnapshot {
   statuses: Record<string, Kept>;
 }
 
+/** Matching knobs an operator may change at runtime (`maxWindow: null` = unlimited). */
+export interface QueueTuning {
+  widenAfterMs: number;
+  maxWaitMs: number;
+  initialWindow: number;
+  widenBy: number;
+  maxWindow: number | null;
+}
+
+/** A waiting player as operators see it. */
+export interface WaitingView {
+  userId: string;
+  name: string;
+  rating: number;
+  region: string | null;
+  joinedAt: number;
+  window: number;
+}
+
+export interface QueueStats {
+  waiting: number;
+  oldestWaitMs: number;
+  avgWaitMs: number;
+  matchesLastMinute: number;
+}
+
+/** Matches remembered for `matchesLastMinute` (bounded). */
+const RECENT_CAP = 10_000;
+
 export interface QueueCoreOptions {
   /** Match id generator. Default: random. */
   matchId?: () => string;
@@ -127,6 +156,8 @@ export class QueueCore {
   private statuses = new Map<string, Kept>();
   private seq = 0;
   private nextId: () => string;
+  /** When recent matches formed (in memory only; for operator stats). */
+  private recent: number[] = [];
 
   constructor(name: string, cfg: QueueConfig, opts: QueueCoreOptions = {}) {
     checkQueueConfig(name, cfg);
@@ -252,9 +283,62 @@ export class QueueCore {
       const group = [anchor, ...picks];
       for (const w of group) used.add(w);
       matches.push(this.form(group, now));
+      this.recent.push(now);
     }
     if (used.size) this.waiting = this.waiting.filter((w) => !used.has(w));
+    this.pruneRecent(now);
     return { matches, timedOut };
+  }
+
+  /** Runtime-adjustable matching knobs. */
+  tuning(): QueueTuning {
+    const c = this.cfg;
+    return { widenAfterMs: c.widenAfterMs, maxWaitMs: c.maxWaitMs, initialWindow: c.initialWindow, widenBy: c.widenBy, maxWindow: Number.isFinite(c.maxWindow) ? c.maxWindow : null };
+  }
+
+  /** Change matching knobs at runtime (validated like the config). Takes effect on the next run(). */
+  configure(patch: Partial<QueueTuning>): void {
+    const next = { ...this.cfg };
+    for (const k of ["widenAfterMs", "maxWaitMs", "initialWindow", "widenBy"] as const) if (patch[k] !== undefined) next[k] = patch[k];
+    if (patch.maxWindow !== undefined) next.maxWindow = patch.maxWindow === null ? Infinity : patch.maxWindow;
+    checkQueueConfig(this.name, next);
+    if (!(next.initialWindow >= 0) || !(next.widenBy >= 0) || !(next.maxWindow >= 0)) throw gameErrors.queueConfig(`Queue "${this.name}": windows must be >= 0`, "Use initialWindow, widenBy and maxWindow of 0 or more.");
+    this.cfg = next;
+  }
+
+  /** Waiting players in join order, `offset`/`limit` paged; `search` matches user id or name. */
+  waitingPage(offset: number, limit: number, now: number, search?: string): { rows: WaitingView[]; more: boolean } {
+    const q = search?.toLowerCase();
+    const rows: WaitingView[] = [];
+    let seen = 0;
+    for (const w of this.waiting) {
+      if (q && !w.userId.toLowerCase().includes(q) && !w.name.toLowerCase().includes(q)) continue;
+      if (seen++ < offset) continue;
+      if (rows.length === limit) return { rows, more: true };
+      rows.push({ userId: w.userId, name: w.name, rating: w.rating, region: w.region ?? null, joinedAt: w.joinedAt, window: this.window(w, now) });
+    }
+    return { rows, more: false };
+  }
+
+  /** Cheap operator numbers: queue length, wait times, matches formed in the last minute. */
+  stats(now: number): QueueStats {
+    let oldest = 0;
+    let total = 0;
+    for (const w of this.waiting) {
+      const waited = Math.max(0, now - w.joinedAt);
+      total += waited;
+      if (waited > oldest) oldest = waited;
+    }
+    this.pruneRecent(now);
+    const n = this.waiting.length;
+    return { waiting: n, oldestWaitMs: oldest, avgWaitMs: n ? Math.round(total / n) : 0, matchesLastMinute: this.recent.length };
+  }
+
+  private pruneRecent(now: number): void {
+    let i = 0;
+    while (i < this.recent.length && this.recent[i] <= now - 60_000) i++;
+    if (i) this.recent.splice(0, i);
+    if (this.recent.length > RECENT_CAP) this.recent.splice(0, this.recent.length - RECENT_CAP);
   }
 
   /** The match's room is ready: store each player's room and ticket. */

@@ -5,6 +5,7 @@ import { CODE_RE, KvCodeStore, MemoryCodeStore, allocateCode, createCode, type C
 import type { RoomType } from "./define.ts";
 import { KeyedLimiter } from "./limiter.ts";
 import { LocalRooms } from "./registry.ts";
+import { roomsManage } from "./manage.ts";
 import { shardConfig, shardFromToken, shardId, type ShardConfig } from "./shard.ts";
 import { cleanParams, type JoinParams, type RoomInstance } from "./room.ts";
 
@@ -271,6 +272,8 @@ function roomsPlugin(opts: RoomsOptions) {
       if (ctx.runtime === "workerd") workerEnv = ctx.env;
     },
     mcpTools: () => tools,
+    /** Operator view for @miujs/admin: live rooms, reconnect grace, broadcast / kick / close. */
+    manage: () => roomsManage({ registry, known, clock, namespace: (ctx: Context) => namespace(ctx, binding) }),
     cloudflare: (): CloudflareNeeds & { durableObjects: { binding: string; className: string }[] } =>
       opts.codes ? { durableObjects: [{ binding, className }], kv: [opts.codes] } : { durableObjects: [{ binding, className }] },
     inspect: () => ({ path: `${prefix}/:type/:id`, types: known, rooms: registry.list() }),

@@ -16,6 +16,7 @@ import { migrateOnce, resolveDatabase, type Database, type DatabaseSource } from
 import { KeyedLimiter, systemClock, type Clock } from "@miujs/realtime";
 import { defaultDatabase, isD1Ref } from "./db.ts";
 import { gameErrors } from "./errors.ts";
+import { leaderboardManage } from "./manage.ts";
 import { signToken, verifyToken } from "./sign.ts";
 import { gameMigrations } from "./store.ts";
 
@@ -334,6 +335,8 @@ export function leaderboard(opts: LeaderboardOptions) {
       warnings: opts.maxScore === undefined ? ["no maxScore: any finite score is accepted from rooms"] : [],
     }),
     cloudflare: (): CloudflareNeeds => (isD1Ref(source) ? { d1: [source.binding] } : {}),
+    /** Operator view for @miujs/admin: entries in rank order, remove one, reset a period. */
+    manage: () => leaderboardManage({ id, sort: opts.sort, resets: opts.resets, mode, db: dbFor, period: current }),
   });
   return Object.assign(plugin, board);
 }

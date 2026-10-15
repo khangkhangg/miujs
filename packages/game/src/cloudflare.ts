@@ -10,7 +10,7 @@ import { errors, isMiuError, type Env } from "miujs";
 import { systemClock, type Clock } from "@miujs/realtime";
 import { gameErrors } from "./errors.ts";
 import type { Matchmaker, MatchmakerInternals } from "./matchmaker.ts";
-import { QueueCore, type QueueEntry, type QueueSnapshot, type QueueStatus } from "./queue.ts";
+import { QueueCore, type QueueEntry, type QueueSnapshot, type QueueStats, type QueueStatus, type QueueTuning, type WaitingView } from "./queue.ts";
 
 export interface NamespaceLike {
   idFromName(name: string): unknown;
@@ -37,6 +37,21 @@ export function durableHost(ns: NamespaceLike): MatchHost {
     join: (queue, entry) => call(ns, queue, "join", entry),
     leave: (queue, userId) => call(ns, queue, "leave", { userId }),
     status: (queue, userId) => call(ns, queue, "status", { userId }),
+  };
+}
+
+/** Operator calls (matchmaker manage()) forwarded to a queue's Durable Object. */
+export interface MatchAdmin {
+  inspect(queue: string): Promise<{ stats: QueueStats; tuning: QueueTuning }>;
+  entries(queue: string, offset: number, limit: number, search?: string): Promise<{ rows: WaitingView[]; more: boolean }>;
+  configure(queue: string, tuning: Partial<QueueTuning>): Promise<QueueTuning>;
+}
+
+export function durableAdmin(ns: NamespaceLike): MatchAdmin {
+  return {
+    inspect: (queue) => call(ns, queue, "inspect", {}),
+    entries: (queue, offset, limit, search) => call(ns, queue, "entries", { offset, limit, search }),
+    configure: (queue, tuning) => call(ns, queue, "configure", { tuning }),
   };
 }
 
@@ -68,6 +83,8 @@ declare const WebSocketPair: { new (): { 0: unknown; 1: CfWebSocketLike } } | un
 
 const SNAP = "miu:queue";
 const NAME = "miu:queue:name";
+/** Operator overrides of the queue's matching knobs (manage() settings). */
+const TUNING = "miu:queue:tuning";
 
 function internals(mm: Matchmaker): MatchmakerInternals {
   return (mm as unknown as Record<symbol, MatchmakerInternals>)[Symbol.for("miujs.game.matchmaker")];
@@ -128,6 +145,19 @@ export function createMatchmakerDurableObject(mm: Matchmaker, opts: MatchmakerDu
           }
           case "status":
             return Response.json({ ok: await inner.present(core.status(String(body.userId), now), String(body.userId)) });
+          case "inspect":
+            return Response.json({ ok: { stats: core.stats(now), tuning: core.tuning() } });
+          case "entries": {
+            const limit = Math.max(1, Math.min(100, Math.floor(Number(body.limit)) || 100));
+            const offset = Math.max(0, Math.floor(Number(body.offset)) || 0);
+            return Response.json({ ok: core.waitingPage(offset, limit, now, typeof body.search === "string" ? body.search : undefined) });
+          }
+          case "configure": {
+            core.configure((body.tuning ?? {}) as Partial<QueueTuning>);
+            await this.state.storage.put(TUNING, core.tuning());
+            await this.pump(core);
+            return Response.json({ ok: core.tuning() });
+          }
         }
         return errors.notFound("matchmaker operation", op).toResponse();
       } catch (err) {
@@ -157,7 +187,10 @@ export function createMatchmakerDurableObject(mm: Matchmaker, opts: MatchmakerDu
       const cfg = Object.prototype.hasOwnProperty.call(inner.queues, queue) ? inner.queues[queue] : undefined;
       if (!cfg) throw gameErrors.queueUnknown(queue, Object.keys(inner.queues));
       const snap = (await this.state.storage.get(SNAP)) as QueueSnapshot | undefined;
-      this.core = QueueCore.restore(queue, cfg, snap);
+      const core = QueueCore.restore(queue, cfg, snap);
+      const tuning = (await this.state.storage.get(TUNING)) as QueueTuning | undefined;
+      if (tuning) core.configure(tuning);
+      this.core = core;
       await this.state.storage.put(NAME, queue);
       return this.core;
     }

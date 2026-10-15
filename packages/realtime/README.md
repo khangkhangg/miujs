@@ -269,6 +269,15 @@ new_sqlite_classes = ["MiuRooms"]
 
 On Bun, Deno and Node rooms run in process (`LocalRooms`); nothing else is needed.
 
+## Admin
+
+`rooms()` implements `manage()`, so `@miujs/admin` shows a **Realtime rooms** section:
+
+- **Status**: live rooms, connected sockets, members (and rooms) in reconnect grace, and a per-type table. These count rooms in this process; on Cloudflare every room is its own Durable Object, which a Worker cannot list, so the numbers cover only the current isolate (normally 0) and say so.
+- **List** `rooms`: type, id, members, connected, in grace, age and a truncated preview of the public state (never `secret`, resume tokens or host keys). Filter by type, search by id. Empty on Cloudflare.
+- **Row actions**: `broadcast` (`{ event, message? }`), `kick` (`{ member }`, danger) and `close` (`{ reason? }`, danger).
+- **Actions** `broadcastRoom`, `kickMember`, `closeRoom`: the same, by `type` and `id`. On Cloudflare they are forwarded to the room's Durable Object, so they work there too. Closing a room that is not open, or kicking a member who already left, is a no-op with a message.
+
 ## Links
 
 - [Getting started guide](../../docs/guide.md)
