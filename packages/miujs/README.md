@@ -164,6 +164,11 @@ await server.stop();
 - `await app.call(route, { params, query, body, headers })` returns `{ status, ok, headers, text, body, expectStatus(n) }`.
 - Route modules may export `tests = { "name": async (call: CallFn) => {...} }`; `app.tests` collects them and `miu test` runs them.
 - `await app.drain()` waits for `waitUntil` work.
+- When you call `app.fetch()` yourself, read or cancel every response body (`await res.text()`,
+  `await res.body?.cancel()`). A dropped body keeps its source (an open file, an upstream request)
+  alive until garbage collection. Servers (`Bun.serve`, `listen()`, Workers) do this for you.
+- `await app.stop()` waits for background work and calls each plugin's `stop()`, so timers and
+  sockets are released and the process can exit. Stopping a `listen()` server calls it for you.
 
 ## Options
 

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { exitCheck, leakCheck } from "../lib/leak.ts";
+import { exitCheck, leakCheck, openHandles } from "../lib/leak.ts";
 
 const sink: unknown[] = [];
 
@@ -23,4 +23,18 @@ test("flags a small per-iteration Map entry (the typical cache-without-eviction 
   const cache = new Map<string, number>();
   const r = await leakCheck("map", (i) => void cache.set(`k${i}`, i), { perRound: 5000, rounds: 4 });
   expect(r.leaking).toBe(true);
+});
+
+test("tolerates Bun's one-time JIT Structure objects in short runs", async () => {
+  // Fresh object shapes on each call (new keys) create Structures until the JIT settles; a
+  // bounded number of them must not count as a leak.
+  const shapes = Array.from({ length: 300 }, (_, i) => `k${i}`);
+  const r = await leakCheck("shapes", (i) => ({ [shapes[i % 300]]: i }), { perRound: 1000, rounds: 4, warmup: 0 });
+  expect(r.leaking).toBe(false);
+});
+
+test("openHandles reports a number on Linux and Windows", () => {
+  const n = openHandles();
+  if (process.platform === "linux" || process.platform === "win32") expect(n).toBeGreaterThan(0);
+  else expect(n).toBeNull();
 });

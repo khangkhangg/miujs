@@ -31,7 +31,7 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 | `@miujs/realtime` | [MIU_E_ROOM_ALREADY_JOINED](#miu_e_room_already_joined), [MIU_E_ROOM_BAD_FRAME](#miu_e_room_bad_frame), [MIU_E_ROOM_CLIENT_NOT_FOUND](#miu_e_room_client_not_found), [MIU_E_ROOM_CLOSED](#miu_e_room_closed), [MIU_E_ROOM_CODE_RATE_LIMITED](#miu_e_room_code_rate_limited), [MIU_E_ROOM_CODE_UNKNOWN](#miu_e_room_code_unknown), [MIU_E_ROOM_CODES_EXHAUSTED](#miu_e_room_codes_exhausted), [MIU_E_ROOM_CREATE_FAILED](#miu_e_room_create_failed), [MIU_E_ROOM_ENCODING_UNSUPPORTED](#miu_e_room_encoding_unsupported), [MIU_E_ROOM_FULL](#miu_e_room_full), [MIU_E_ROOM_HANDLER_FAILED](#miu_e_room_handler_failed), [MIU_E_ROOM_HANDLER_UNKNOWN](#miu_e_room_handler_unknown), [MIU_E_ROOM_HOST_KEY](#miu_e_room_host_key), [MIU_E_ROOM_ID_INVALID](#miu_e_room_id_invalid), [MIU_E_ROOM_JOIN_INVALID](#miu_e_room_join_invalid), [MIU_E_ROOM_JOIN_REJECTED](#miu_e_room_join_rejected), [MIU_E_ROOM_KICKED](#miu_e_room_kicked), [MIU_E_ROOM_MESSAGE_INVALID](#miu_e_room_message_invalid), [MIU_E_ROOM_MESSAGE_TOO_LARGE](#miu_e_room_message_too_large), [MIU_E_ROOM_NOT_FOUND](#miu_e_room_not_found), [MIU_E_ROOM_NOT_JOINED](#miu_e_room_not_joined), [MIU_E_ROOM_RATE_LIMITED](#miu_e_room_rate_limited), [MIU_E_ROOM_REACT_MISSING](#miu_e_room_react_missing), [MIU_E_ROOM_RESUME_EXPIRED](#miu_e_room_resume_expired), [MIU_E_ROOM_SHARD_SIZE](#miu_e_room_shard_size), [MIU_E_ROOM_STATE_INVALID](#miu_e_room_state_invalid), [MIU_E_ROOM_TIMER_NOT_DURABLE](#miu_e_room_timer_not_durable), [MIU_E_ROOM_TIMER_UNKNOWN](#miu_e_room_timer_unknown), [MIU_E_ROOM_TYPE_INVALID](#miu_e_room_type_invalid), [MIU_E_ROOM_TYPE_UNKNOWN](#miu_e_room_type_unknown), [MIU_E_ROOM_UNKNOWN_MESSAGE](#miu_e_room_unknown_message) |
 | `@miujs/files` | [MIU_E_FILES_BAD_FORM](#miu_e_files_bad_form), [MIU_E_FILES_BAD_REQUEST](#miu_e_files_bad_request), [MIU_E_FILES_BINDING](#miu_e_files_binding), [MIU_E_FILES_BODY_USED](#miu_e_files_body_used), [MIU_E_FILES_CONFIG](#miu_e_files_config), [MIU_E_FILES_KEY_CONFLICT](#miu_e_files_key_conflict), [MIU_E_FILES_KEY_INVALID](#miu_e_files_key_invalid), [MIU_E_FILES_METADATA_INVALID](#miu_e_files_metadata_invalid), [MIU_E_FILES_NO_FILE](#miu_e_files_no_file), [MIU_E_FILES_NOT_FOUND](#miu_e_files_not_found), [MIU_E_FILES_PART_INVALID](#miu_e_files_part_invalid), [MIU_E_FILES_RUNTIME](#miu_e_files_runtime), [MIU_E_FILES_S3](#miu_e_files_s3), [MIU_E_FILES_S3_CONFIG](#miu_e_files_s3_config), [MIU_E_FILES_SECRET_MISSING](#miu_e_files_secret_missing), [MIU_E_FILES_SECRET_WEAK](#miu_e_files_secret_weak), [MIU_E_FILES_STORE_MISSING](#miu_e_files_store_missing), [MIU_E_FILES_TOKEN_EXPIRED](#miu_e_files_token_expired), [MIU_E_FILES_TOKEN_INVALID](#miu_e_files_token_invalid), [MIU_E_FILES_TOO_LARGE](#miu_e_files_too_large), [MIU_E_FILES_TOO_MANY_FILES](#miu_e_files_too_many_files), [MIU_E_FILES_TYPE_NOT_ALLOWED](#miu_e_files_type_not_allowed), [MIU_E_FILES_UPLOAD_NOT_FOUND](#miu_e_files_upload_not_found) |
 | `@miujs/web` | [MIU_E_WEB_BAD_PATH](#miu_e_web_bad_path), [MIU_E_WEB_CONFIG](#miu_e_web_config), [MIU_E_WEB_HTML_ASYNC](#miu_e_web_html_async), [MIU_E_WEB_HTML_FUNCTION](#miu_e_web_html_function), [MIU_E_WEB_HTML_RAW](#miu_e_web_html_raw), [MIU_E_WEB_HX_URL](#miu_e_web_hx_url), [MIU_E_WEB_JSX_ATTR](#miu_e_web_jsx_attr), [MIU_E_WEB_JSX_EVENT_HANDLER](#miu_e_web_jsx_event_handler), [MIU_E_WEB_JSX_INNER_HTML](#miu_e_web_jsx_inner_html), [MIU_E_WEB_JSX_TAG](#miu_e_web_jsx_tag), [MIU_E_WEB_JSX_VOID_CHILDREN](#miu_e_web_jsx_void_children), [MIU_E_WEB_NO_NONCE](#miu_e_web_no_nonce), [MIU_E_WEB_VITE_DEV_UNREACHABLE](#miu_e_web_vite_dev_unreachable), [MIU_E_WEB_VITE_ENTRY](#miu_e_web_vite_entry), [MIU_E_WEB_VITE_MANIFEST](#miu_e_web_vite_manifest) |
-| `@miujs/mail` | [MIU_E_MAIL_ADDRESS_INVALID](#miu_e_mail_address_invalid), [MIU_E_MAIL_API_KEY_MISSING](#miu_e_mail_api_key_missing), [MIU_E_MAIL_CONTENT_MISSING](#miu_e_mail_content_missing), [MIU_E_MAIL_HEADER_INVALID](#miu_e_mail_header_invalid), [MIU_E_MAIL_SEND_FAILED](#miu_e_mail_send_failed), [MIU_E_MAIL_TEMPLATE_UNKNOWN](#miu_e_mail_template_unknown), [MIU_E_MAIL_TRANSPORT_MISSING](#miu_e_mail_transport_missing) |
+| `@miujs/mail` | [MIU_E_MAIL_ADDRESS_INVALID](#miu_e_mail_address_invalid), [MIU_E_MAIL_API_KEY_MISSING](#miu_e_mail_api_key_missing), [MIU_E_MAIL_CONTENT_MISSING](#miu_e_mail_content_missing), [MIU_E_MAIL_HEADER_INVALID](#miu_e_mail_header_invalid), [MIU_E_MAIL_SEND_FAILED](#miu_e_mail_send_failed), [MIU_E_MAIL_TEMPLATE_UNKNOWN](#miu_e_mail_template_unknown), [MIU_E_MAIL_TIMEOUT](#miu_e_mail_timeout), [MIU_E_MAIL_TRANSPORT_MISSING](#miu_e_mail_transport_missing) |
 | `@miujs/access` | [MIU_E_ACCESS_ALREADY_MEMBER](#miu_e_access_already_member), [MIU_E_ACCESS_APP_URL_MISSING](#miu_e_access_app_url_missing), [MIU_E_ACCESS_DATABASE_MISSING](#miu_e_access_database_missing), [MIU_E_ACCESS_EMAIL_UNVERIFIED](#miu_e_access_email_unverified), [MIU_E_ACCESS_INVITE_EMAIL_MISMATCH](#miu_e_access_invite_email_mismatch), [MIU_E_ACCESS_INVITE_EXPIRED](#miu_e_access_invite_expired), [MIU_E_ACCESS_INVITE_INVALID](#miu_e_access_invite_invalid), [MIU_E_ACCESS_INVITE_USED](#miu_e_access_invite_used), [MIU_E_ACCESS_LAST_OWNER](#miu_e_access_last_owner), [MIU_E_ACCESS_MAILER_MISSING](#miu_e_access_mailer_missing), [MIU_E_ACCESS_NO_ORG](#miu_e_access_no_org), [MIU_E_ACCESS_NOT_MEMBER](#miu_e_access_not_member), [MIU_E_ACCESS_OWNER_ROLE_MISSING](#miu_e_access_owner_role_missing), [MIU_E_ACCESS_PERMISSION_INVALID](#miu_e_access_permission_invalid), [MIU_E_ACCESS_PLUGIN_MISSING](#miu_e_access_plugin_missing), [MIU_E_ACCESS_POLICY_INVALID](#miu_e_access_policy_invalid), [MIU_E_ACCESS_ROLE_TOO_HIGH](#miu_e_access_role_too_high), [MIU_E_ACCESS_ROLE_UNKNOWN](#miu_e_access_role_unknown), [MIU_E_ACCESS_SESSION_MISSING](#miu_e_access_session_missing) |
 | `@miujs/audit` | [MIU_E_AUDIT_ANCHOR_FAILED](#miu_e_audit_anchor_failed), [MIU_E_AUDIT_ANCHOR_INVALID](#miu_e_audit_anchor_invalid), [MIU_E_AUDIT_APPEND_CONFLICT](#miu_e_audit_append_conflict), [MIU_E_AUDIT_CHAIN_BROKEN](#miu_e_audit_chain_broken), [MIU_E_AUDIT_INVALID](#miu_e_audit_invalid), [MIU_E_AUDIT_KEY_MISSING](#miu_e_audit_key_missing), [MIU_E_AUDIT_KEY_WEAK](#miu_e_audit_key_weak), [MIU_E_AUDIT_ORG_MISMATCH](#miu_e_audit_org_mismatch), [MIU_E_AUDIT_QUERY_INVALID](#miu_e_audit_query_invalid), [MIU_E_AUDIT_RETENTION_INVALID](#miu_e_audit_retention_invalid), [MIU_E_AUDIT_SINK_INVALID](#miu_e_audit_sink_invalid), [MIU_E_AUDIT_SINK_MISSING](#miu_e_audit_sink_missing), [MIU_E_AUDIT_SINK_UNSUPPORTED](#miu_e_audit_sink_unsupported), [MIU_E_AUDIT_STORE_MISSING](#miu_e_audit_store_missing), [MIU_E_AUDIT_TABLE_INVALID](#miu_e_audit_table_invalid) |
 | `@miujs/workflows` | [MIU_E_WORKFLOW_ACTION_UNKNOWN](#miu_e_workflow_action_unknown), [MIU_E_WORKFLOW_APPROVAL_NOT_PENDING](#miu_e_workflow_approval_not_pending), [MIU_E_WORKFLOW_CONFIG](#miu_e_workflow_config), [MIU_E_WORKFLOW_DUPLICATE](#miu_e_workflow_duplicate), [MIU_E_WORKFLOW_DURATION](#miu_e_workflow_duration), [MIU_E_WORKFLOW_EVENT_RESERVED](#miu_e_workflow_event_reserved), [MIU_E_WORKFLOW_EXPRESSION](#miu_e_workflow_expression), [MIU_E_WORKFLOW_MAILER_MISSING](#miu_e_workflow_mailer_missing), [MIU_E_WORKFLOW_NOT_APPROVER](#miu_e_workflow_not_approver), [MIU_E_WORKFLOW_RUN_NOT_FOUND](#miu_e_workflow_run_not_found), [MIU_E_WORKFLOW_RUN_STATE](#miu_e_workflow_run_state), [MIU_E_WORKFLOW_SIGNATURE](#miu_e_workflow_signature), [MIU_E_WORKFLOW_SPEC_INVALID](#miu_e_workflow_spec_invalid), [MIU_E_WORKFLOW_STEP_DUPLICATE](#miu_e_workflow_step_duplicate), [MIU_E_WORKFLOW_UNKNOWN](#miu_e_workflow_unknown) |
@@ -311,7 +311,7 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 - **HTTP status:** 404
 - **Source:** [`miujs/src/app.ts`](../packages/miujs/src/app.ts)
 
-**What it means:** No route for {ctx.method} {ctx.path}
+**What it means:** No route for {ctx.method} {shown}
 
 **How to fix:** Read the message and `details` in the error body, then the source linked above.
 
@@ -1545,7 +1545,7 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 
 - **Package:** `@miujs/queue`
 - **HTTP status:** 500
-- **Source:** [`queue/src/cloudflare.ts`](../packages/queue/src/cloudflare.ts), [`queue/src/durable.ts`](../packages/queue/src/durable.ts), [`queue/src/errors.ts`](../packages/queue/src/errors.ts), [`queue/src/job.ts`](../packages/queue/src/job.ts), [`queue/src/memory.ts`](../packages/queue/src/memory.ts), [`queue/src/redis.ts`](../packages/queue/src/redis.ts), [`queue/src/sqlite.ts`](../packages/queue/src/sqlite.ts)
+- **Source:** [`queue/src/cloudflare.ts`](../packages/queue/src/cloudflare.ts), [`queue/src/durable.ts`](../packages/queue/src/durable.ts), [`queue/src/errors.ts`](../packages/queue/src/errors.ts), [`queue/src/job.ts`](../packages/queue/src/job.ts), [`queue/src/memory.ts`](../packages/queue/src/memory.ts), [`queue/src/plugin.ts`](../packages/queue/src/plugin.ts), [`queue/src/redis.ts`](../packages/queue/src/redis.ts), [`queue/src/sqlite.ts`](../packages/queue/src/sqlite.ts)
 
 **What it means:**
 
@@ -1554,7 +1554,7 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 - {name} {label} must be a positive {integer}, got {v}
 - {name}Queue is not attached to a queue()
 - This {name}Queue() is already used by another queue()
-- defineJob needs a non-empty name, got {name}
+- This {name} backend cannot cancel messages
 
 **How to fix:**
 
@@ -1563,7 +1563,7 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 - Pass `{label}: {example}`.
 - Pass it as `queue({ adapter: {name}Queue(...) })`.
 - Create one {name}Queue() per queue() plugin.
-- Call defineJob("send-email", { ... }).
+- Implement cancel(id) in the DurableBackend.
 
 ## MIU_E_QUEUE_CRON
 
@@ -2575,6 +2575,16 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 **What it means:** No email template named {msg.template}
 
 **How to fix:** Use one of: {…}; or register it in templates. (otherwise: Register it with mail({ templates: [defineTemplate(name, render)] }).)
+
+## MIU_E_MAIL_TIMEOUT
+
+- **Package:** `@miujs/mail`
+- **HTTP status:** 504
+- **Source:** [`mail/src/transports.ts`](../packages/mail/src/transports.ts)
+
+**What it means:** {provider} did not answer within {ms} ms
+
+**How to fix:** Check the provider's status and your network; raise the transport's timeoutMs if it is just slow. The email may or may not have been sent.
 
 ## MIU_E_MAIL_TRANSPORT_MISSING
 

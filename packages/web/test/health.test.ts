@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { miu, route } from "miujs";
 import { describeLeak, exitCheck, leakCheck } from "../../../scripts/lib/leak.ts";
-import { openHandles } from "../../files/test/handles.ts";
+import { openHandles } from "../../../scripts/lib/leak.ts";
 import { bunFileSource, nodeFileSource, secureHeaders, staticFiles, vite, type FileSource } from "../src/index.ts";
 
 const PKG = join(import.meta.dir, "..");

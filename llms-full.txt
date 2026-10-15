@@ -738,6 +738,11 @@ await server.stop();
 - `await app.call(route, { params, query, body, headers })` returns `{ status, ok, headers, text, body, expectStatus(n) }`.
 - Route modules may export `tests = { "name": async (call: CallFn) => {...} }`; `app.tests` collects them and `miu test` runs them.
 - `await app.drain()` waits for `waitUntil` work.
+- When you call `app.fetch()` yourself, read or cancel every response body (`await res.text()`,
+  `await res.body?.cancel()`). A dropped body keeps its source (an open file, an upstream request)
+  alive until garbage collection. Servers (`Bun.serve`, `listen()`, Workers) do this for you.
+- `await app.stop()` waits for background work and calls each plugin's `stop()`, so timers and
+  sockets are released and the process can exit. Stopping a `listen()` server calls it for you.
 
 ## Options
 
@@ -1598,7 +1603,7 @@ export default app;
 | `remember<T>(key, ttlSeconds, fn)` | Returns the cached value or runs `fn`, caches its result and returns it. Errors and `undefined` are not cached. |
 | `invalidateTag(tag)` | Deletes every key that was `set` with this tag. |
 
-Tag indexes are stored under keys starting with `TAG_PREFIX` (`"__miu:tag:"`); do not use that prefix for your own keys.
+Tag indexes are stored under keys starting with `TAG_PREFIX` (`"__miu:tag:"`); do not use that prefix for your own keys. An index drops keys that expired or were deleted once it has doubled in size, and when all of its keys have a TTL it expires a minute after the last one, so tags that are never invalidated do not pile up in Redis or KV.
 
 <!-- test -->
 ```ts
@@ -1817,7 +1822,7 @@ On Bun, Deno and Node the adapter fires schedules itself. On Workers they run fr
 
 ### Memory (default off Workers)
 
-`memoryQueue({ concurrency, clock })` runs jobs in this process; they are lost if it exits. It keeps `deadLetters` in memory and `drain()` resolves once nothing is queued, running or delayed. With `manualClock()`, `drain()` skips delays and backoff, which makes job tests fast.
+`memoryQueue({ concurrency, clock, maxDeadLetters })` runs jobs in this process; they are lost if it exits. It keeps the newest `maxDeadLetters` (default 1000) dead letters in memory, and `drain()` resolves once nothing is queued, running or delayed. With `manualClock()`, `drain()` skips delays and backoff, which makes job tests fast. Its timers (schedules, delays, retry backoff) are unref'd, so they never keep the process alive on their own: a delayed job that has not run when the process exits is lost, like any in-process job. Use `sqliteQueue` or `redisQueue` when delayed jobs must survive.
 
 <!-- test -->
 ```ts
@@ -1843,7 +1848,7 @@ console.log(failures, adapter.deadLetters.length); // 2 1
 q.stop();
 ```
 
-The plugin's own `dispatch(job, input, opts?, env?)` works outside requests (scripts, tests); `stop()` clears schedule and delay timers.
+The plugin's own `dispatch(job, input, opts?, env?)` works outside requests (scripts, tests); `stop()` clears schedule and delay timers. `cancel(id)` (also `ctx.queue.cancel(id)`) removes a message that has not started, e.g. a delayed one, by the id `dispatch` returned; it resolves false when the message already ran or is running (memory, SQLite and Redis; Cloudflare Queues cannot cancel). `addSchedule(schedule(...))` and `removeSchedule(s)` change cron schedules at runtime: on Bun, Deno and Node the minute scheduler starts with the first schedule and stops with the last; on Workers a cron fires only if it is also a Cron Trigger in wrangler.toml.
 
 ### SQLite (Bun only)
 
@@ -1877,7 +1882,7 @@ import { queue, redisQueue } from "@miujs/queue";
 queue({ jobs, adapter: redisQueue(bunRedis(), { concurrency: 4 }) });
 ```
 
-SQLite and Redis adapters are `DurableQueue`s: `drain()`, `stop()`, `close()`, `listDeadLetters()` and `stats()`. Jobs receive the process env, not the dispatching request's env.
+SQLite and Redis adapters are `DurableQueue`s: `drain()`, `stop()`, `close()`, `listDeadLetters()` and `stats()`. Jobs receive the process env, not the dispatching request's env. Their poll, schedule and lease-renewal timers are unref'd, so an idle app exits without calling `stop()`. After `stop()` a job that is still running finishes, but the worker claims nothing more; after `close()` the queue never reopens its database. Dead letters are kept in storage (`<table>_dead`, or the `dead` list in Redis) until you delete them, so prune them periodically if jobs fail often.
 
 ### Cloudflare Queues (default on Workers)
 
@@ -3587,6 +3592,8 @@ export const plugin = workflows({
 ```
 
 `memoryRunStore()` (the default) loses runs on restart. Use `dbRunStore(sqlite(path))` on a server or `dbRunStore(d1("DB"))` on Workers.
+
+The memory store is bounded so a long-running process does not grow: it keeps the newest 1000 finished (completed, failed, cancelled) runs with their step journals, and remembers event idempotency keys for 24 hours, up to 10 000 keys. Active runs are always kept. To change the limits, pass `memoryRunStore({ maxFinishedRuns: 5000, idempotencyTtlMs: 3_600_000, maxIdempotencyKeys: 50_000 })`. A finished run that has been dropped can no longer be read or retried.
 
 ## Options
 

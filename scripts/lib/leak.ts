@@ -8,7 +8,7 @@
 // catches timers, sockets or loops that keep a process alive after the work is done.
 
 import { heapStats } from "bun:jsc";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -32,6 +32,9 @@ export interface LeakReport {
   /** Object types whose live count grew the most between the first and last round. */
   growth: { type: string; delta: number }[];
 }
+
+const JIT_STRUCTURES = 600;
+const STRUCTURE_BYTES = 160;
 
 function sample() {
   Bun.gc(true);
@@ -61,8 +64,11 @@ export async function leakCheck(name: string, fn: (i: number) => unknown, opts: 
   const first = samples[1];
   const last = samples[samples.length - 1];
   const iterations = perRound * (samples.length - 2);
-  const bytesPerIteration = (last.heap - first.heap) / iterations;
-  const objectsPerIteration = (last.objects - first.objects) / iterations;
+  // Bun creates a one-time batch of JIT "Structure" objects (hidden classes) while code warms up;
+  // up to JIT_STRUCTURES of them are not a leak, however few iterations ran.
+  const structures = Math.max(0, Math.min(JIT_STRUCTURES, (last.types.Structure ?? 0) - (first.types.Structure ?? 0)));
+  const bytesPerIteration = (last.heap - first.heap - structures * STRUCTURE_BYTES) / iterations;
+  const objectsPerIteration = (last.objects - first.objects - structures) / iterations;
   const growth = Object.entries(last.types)
     .map(([type, n]) => ({ type, delta: n - (first.types[type] ?? 0) }))
     .filter((g) => g.delta > 0)
@@ -103,4 +109,24 @@ export async function exitCheck(source: string, timeoutMs = 3000, cwd = join(imp
   const stderr = await new Response(proc.stderr).text().catch(() => "");
   rmSync(dir, { recursive: true, force: true });
   return { exited: outcome !== "timeout", code: outcome === "timeout" ? null : (outcome as number), ms, stderr };
+}
+
+/**
+ * Open OS handles (file descriptors) of this process: Linux via /proc/self/fd, Windows via the
+ * process HandleCount. null where it can't be measured (macOS).
+ */
+export function openHandles(): number | null {
+  if (process.platform === "linux") {
+    try {
+      return readdirSync("/proc/self/fd").length;
+    } catch {
+      return null;
+    }
+  }
+  if (process.platform === "win32") {
+    const r = Bun.spawnSync(["powershell", "-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${process.pid}).HandleCount`]);
+    const n = Number(r.stdout.toString().trim());
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  return null;
 }
