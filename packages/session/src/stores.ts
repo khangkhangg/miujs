@@ -1,4 +1,4 @@
-import { errors, type CloudflareNeeds, type Env } from "miujs";
+import { errors, MiuError, type CloudflareNeeds, type Env } from "miujs";
 
 /** What a server-side store keeps per session id. */
 export interface SessionRecord {
@@ -151,5 +151,63 @@ export function dbSessionStore(database: DbSource, opts: { table?: string } = {}
     },
     inspect: () => ({ store: "db", table, ...("prepare" in database ? {} : { binding: database.binding }) }),
     cloudflare: () => ("prepare" in database ? {} : { d1: [database.binding] }),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+
+/** The Redis commands this store uses. `bunRedis()` from @miujs/cache satisfies it. */
+export interface SessionRedisLike {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, opts?: { px?: number }): Promise<boolean>;
+  del(...keys: string[]): Promise<number>;
+  inspect?(): Record<string, unknown>;
+}
+
+/**
+ * Redis: sessions shared by every instance, expired by Redis (`SET ... PX`) and checked on read.
+ * `redisSessionStore(bunRedis())` on Bun (`bunRedis` is exported by @miujs/cache).
+ */
+export function redisSessionStore(client: SessionRedisLike, opts: { prefix?: string } = {}): SessionStore {
+  const c = client as Partial<SessionRedisLike> | null;
+  if (typeof c !== "object" || c === null || typeof c.get !== "function" || typeof c.set !== "function" || typeof c.del !== "function") {
+    throw errors.config("MIU_E_SESSION_REDIS_CLIENT", "redisSessionStore needs a Redis client with get/set/del", "Pass bunRedis() from @miujs/cache on Bun, or any client wrapped with redisFromCommand(...).");
+  }
+  const prefix = opts.prefix ?? "miu:session:";
+  const call = async <T>(op: string, fn: () => Promise<T>): Promise<T> => {
+    try {
+      return await fn();
+    } catch (err) {
+      throw new MiuError({
+        code: "MIU_E_SESSION_REDIS",
+        status: 500,
+        message: `Redis ${op} for a session failed: ${String((err as Error)?.message ?? err)}`,
+        fix: "Check that Redis is running and reachable at REDIS_URL (or the url passed to bunRedis()), with the right credentials and TLS settings.",
+        cause: err,
+      });
+    }
+  };
+  return {
+    kind: "redis",
+    async get(id) {
+      const text = await call("GET", () => client.get(prefix + id));
+      if (text === null) return null;
+      let r: SessionRecord | null;
+      try {
+        r = JSON.parse(text) as SessionRecord;
+      } catch {
+        return null; // foreign or corrupted value: treat as no session
+      }
+      if (!r || typeof r !== "object" || !(r.e > Date.now())) return null;
+      return r;
+    },
+    async set(id, record, ttl) {
+      await call("SET", () => client.set(prefix + id, JSON.stringify(record), { px: Math.max(1, Math.ceil(ttl * 1000)) }));
+    },
+    async delete(id) {
+      await call("DEL", () => client.del(prefix + id));
+    },
+    inspect: () => ({ store: "redis", prefix, ...(client.inspect ? { client: client.inspect() } : {}) }),
+    cloudflare: () => ({}),
   };
 }

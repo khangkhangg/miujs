@@ -10,3 +10,5 @@ export { r2Store, type R2BucketLike, type R2MultipartUploadLike, type R2ObjectBo
 export { KNOWN_TYPES, sniff } from "./sniff.ts";
 export type { ByteRange, FileObject, FileStore, ListOptions, ListResult, StoredFile, StorePutOptions, UploadedPart } from "./store.ts";
 export type { FileBody } from "./stream.ts";
+export { s3Store, type FetchLike, type S3Setting, type S3StoreOptions } from "./s3.ts";
+export { signV4, type SigV4Credentials, type Signed, type SignInput } from "./sigv4.ts";

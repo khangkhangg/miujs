@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { miu, route } from "miujs";
 import { d1, sqlite } from "../../db/src/index.ts";
-import { dbSessionStore, kvSessionStore, memorySessionStore, session, type KVLike, type SessionStore } from "../src/index.ts";
+import { fakeRedis } from "../../cache/test/fake-redis.ts";
+import { dbSessionStore, kvSessionStore, memorySessionStore, redisSessionStore, session, type KVLike, type SessionStore } from "../src/index.ts";
 import { Jar, SECRET } from "./helpers.ts";
 
 const BASE = "http://localhost";
@@ -130,5 +131,52 @@ describe("server-side stores", () => {
     expect(session({ store: memorySessionStore() }).cloudflare()).toEqual({});
     expect(session().cloudflare()).toEqual({});
     expect(session({ store: kvSessionStore("SESSIONS") }).inspect().store).toEqual({ store: "kv", binding: "SESSIONS" });
+  });
+});
+
+describe("redisSessionStore", () => {
+  test("behaves like a server store, under a prefix", async () => {
+    const r = fakeRedis();
+    await behavesLikeAServerStore(() => ({
+      store: redisSessionStore(r.client, { prefix: "app:s:" }),
+      count: async () => r.keys().filter((k) => k.startsWith("app:s:")).length,
+    }));
+  });
+
+  test("sets a PX expiry from the session ttl, so Redis drops expired sessions itself", async () => {
+    const r = fakeRedis();
+    const app = appWith(redisSessionStore(r.client), 3600);
+    await app.dispatch(new Request(`${BASE}/set`, { method: "POST" }), env(), { runtime: "bun" });
+    const set = r.log.find((c) => c[0] === "SET")!;
+    expect(set[1].startsWith("miu:session:")).toBe(true);
+    expect(set.slice(3)).toEqual(["PX", "3600000"]);
+  });
+
+  test("an expired record is not returned even if Redis still has it", async () => {
+    const r = fakeRedis();
+    const store = redisSessionStore(r.client);
+    await store.set("id1", { d: { a: 1 }, e: Date.now() + 60_000 }, 60, {});
+    expect((await store.get("id1", {}))?.d).toEqual({ a: 1 });
+    await r.client.set("miu:session:id2", JSON.stringify({ d: {}, e: Date.now() - 1 }));
+    expect(await store.get("id2", {})).toBeNull();
+    await r.client.set("miu:session:id3", "not json");
+    expect(await store.get("id3", {})).toBeNull();
+  });
+
+  test("a Redis failure is MIU_E_SESSION_REDIS with a fix", async () => {
+    const r = fakeRedis();
+    const app = appWith(redisSessionStore(r.client));
+    r.failNext(5);
+    const res = await app.dispatch(new Request(`${BASE}/set`, { method: "POST" }), env(), { runtime: "bun" });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error.code).toBe("MIU_E_SESSION_REDIS");
+    await expect(redisSessionStore(fakeRedis().client).get("x", {})).resolves.toBeNull();
+  });
+
+  test("rejects a non-client; inspect has the prefix and no secrets", () => {
+    expect(() => redisSessionStore({} as any)).toThrow(expect.objectContaining({ code: "MIU_E_SESSION_REDIS_CLIENT" }) as any);
+    const client = { ...fakeRedis().client, inspect: () => ({ url: "redis://u:***@h" }) };
+    expect(redisSessionStore(client).inspect!()).toEqual({ store: "redis", prefix: "miu:session:", client: { url: "redis://u:***@h" } });
+    expect(session({ store: redisSessionStore(client) }).cloudflare()).toEqual({});
   });
 });

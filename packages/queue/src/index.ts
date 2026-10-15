@@ -6,3 +6,6 @@ export type { QueueAdapter, QueueMessage, QueueRuntime, RunResult } from "./adap
 export { memoryQueue, type DeadLetter, type MemoryQueue, type MemoryQueueOptions } from "./memory.ts";
 export { queue, type QueueClient, type QueueOptions } from "./plugin.ts";
 export { CF_MAX_DELAY, cloudflareQueue, type CfMessage, type CfMessageBatch, type CloudflareQueueOptions, type QueueBindingLike } from "./cloudflare.ts";
+export { durableQueue, type Claimed, type DurableBackend, type DurableQueue, type DurableQueueOptions, type QueueStats } from "./durable.ts";
+export { redisQueue, type QueueRedisLike, type RedisQueueOptions } from "./redis.ts";
+export { _assertSqliteRuntime, sqliteQueue, type SqliteDatabaseLike, type SqliteQueueOptions, type SqliteStatementLike } from "./sqlite.ts";

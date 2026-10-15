@@ -50,6 +50,26 @@ export const queueErrors = {
       fix: `Add a queue producer binding to wrangler.toml: [[queues.producers]] binding = "${name}" queue = "<queue-name>", plus a matching [[queues.consumers]] entry.`,
     }),
 
+  timeout: (job: string, seconds: number) =>
+    new MiuError({
+      code: "MIU_E_QUEUE_TIMEOUT",
+      status: 500,
+      message: `Job "${job}" did not finish within its ${seconds}s lease and has no attempts left`,
+      fix: "Its worker stopped (crash, deploy, scaled down) or stalled. Make the job idempotent and give it `retries`, or raise `visibilityTimeout` if a single run legitimately blocks the event loop that long.",
+    }),
+
+  runtime: (what: string, runtime: string, fix: string) =>
+    new MiuError({ code: "MIU_E_QUEUE_RUNTIME", status: 500, message: `${what} is not available on ${runtime}`, fix }),
+
+  backend: (code: "REDIS" | "SQLITE", op: string, cause: unknown, fix: string) =>
+    new MiuError({
+      code: `MIU_E_QUEUE_${code}`,
+      status: 500,
+      message: `Queue ${code === "REDIS" ? "Redis" : "SQLite"} operation "${op}" failed: ${String((cause as Error)?.message ?? cause)}`,
+      fix,
+      cause,
+    }),
+
   delay: (delay: unknown, max: number) =>
     new MiuError({
       code: "MIU_E_QUEUE_DELAY",

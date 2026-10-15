@@ -29,6 +29,15 @@ export const cacheErrors = {
       cause,
     }),
 
+  redis: (op: string, key: string, cause: unknown) =>
+    new MiuError({
+      code: "MIU_E_CACHE_REDIS",
+      status: 500,
+      message: `Redis ${op} for cache key ${JSON.stringify(key)} failed: ${String((cause as Error)?.message ?? cause)}`,
+      fix: "Check that Redis is running and reachable at REDIS_URL (or the url passed to bunRedis()), and that the credentials and TLS settings are right.",
+      cause,
+    }),
+
   binding: (name: string) =>
     new MiuError({
       code: "MIU_E_CACHE_BINDING",
