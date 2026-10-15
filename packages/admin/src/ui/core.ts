@@ -18,7 +18,10 @@ export interface AdminLike {
 export interface WorkflowsLike {
   name: string;
   routes: RouteDef[];
-  engine: { opts: { workflows: Map<string, any> } };
+  register(def: any): void;
+  unregister(name: string): boolean;
+  has(name: string): boolean;
+  onUnknown(fn: (what: unknown, env: Record<string, unknown>) => Promise<void> | void): void;
 }
 
 export interface Core {

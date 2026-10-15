@@ -1,10 +1,10 @@
 import { createLogger, definePlugin, errors, processEnv, t, targetRuntime, type App, type CloudflareNeeds, type Context, type Env, type Logger } from "miujs";
-import { CF_MAX_DELAY, cloudflareQueue, defineJob, memoryQueue, queue, realClock, schedule, type Clock, type QueueAdapter } from "@miujs/queue";
-import { describeTrigger, isWorkflow, type Mailer, type WorkflowDef } from "./define.ts";
+import { CF_MAX_DELAY, cloudflareQueue, defineJob, memoryQueue, parseCron, queue, realClock, schedule, type Clock, type QueueAdapter, type Schedule } from "@miujs/queue";
+import { describeTrigger, isWorkflow, type Mailer, type WebhookTrigger, type WorkflowDef } from "./define.ts";
 import { Engine, type EmitResult, type RunView } from "./engine.ts";
 import { workflowErrors } from "./errors.ts";
 import { workflowMcpTools } from "./mcp.ts";
-import { workflowRoutes, type Permissions } from "./routes.ts";
+import { handleWebhook, workflowRoutes, type Permissions } from "./routes.ts";
 import { memoryRunStore, type RunFilter, type RunRecord, type RunStatus, type RunStore, type TriggerInfo } from "./store.ts";
 
 /** What `ctx.events` offers in a request. */
@@ -49,10 +49,24 @@ export interface WorkflowsOptions {
   prefix?: string;
   /** Permission names checked through `ctx.authorize(perm)` when present. */
   permissions?: Partial<Permissions>;
+  /**
+   * Extra Cloudflare Cron Triggers to deploy, for cron workflows registered at run time
+   * (`register()`, e.g. published from the admin UI). Workers only fire crons listed in the
+   * deployment; crons of workflows passed in `workflows` are added automatically.
+   */
+  crons?: string[];
 }
+
+/** What a workflow was looked for by, when it is not registered here. */
+export type UnknownWorkflow = { workflow: string } | { webhook: string } | { cron: string };
 
 const RESUME_JOB = "miu.workflows.resume";
 const CRON_JOB = "miu.workflows.cron";
+/**
+ * Never matches (30 February). Bun/Deno/Node queues only run their minute scheduler when they
+ * start with at least one schedule, so this keeps it running for crons registered later.
+ */
+const NEVER = "0 0 30 2 *";
 
 /**
  * Durable workflows: event, cron, webhook and manual triggers; replayed runs with a step
@@ -86,15 +100,57 @@ export function workflows(opts: WorkflowsOptions) {
   const cronJob = defineJob(CRON_JOB, {
     input: t.object({ workflow: t.string(), cron: t.string() }),
     run: async ({ input, env }) => {
-      const def = registry.get(input.workflow);
+      if (input.workflow === "") return; // the NEVER placeholder
+      const def = await engine.lookup(input.workflow, env);
       const tr = def?.triggers.find((x) => x.type === "cron" && x.cron === input.cron);
-      await engine.start(input.workflow, tr && tr.type === "cron" ? (tr.input ?? {}) : {}, env, { trigger: { type: "cron", cron: input.cron } });
+      if (!def || !tr || tr.type !== "cron") {
+        log.warn("cron fired for a workflow that is no longer registered; skipped", { workflow: input.workflow, cron: input.cron });
+        return;
+      }
+      await engine.start(def, tr.input ?? {}, env, { trigger: { type: "cron", cron: input.cron } });
     },
   });
-  const schedules = [...registry.values()].flatMap((def) =>
-    def.triggers.flatMap((tr) => (tr.type === "cron" ? [schedule(tr.cron, cronJob, { workflow: def.name, cron: tr.cron })] : [])),
-  );
+
+  // Live trigger indexes. The queue reads `schedules` on every tick (and on Workers' scheduled
+  // event), and webhooks are dispatched from onRequest, so register()/unregister() take effect
+  // without rebuilding routes or the queue.
+  const schedules: Schedule<any>[] = [];
+  const hooks = new Map<string, { def: WorkflowDef<any>; tr: WebhookTrigger }>();
+  const checkHooks = (def: WorkflowDef<any>) => {
+    for (const tr of def.triggers) {
+      if (tr.type !== "webhook") continue;
+      const taken = hooks.get(tr.path);
+      if (taken) throw workflowErrors.config(`Webhook path ${tr.path} is used by workflow "${taken.def.name}" and "${def.name}"`, "Give each webhook trigger its own path.");
+    }
+  };
+  const index = (def: WorkflowDef<any>) => {
+    for (const tr of def.triggers) {
+      if (tr.type === "cron") schedules.push(schedule(tr.cron, cronJob, { workflow: def.name, cron: tr.cron }));
+      else if (tr.type === "webhook") hooks.set(tr.path, { def, tr });
+    }
+  };
+  const unindex = (name: string) => {
+    for (let i = schedules.length - 1; i >= 0; i--) if ((schedules[i].input as { workflow: string }).workflow === name) schedules.splice(i, 1);
+    for (const [path, h] of hooks) if (h.def.name === name) hooks.delete(path);
+  };
+  for (const def of registry.values()) {
+    checkHooks(def);
+    index(def);
+  }
+  if (adapter.name !== "cloudflare" && schedules.length === 0) schedules.push(schedule(NEVER, cronJob, { workflow: "", cron: NEVER }));
+  const extraCrons = (opts.crons ?? []).map((c) => parseCron(c).source);
   const q = queue({ jobs: [resumeJob, cronJob], schedules, adapter });
+
+  const unknownHandlers: ((what: UnknownWorkflow, env: Env) => Promise<void> | void)[] = [];
+  const askUnknown = async (what: UnknownWorkflow, env: Env) => {
+    for (const fn of unknownHandlers) {
+      try {
+        await fn(what, env);
+      } catch (err) {
+        log.error("workflows: onUnknown handler failed", { what, err });
+      }
+    }
+  };
 
   const engine: Engine = new Engine({
     workflows: registry,
@@ -108,6 +164,7 @@ export function workflows(opts: WorkflowsOptions) {
     log: () => log,
     fetch: () => opts.fetch ?? globalThis.fetch,
     mailer: () => opts.mailer ?? appMailer ?? (appRef?.hasService("mail") ? appRef.service<Mailer>("mail") : undefined),
+    resolve: (name, env) => askUnknown({ workflow: name }, env),
     service: (name) => {
       if (!appRef) {
         throw errors.config("MIU_E_SERVICE_MISSING", `No app to look up the "${name}" service in`, "Add workflows() to miu({ plugins }) and start runs after `await app.ready()`.");
@@ -117,6 +174,35 @@ export function workflows(opts: WorkflowsOptions) {
   });
 
   const api = {
+    /**
+     * Add a workflow while the app runs: its event, manual, cron and webhook triggers work at
+     * once. Throws when the name or a webhook path is taken.
+     */
+    register(def: WorkflowDef<any>): void {
+      if (!isWorkflow(def)) throw workflowErrors.config("register() got something that is not a workflow", "Pass a workflow created with defineWorkflow() or fromJson().");
+      if (registry.has(def.name)) throw workflowErrors.duplicateWorkflow(def.name);
+      checkHooks(def);
+      engine.register(def);
+      index(def);
+    },
+    /** True when a workflow with this name is registered here. */
+    has(name: string): boolean {
+      return engine.has(name);
+    },
+    /** Remove a workflow with its cron schedules and webhook. False when it was not registered. */
+    unregister(name: string): boolean {
+      unindex(name);
+      return engine.unregister(name);
+    },
+    /**
+     * Called when a run, a webhook or a cron event names a workflow this instance does not know,
+     * e.g. one registered in another isolate. The handler may `register()` it; the lookup is then
+     * retried once. It gets the env of the request or event (Workers bindings). Unknown webhook
+     * paths call it too, so throttle expensive lookups.
+     */
+    onUnknown(fn: (what: UnknownWorkflow, env: Env) => Promise<void> | void): void {
+      unknownHandlers.push(fn);
+    },
     /** Start a run. Input is validated against the workflow's schema. */
     start(workflow: string | WorkflowDef<any>, input: unknown = {}, o: { env?: Env; trigger?: TriggerInfo } = {}): Promise<{ id: string; status: RunStatus }> {
       return engine.start(workflow, input, o.env ?? defaultEnv(), { trigger: o.trigger });
@@ -160,10 +246,25 @@ export function workflows(opts: WorkflowsOptions) {
       log = app.log.child({ plugin: "workflows" });
       appRef = app;
       if (!app.hasService("workflows")) app.provide("workflows", api);
+      // Registered before the queue's handler: a cron that no schedule here matches may belong to a
+      // workflow registered in another isolate, so onUnknown gets a chance to load it first.
+      app.on("scheduled", async (controller: unknown, env: unknown) => {
+        const cron = String((controller as { cron?: unknown } | null)?.cron ?? "").trim().split(/\s+/).join(" ");
+        if (cron && !schedules.some((sc) => sc.cron.source === cron)) await askUnknown({ cron }, (env ?? {}) as Env);
+      });
       await q.setup(app);
     },
-    onRequest(ctx: Context) {
+    async onRequest(ctx: Context) {
       ctx.events = { emit: (event, data, o) => engine.emit(event, data, ctx.env, o ?? {}) };
+      // One dispatcher for every webhook trigger, looked up in the live registry. Only requests no
+      // route matched, so other routes and 404/405 answers are unchanged.
+      if (ctx.route || ctx.method !== "POST") return;
+      let hit = hooks.get(ctx.path);
+      if (!hit && unknownHandlers.length) {
+        await askUnknown({ webhook: ctx.path }, ctx.env);
+        hit = hooks.get(ctx.path);
+      }
+      if (hit) return handleWebhook(engine, hit.def, hit.tr, ctx);
     },
     mcpTools: () => workflowMcpTools({ engine, registry, permissions }),
     /** Stop the queue's timers (schedules and delays). */
@@ -188,11 +289,13 @@ export function workflows(opts: WorkflowsOptions) {
           input: d.input.json,
         })),
         actions: [...new Set([...registry.values()].flatMap((d) => d.actions ?? []))],
-        routes: routes.map((r) => `${r.method} ${r.path}`),
+        routes: [...routes.map((r) => `${r.method} ${r.path}`), ...[...hooks.keys()].map((path) => `POST ${path}`)],
       };
     },
     cloudflare(): CloudflareNeeds {
-      return q.cloudflare();
+      const needs = q.cloudflare();
+      const crons = [...new Set([...(needs.crons ?? []), ...extraCrons])];
+      return crons.length ? { ...needs, crons } : needs;
     },
   });
 }
@@ -200,4 +303,4 @@ export function workflows(opts: WorkflowsOptions) {
 export type WorkflowsPlugin = ReturnType<typeof workflows>;
 
 /** `app.service("workflows")`: start runs and emit events from code outside requests. */
-export type WorkflowsService = Pick<WorkflowsPlugin, "start" | "emit" | "getRun" | "listRuns" | "cancel" | "retry" | "decide">;
+export type WorkflowsService = Pick<WorkflowsPlugin, "start" | "emit" | "getRun" | "listRuns" | "cancel" | "retry" | "decide" | "register" | "unregister" | "has" | "onUnknown">;

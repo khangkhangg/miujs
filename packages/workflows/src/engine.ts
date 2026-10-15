@@ -1,6 +1,7 @@
 import { isMiuError, validate, type Env, type Logger } from "miujs";
 import { backoffSeconds, type Clock } from "@miujs/queue";
 import {
+  isWorkflow,
   normalizeApprovers,
   type ApprovalDecision,
   type Mailer,
@@ -40,6 +41,11 @@ export interface EngineOptions {
   mailer(): Mailer | undefined;
   /** Looks up an app service (`app.service`). */
   service(name: string): unknown;
+  /**
+   * Called when a start or a resume names a workflow that is not registered here (it may have
+   * been registered in another isolate or process). It may register it; the lookup is retried once.
+   */
+  resolve?(name: string, env: Env): Promise<void>;
 }
 
 export interface StartOptions {
@@ -133,8 +139,32 @@ export class Engine {
     return this.opts.clock.now();
   }
 
-  private def(name: string): WorkflowDef<any> {
+  /** Adds a workflow at run time. Throws when the name is taken. */
+  register(def: WorkflowDef<any>): void {
+    if (!isWorkflow(def)) throw workflowErrors.config("register() got something that is not a workflow", "Pass a workflow created with defineWorkflow() or fromJson().");
+    if (this.opts.workflows.has(def.name)) throw workflowErrors.duplicateWorkflow(def.name);
+    this.opts.workflows.set(def.name, def);
+  }
+
+  /** Removes a workflow. Runs still waiting fail when they next resume, unless it is registered again. */
+  unregister(name: string): boolean {
+    return this.opts.workflows.delete(name);
+  }
+
+  has(name: string): boolean {
+    return this.opts.workflows.has(name);
+  }
+
+  /** The workflow named `name`; when it is not registered, asks `resolve` once and looks again. */
+  async lookup(name: string, env: Env): Promise<WorkflowDef<any> | undefined> {
     const d = this.opts.workflows.get(name);
+    if (d || !this.opts.resolve) return d;
+    await this.opts.resolve(name, env);
+    return this.opts.workflows.get(name);
+  }
+
+  private async def(name: string, env: Env): Promise<WorkflowDef<any>> {
+    const d = await this.lookup(name, env);
     if (!d) throw workflowErrors.unknownWorkflow(name, [...this.opts.workflows.keys()]);
     return d;
   }
@@ -148,7 +178,7 @@ export class Engine {
   // start / events
 
   async start(nameOrDef: string | WorkflowDef<any>, input: unknown, env: Env, o: StartOptions = {}): Promise<{ id: string; status: RunStatus }> {
-    const def = this.def(typeof nameOrDef === "string" ? nameOrDef : nameOrDef.name);
+    const def = typeof nameOrDef === "string" ? await this.def(nameOrDef, env) : nameOrDef;
     const checked = validate(def.input, input ?? {});
     if (!checked.ok) throw workflowErrors.input(def.name, checked.issues);
     const value = roundTrip(checked.value);
@@ -337,7 +367,7 @@ export class Engine {
     if (!(await store.casRun(runId, { token, leaseFreeAt: now }, { status: "running", leaseUntil: now + this.opts.leaseMs, wakeAt: null, updatedAt: now }))) return;
 
     try {
-      const def = this.opts.workflows.get(run.workflow);
+      const def = await this.lookup(run.workflow, env);
       const outcome: Outcome = def
         ? await this.invoke(def, run, store, env)
         : { type: "failed", error: toRunError(workflowErrors.unknownWorkflow(run.workflow, [...this.opts.workflows.keys()])) };

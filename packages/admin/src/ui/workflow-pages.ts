@@ -38,7 +38,9 @@ export async function workflowList(core: Core, ctx: Context): Promise<Response> 
   if (g instanceof Response) return g;
   const store = await core.store(ctx);
   const saved = await store.list();
-  const code = [...core.workflows!.engine.opts.workflows.values()].filter((w) => !core.loader?.owns(w.name) && !saved.some((s) => s.name === w.name));
+  const listed = await sub(core.app, ctx, "GET", core.wfPrefix);
+  const all: { name: string; description?: string }[] = listed.ok && Array.isArray(listed.data?.workflows) ? listed.data.workflows : [];
+  const code = all.filter((w) => !core.loader?.owns(w.name) && !saved.some((s) => s.name === w.name));
   const manage = can(ctx, "workflows:manage");
   const p = core.path;
   const body = html`<div class="page-head"><h1>Workflows</h1><div class="toolbar">${manage ? html`<a class="btn primary" href="${p}/workflows/new">New workflow</a>` : ""}</div></div>
@@ -123,9 +125,8 @@ async function saveSpec(core: Core, ctx: Context, spec: unknown): Promise<SaveRe
   const checked = validateSpec(spec, { actions: core.actions() });
   if (!checked.ok) return { ok: false, status: 400, issues: checked.issues };
   const s = checked.spec as WorkflowSpec;
-  const registry = core.workflows!.engine.opts.workflows;
   const store = await core.store(ctx);
-  if (registry.has(s.name) && !core.loader?.owns(s.name) && !(await store.get(s.name))) {
+  if (core.workflows!.has(s.name) && !core.loader?.owns(s.name) && !(await store.get(s.name))) {
     return { ok: false, status: 409, issues: [{ path: "name", message: `"${s.name}" is already used by a workflow defined in code`, fix: "Choose another name." }] };
   }
   const saved = await store.save(s, ctx.user?.id ?? null);

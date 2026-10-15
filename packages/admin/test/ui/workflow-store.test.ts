@@ -67,7 +67,7 @@ describe("loading published versions into the workflows engine", () => {
     const app = miu({ logLevel: "silent", plugins: [wf] });
     await app.ready();
     const store = workflowStore(database);
-    const loader = new WorkflowLoader({ registry: () => wf.engine.opts.workflows, actions: () => [shout], ttlMs: 0, now: () => clock.now() });
+    const loader = new WorkflowLoader({ target: () => wf, actions: () => [shout], ttlMs: 0, now: () => clock.now() });
     return { wf, store, loader, ran, clock };
   };
 
@@ -117,7 +117,7 @@ describe("loading published versions into the workflows engine", () => {
   test("ensure() re-reads storage only after the TTL", async () => {
     const { store, wf } = await setup();
     let now = 0;
-    const loader = new WorkflowLoader({ registry: () => wf.engine.opts.workflows, actions: () => [], ttlMs: 1000, now: () => now });
+    const loader = new WorkflowLoader({ target: () => wf, actions: () => [], ttlMs: 1000, now: () => now });
     await loader.ensure(store);
     await store.save(spec("late"), null);
     await store.publish("late", 1, null);
@@ -126,5 +126,50 @@ describe("loading published versions into the workflows engine", () => {
     now = 1001;
     await loader.ensure(store);
     expect(wf.engine.opts.workflows.has("late")).toBe(true);
+  });
+});
+
+describe("loading goes through the public register/unregister API", () => {
+  test("a changed version is unregistered then registered; unpublishing unregisters", async () => {
+    const calls: string[] = [];
+    const known = new Set<string>();
+    const target = {
+      has: (n: string) => known.has(n),
+      register: (d: { name: string }) => void (calls.push(`register ${d.name}`), known.add(d.name)),
+      unregister: (n: string) => (calls.push(`unregister ${n}`), known.delete(n)),
+    };
+    const store = workflowStore(sqlite());
+    const loader = new WorkflowLoader({ target: () => target, actions: () => [], ttlMs: 0 });
+    await store.save(spec("greet", "one"), null);
+    await store.publish("greet", 1, null);
+    await loader.sync(store);
+    await store.save(spec("greet", "two"), null);
+    await store.publish("greet", 2, null);
+    await loader.sync(store);
+    await store.unpublish("greet");
+    await loader.sync(store);
+    expect(calls).toEqual(["register greet", "unregister greet", "register greet", "unregister greet"]);
+  });
+
+  test("refresh() re-reads on demand, at most once per minGapMs", async () => {
+    const store = workflowStore(sqlite());
+    let now = 0;
+    const known = new Set<string>();
+    const target = { has: (n: string) => known.has(n), register: (d: { name: string }) => void known.add(d.name), unregister: (n: string) => known.delete(n) };
+    const loader = new WorkflowLoader({ target: () => target, actions: () => [], ttlMs: 60_000, minRefreshMs: 5_000, now: () => now });
+    await loader.ensure(store);
+    await store.save(spec("late"), null);
+    await store.publish("late", 1, null);
+    await loader.ensure(store);
+    expect(known.has("late")).toBe(false); // still inside the TTL
+    await loader.refresh(store);
+    expect(known.has("late")).toBe(true);
+    await store.unpublish("late");
+    now = 1000;
+    await loader.refresh(store); // throttled
+    expect(known.has("late")).toBe(true);
+    now = 6000;
+    await loader.refresh(store);
+    expect(known.has("late")).toBe(false);
   });
 });

@@ -146,25 +146,45 @@ export function workflowStore(database: Database, now: () => number = Date.now):
   };
 }
 
+/** Where published workflows go: the workflows() plugin (its public register/unregister API). */
+export interface WorkflowTarget {
+  has(name: string): boolean;
+  register(def: WorkflowDef<any>): void;
+  unregister(name: string): boolean;
+}
+
 export interface LoaderOptions {
-  /** The engine's live workflow registry (`workflows().engine.opts.workflows`). */
-  registry: () => Map<string, WorkflowDef<any>> | null;
+  target: () => WorkflowTarget | null;
   actions: () => readonly ActionDef[];
   /** How long a sync stays fresh (other isolates/processes may publish). Default 30s. */
   ttlMs?: number;
+  /** Least time between on-demand refreshes (unknown webhook paths, crons, runs). Default 5s. */
+  minRefreshMs?: number;
   now?: () => number;
   log?: (message: string, data?: unknown) => void;
 }
 
-/** Keeps the engine's registry in step with the published versions. */
+/**
+ * Keeps the workflows engine in step with the published versions in `admin_workflows`.
+ *
+ * Freshness across isolates/processes: each instance re-reads storage when its last read is
+ * older than `ttlMs` (checked on requests), and also on demand — when a webhook, a cron event
+ * or a run names a workflow this instance does not know (workflows' `onUnknown`), throttled to
+ * one read per `minRefreshMs`.
+ */
 export class WorkflowLoader {
   private readonly o: LoaderOptions;
   private readonly ours = new Map<string, number>();
   private last = -Infinity;
-  private pending: Promise<unknown> | null = null;
+  private lastForced = -Infinity;
+  private pending: Promise<{ errors: { name: string; message: string }[] }> | null = null;
 
   constructor(o: LoaderOptions) {
     this.o = o;
+  }
+
+  private now(): number {
+    return (this.o.now ?? Date.now)();
   }
 
   loaded(): Record<string, number> {
@@ -176,42 +196,65 @@ export class WorkflowLoader {
     return this.ours.has(name);
   }
 
-  async sync(store: WorkflowStore): Promise<{ errors: { name: string; message: string }[] }> {
-    const registry = this.o.registry();
+  sync(store: WorkflowStore): Promise<{ errors: { name: string; message: string }[] }> {
+    // Concurrent callers share one read, so registrations never interleave.
+    if (!this.pending) this.pending = this.doSync(store).finally(() => (this.pending = null));
+    return this.pending;
+  }
+
+  private async doSync(store: WorkflowStore): Promise<{ errors: { name: string; message: string }[] }> {
+    const target = this.o.target();
     const errors: { name: string; message: string }[] = [];
-    if (!registry) return { errors };
+    if (!target) return { errors };
     const published = await store.published();
     const want = new Set(published.map((p) => p.name));
     for (const name of [...this.ours.keys()]) {
       if (!want.has(name)) {
-        registry.delete(name);
+        target.unregister(name);
         this.ours.delete(name);
       }
     }
     for (const p of published) {
       if (this.ours.get(p.name) === p.version) continue;
-      if (registry.has(p.name) && !this.ours.has(p.name)) {
+      if (!this.ours.has(p.name) && target.has(p.name)) {
         errors.push({ name: p.name, message: `A workflow named "${p.name}" is defined in code; the UI version is not loaded.` });
         continue;
       }
+      let def: WorkflowDef<any>;
       try {
-        registry.set(p.name, fromJson(p.spec, { actions: [...this.o.actions()] }));
+        def = fromJson(p.spec, { actions: [...this.o.actions()] });
+      } catch (err) {
+        errors.push({ name: p.name, message: (err as Error).message });
+        continue;
+      }
+      if (this.ours.has(p.name)) {
+        target.unregister(p.name);
+        this.ours.delete(p.name);
+      }
+      try {
+        target.register(def);
         this.ours.set(p.name, p.version);
       } catch (err) {
         errors.push({ name: p.name, message: (err as Error).message });
       }
     }
     for (const e of errors) this.o.log?.("admin ui: workflow not loaded", e);
-    this.last = (this.o.now ?? Date.now)();
+    this.last = this.now();
     return { errors };
   }
 
-  /** Syncs when the last sync is older than the TTL. Concurrent callers share one sync. */
+  /** Syncs when the last sync is older than the TTL. */
   async ensure(store: WorkflowStore): Promise<void> {
-    const now = (this.o.now ?? Date.now)();
-    if (now - this.last <= (this.o.ttlMs ?? 30_000)) return;
-    if (!this.pending) this.pending = this.sync(store).finally(() => (this.pending = null));
-    await this.pending;
+    if (this.now() - this.last <= (this.o.ttlMs ?? 30_000)) return;
+    await this.sync(store);
+  }
+
+  /** Re-reads now (something named a workflow we do not know), at most once per minRefreshMs. */
+  async refresh(store: WorkflowStore): Promise<void> {
+    const now = this.now();
+    if (now - this.lastForced < (this.o.minRefreshMs ?? 5_000)) return;
+    this.lastForced = now;
+    await this.sync(store);
   }
 
   /** Forces the next ensure() to re-read storage. */

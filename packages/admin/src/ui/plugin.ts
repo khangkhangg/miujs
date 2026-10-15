@@ -270,7 +270,7 @@ export function adminUI(opts: AdminUIOptions = {}) {
         throw errors.config("MIU_E_ADMIN_UI_NO_ADMIN", "adminUI() needs the admin() (or crm()) plugin", "Add admin({ resources }) or crm() to miu({ plugins }) next to adminUI().");
       }
       const wf = wfOpts ? (app.plugins.find((x) => x.name === "workflows") as unknown as WorkflowsLike | undefined) : undefined;
-      const workflowsPlugin = wf && wf.engine?.opts?.workflows instanceof Map ? wf : null;
+      const workflowsPlugin = wf && typeof wf.register === "function" && typeof wf.unregister === "function" && typeof wf.onUnknown === "function" ? wf : null;
       const listRoute = workflowsPlugin?.routes.find((r) => (r.config as { name?: string }).name === "listWorkflows");
       const timeline = adminPlugin.routes.find((r) => (r.config as { name?: string }).name === "crm_timeline");
       const apiBase = adminPlugin.schema().basePath;
@@ -280,15 +280,34 @@ export function adminUI(opts: AdminUIOptions = {}) {
         for (const a of wfOpts?.actions ?? []) out.set(a.name, a);
         return [...out.values()];
       };
+      let lastDatabase: Database | null = null;
       const storeFor = async (ctx: Context): Promise<WorkflowStore> => {
         let database: Database;
         if (wfOpts?.database) database = resolveDatabase(wfOpts.database, ctx.env);
-        else if (typeof adminPlugin.runtime === "function") database = (await adminPlugin.runtime(ctx)).db as Database;
-        else throw errors.config("MIU_E_ADMIN_UI_DATABASE", "adminUI() has no database for workflows", "Pass adminUI({ workflows: { database } }).");
+        else if (typeof adminPlugin.runtime === "function") {
+          try {
+            database = (await adminPlugin.runtime(ctx)).db as Database;
+          } catch (err) {
+            // Outside a request (a cron event) there is no ctx.db: use the one seen last.
+            if (!lastDatabase) throw err;
+            database = lastDatabase;
+          }
+        } else throw errors.config("MIU_E_ADMIN_UI_DATABASE", "adminUI() has no database for workflows", "Pass adminUI({ workflows: { database } }).");
+        lastDatabase = database;
         let s = stores.get(database);
         if (!s) stores.set(database, (s = workflowStore(database)));
         return s;
       };
+      const loader = workflowsPlugin
+        ? new WorkflowLoader({ target: () => workflowsPlugin, actions, ttlMs: wfOpts?.reloadMs ?? 30_000, log: (m, d) => app.log.warn(m, d as Record<string, unknown>) })
+        : null;
+      if (workflowsPlugin && loader) {
+        // A webhook, cron event or run for a workflow this instance does not know may have been
+        // published by another isolate: re-read storage now (throttled), not only every reloadMs.
+        workflowsPlugin.onUnknown(async (_what, env) => {
+          await loader.refresh(await storeFor({ env } as unknown as Context));
+        });
+      }
       core = {
         app,
         shell,
@@ -303,9 +322,7 @@ export function adminUI(opts: AdminUIOptions = {}) {
         workflows: workflowsPlugin,
         wfPrefix: listRoute ? listRoute.path : "/workflows",
         store: storeFor,
-        loader: workflowsPlugin
-          ? new WorkflowLoader({ registry: () => workflowsPlugin.engine.opts.workflows, actions, ttlMs: wfOpts?.reloadMs ?? 30_000, log: (m, d) => app.log.warn(m, d as Record<string, unknown>) })
-          : null,
+        loader,
         actions,
         maxUpload: opts.maxUploadBytes ?? 25 * 1024 * 1024,
       };

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { t } from "miujs";
 import { defineAction, defineWorkflow, manual, type WorkflowSpec } from "@miujs/workflows";
+import { workflowStore } from "../../src/ui/workflow-store.ts";
 import { uiResources } from "./fixtures.ts";
 import { XSS, expectNoXss, uiSetup, type UiHarness } from "./harness.ts";
 
@@ -173,5 +174,59 @@ describe("workflow pages", () => {
   test("cancel and retry are refused without workflows:manage (enforced by the workflows routes)", async () => {
     const r = await h.req("POST", "/admin/workflows/run/whatever/cancel", { form: {}, user: "wren" });
     expect(r.status).toBe(403);
+  });
+});
+
+async function hmac(secret: string, body: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return [...new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+describe("published cron and webhook workflows", () => {
+  const publish = async (s: WorkflowSpec) => {
+    expect((await h.req("POST", "/admin/api/workflows", { body: { spec: s } })).status).toBe(200);
+    expect((await h.req("POST", `/admin/api/workflows/${s.name}/publish`, { body: { version: 1 } })).status).toBe(200);
+  };
+  const env = { UI_HOOK_SECRET: "s3cret-for-the-hook" };
+  const signedPost = async (path: string, body: string, secret = env.UI_HOOK_SECRET) =>
+    h.app.dispatch(new Request(`http://localhost${path}`, { method: "POST", headers: { "content-type": "application/json", "x-signature": `sha256=${await hmac(secret, body)}` }, body }), env, { runtime: "bun" } as never);
+
+  test("a cron trigger runs on the fake clock; unpublishing stops it", async () => {
+    await publish({ name: "weekly-digest", trigger: { type: "cron", cron: "0 9 * * 1" }, steps: [{ id: "say", type: "action", action: "tell", params: { text: "digest" } }] });
+    h.clock.advance(7 * 86_400_000); // next Monday 09:00 UTC
+    await h.settle();
+    expect(told).toEqual(["digest"]);
+    const runs = await h.req("GET", "/admin/workflows/runs/weekly-digest");
+    expect(runs.text).toContain('<span class="status completed">completed</span>');
+    expect(runs.text).toContain("cron");
+    await h.req("POST", "/admin/api/workflows/weekly-digest/unpublish", { body: {} });
+    h.clock.advance(7 * 86_400_000);
+    await h.settle();
+    expect(told).toEqual(["digest"]);
+  });
+
+  test("a webhook trigger runs on an HMAC-signed POST; bad signatures and unpublished paths are refused", async () => {
+    await publish({ name: "inbound", trigger: { type: "webhook", path: "/hooks/inbound", secretEnv: "UI_HOOK_SECRET" }, steps: [{ id: "say", type: "action", action: "tell", params: { text: "hi {{ data.who }}" } }] });
+    const body = JSON.stringify({ who: "Ann" });
+    expect((await signedPost("/hooks/inbound", body, "wrong-secret")).status).toBe(401);
+    const ok = await signedPost("/hooks/inbound", body);
+    expect(ok.status).toBe(202);
+    await h.settle();
+    expect(told).toEqual(["hi Ann"]);
+    await h.req("POST", "/admin/api/workflows/inbound/unpublish", { body: {} });
+    expect((await signedPost("/hooks/inbound", body)).status).toBe(404);
+    expect(told).toEqual(["hi Ann"]);
+  });
+
+  test("a webhook published by another instance is picked up on demand, without waiting for the 30s re-read", async () => {
+    await h.req("GET", "/admin/workflows"); // this instance has read storage just now
+    // Another isolate/process publishes straight into the shared table.
+    const other = workflowStore(h.db);
+    await other.save({ name: "elsewhere", trigger: { type: "webhook", path: "/hooks/elsewhere" }, steps: [{ id: "say", type: "action", action: "tell", params: { text: "from afar" } }] }, null);
+    await other.publish("elsewhere", 1, null);
+    const r = await h.app.request("/hooks/elsewhere", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    expect(r.status).toBe(202);
+    await h.settle();
+    expect(told).toEqual(["from afar"]);
   });
 });

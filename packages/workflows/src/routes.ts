@@ -72,39 +72,37 @@ export async function verifySignature(secret: string, body: string, header: stri
   return safeEqual(given, want);
 }
 
-function webhookRoute(engine: Engine, def: WorkflowDef<any>, tr: WebhookTrigger): RouteDef {
-  return route.post(tr.path, {
-    name: `workflowWebhook_${def.name.replace(/[^A-Za-z0-9_]+/g, "_")}`,
-    summary: `Webhook that starts workflow "${def.name}"`,
-    tags: ["workflows"],
-    mcp: false,
-    status: 202,
-    handler: async (ctx) => {
-      const raw = await ctx.req.text();
-      if (tr.secret !== undefined) {
-        const secret = typeof tr.secret === "function" ? tr.secret(ctx.env) : tr.secret;
-        if (!secret) {
-          throw workflowErrors.config(`Webhook ${tr.path} has a secret configured, but it resolved to nothing`, "Set the secret in env (e.g. FORM_SECRET) or pass secret: \"...\" to webhook().");
-        }
-        if (!(await verifySignature(secret, raw, ctx.headers.get(tr.header ?? "x-signature")))) throw workflowErrors.signature();
-      }
-      let body: unknown = {};
-      if (raw.trim() !== "") {
-        try {
-          body = JSON.parse(raw);
-        } catch {
-          throw errors.custom({ code: "MIU_E_BAD_JSON", status: 400, message: "Webhook body is not valid JSON", fix: "Send a JSON body." });
-        }
-      }
-      let input: unknown;
-      try {
-        input = tr.input ? tr.input(body, ctx.req) : body;
-      } catch (err) {
-        throw errors.badRequest(`Webhook body could not be mapped to workflow input: ${(err as Error)?.message ?? err}`, "Send the payload shape this webhook expects.");
-      }
-      return engine.start(def, input, ctx.env, { trigger: { type: "webhook", path: tr.path } });
-    },
-  });
+/**
+ * Handles a POST to a webhook trigger's path: checks the HMAC signature when a secret is set,
+ * maps the JSON body to input and starts the run (202 with the run id). The workflows plugin
+ * calls it from one dispatcher that looks paths up in the live registry, so workflows
+ * registered at run time get webhooks without new routes.
+ */
+export async function handleWebhook(engine: Engine, def: WorkflowDef<any>, tr: WebhookTrigger, ctx: Context): Promise<Response> {
+  const raw = await ctx.req.text();
+  if (tr.secret !== undefined) {
+    const secret = typeof tr.secret === "function" ? tr.secret(ctx.env) : tr.secret;
+    if (!secret) {
+      throw workflowErrors.config(`Webhook ${tr.path} has a secret configured, but it resolved to nothing`, "Set the secret in env (e.g. FORM_SECRET) or pass secret: \"...\" to webhook().");
+    }
+    if (!(await verifySignature(secret, raw, ctx.headers.get(tr.header ?? "x-signature")))) throw workflowErrors.signature();
+  }
+  let body: unknown = {};
+  if (raw.trim() !== "") {
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      throw errors.custom({ code: "MIU_E_BAD_JSON", status: 400, message: "Webhook body is not valid JSON", fix: "Send a JSON body." });
+    }
+  }
+  let input: unknown;
+  try {
+    input = tr.input ? tr.input(body, ctx.req) : body;
+  } catch (err) {
+    throw errors.badRequest(`Webhook body could not be mapped to workflow input: ${(err as Error)?.message ?? err}`, "Send the payload shape this webhook expects.");
+  }
+  const run = await engine.start(def, input, ctx.env, { trigger: { type: "webhook", path: tr.path } });
+  return Response.json(run, { status: 202 });
 }
 
 export function workflowRoutes(o: { engine: Engine; registry: Map<string, WorkflowDef<any>>; prefix: string; permissions: Permissions }): RouteDef[] {
@@ -210,6 +208,5 @@ export function workflowRoutes(o: { engine: Engine; registry: Map<string, Workfl
     },
   });
 
-  const hooks = [...registry.values()].flatMap((def) => def.triggers.flatMap((tr) => (tr.type === "webhook" ? [webhookRoute(engine, def, tr)] : [])));
-  return [list, runs, getRun, cancel, retry, emit, approve, start, ...hooks];
+  return [list, runs, getRun, cancel, retry, emit, approve, start];
 }
