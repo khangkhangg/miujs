@@ -1,0 +1,17 @@
+{
+  "name": "example-crm",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "bun app.ts", "seed": "bun seed.ts", "test": "bun test" },
+  "dependencies": {
+    "miujs": "workspace:*",
+    "@miujs/access": "workspace:*",
+    "@miujs/admin": "workspace:*",
+    "@miujs/audit": "workspace:*",
+    "@miujs/auth": "workspace:*",
+    "@miujs/db": "workspace:*",
+    "@miujs/session": "workspace:*",
+    "@miujs/web": "workspace:*",
+    "@miujs/workflows": "workspace:*"
+  }
+}

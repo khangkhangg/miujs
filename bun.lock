@@ -28,6 +28,20 @@
         "miujs": "workspace:*",
       },
     },
+    "examples/crm": {
+      "name": "example-crm",
+      "dependencies": {
+        "@miujs/access": "workspace:*",
+        "@miujs/admin": "workspace:*",
+        "@miujs/audit": "workspace:*",
+        "@miujs/auth": "workspace:*",
+        "@miujs/db": "workspace:*",
+        "@miujs/session": "workspace:*",
+        "@miujs/web": "workspace:*",
+        "@miujs/workflows": "workspace:*",
+        "miujs": "workspace:*",
+      },
+    },
     "examples/quiz": {
       "name": "example-quiz",
       "dependencies": {
@@ -55,6 +69,9 @@
         "@miujs/web": "workspace:*",
         "@miujs/workflows": "workspace:*",
         "miujs": "workspace:*",
+      },
+      "devDependencies": {
+        "@miujs/files": "workspace:*",
       },
     },
     "packages/ai": {
@@ -312,6 +329,8 @@
     "exact-mirror": ["exact-mirror@0.2.7", "", { "peerDependencies": { "@sinclair/typebox": "^0.34.15" }, "optionalPeers": ["@sinclair/typebox"] }, "sha512-+MeEmDcLA4o/vjK2zujgk+1VTxPR4hdp23qLqkWfStbECtAq9gmsvQa3LW6z/0GXZyHJobrCnmy1cdeE7BjsYg=="],
 
     "example-api": ["example-api@workspace:examples/api"],
+
+    "example-crm": ["example-crm@workspace:examples/crm"],
 
     "example-quiz": ["example-quiz@workspace:examples/quiz"],
 
