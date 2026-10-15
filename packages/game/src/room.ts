@@ -17,7 +17,7 @@
 import { t, type Schema } from "miujs";
 import { defineRoom, parseShardId, type InitContext, type Player, type Room, type RoomDefinition, type RoomType } from "@miujs/realtime";
 import { gameErrors } from "./errors.ts";
-import { gameSecret, verifyTicketSync } from "./sign.ts";
+import { gameSecretFor, verifyTicketSync } from "./sign.ts";
 import type { Result, ResultSummary } from "./store.ts";
 
 type MaybePromise<T> = T | Promise<T>;
@@ -236,7 +236,8 @@ export function gameRoom<S, X = undefined, C extends Record<string, Schema<any>>
   }
   options.set(type, opts);
   let secret: string | null = null;
-  const key = () => (secret ??= gameSecret(opts.secret));
+  // room.env: the Durable Object's env on Workers, where MIU_GAME_SECRET lives.
+  const key = (env?: Record<string, unknown>) => (secret ??= gameSecretFor(opts.secret, env));
   const open = new Set(opts.open ?? []);
   const ctxOf = (ctx: InitContext): GameInitContext => {
     const d = (ctx.data ?? {}) as GameRoomData;
@@ -258,7 +259,7 @@ export function gameRoom<S, X = undefined, C extends Record<string, Schema<any>>
   const admit = (room: Room, playerId: string, ticket: unknown, now: number): { seat: Seat; fresh: boolean } => {
     const g = gameOf(room)!;
     const roomId = parseShardId(room.id)?.id ?? room.id;
-    const tk = verifyTicketSync(key(), ticket, { roomType: type, roomId, now });
+    const tk = verifyTicketSync(key((room as { env?: Record<string, unknown> }).env), ticket, { roomType: type, roomId, now });
     if (g.match) {
       if (tk.matchId !== g.match.id) throw gameErrors.ticketInvalid("issued for another match");
       if (!g.match.players.some((p) => p.userId === tk.userId)) throw gameErrors.ticketInvalid("user is not in this match");

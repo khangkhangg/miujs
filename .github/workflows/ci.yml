@@ -145,3 +145,47 @@ jobs:
           name: bench-results
           path: bench-*.json
           if-no-files-found: ignore
+
+  workerd:
+    name: Cloudflare runtime (workerd, local only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      # wrangler runs on Node; it starts workerd with Miniflare's local D1, KV, R2, Queues,
+      # Durable Objects, Workflows and rate limits. No Cloudflare account or login is used.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Cache Bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-workerd-${{ runner.os }}-${{ hashFiles('bun.lock') }}-${{ hashFiles('scripts/workerd/bun.lock') }}
+          restore-keys: bun-workerd-${{ runner.os }}-
+
+      - name: Install
+        run: |
+          bun install --frozen-lockfile
+          cd scripts/workerd && bun install --frozen-lockfile
+
+      # 200 simulated quiz players here; run `bun run workerd quiz --players 1000` locally for the full fan-out.
+      - name: Run the example apps on workerd (wrangler dev --local)
+        run: bun run workerd --players 200
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workerd-results
+          path: |
+            scripts/workerd/.out/results.json
+            scripts/workerd/.out/*/wrangler*.log
+            scripts/workerd/.out/*/wrangler.toml
+          if-no-files-found: ignore

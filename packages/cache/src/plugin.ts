@@ -85,7 +85,10 @@ export function cache(opts: CacheOptions = {}) {
       });
     },
     cloudflare(): CloudflareNeeds {
-      const binding = configured?.forEnv ? configured.inspect?.().binding : undefined;
+      // The default store on Workers is the KV namespace CACHE: declare it, or every isolate would
+      // silently cache in its own memory.
+      if (!configured) return { kv: [DEFAULT_KV_BINDING] };
+      const binding = configured.forEnv ? configured.inspect?.().binding : undefined;
       return typeof binding === "string" ? { kv: [binding] } : {};
     },
   });

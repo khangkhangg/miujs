@@ -308,9 +308,12 @@ export const followUp = defineWorkflow("contact-follow-up", {
 
 ## Known limitations (0.2)
 
-- **Cloudflare:** never deployed to a real account. Durable Objects, D1, KV and Queues are tested
-  against in-test fakes, and every package bundles for a Workers target. Pending `after`/`tick`
-  room timers are lost when a Durable Object hibernates.
+- **Cloudflare:** never deployed to a real account. `bun run workerd` runs the example apps on
+  Cloudflare's runtime locally (workerd through `wrangler dev --local`, with Miniflare's D1, KV, R2,
+  Queues, Durable Objects, Workflows, rate limits and Cache API) over real HTTP and WebSockets; see
+  [scripts/workerd/REPORT.md](scripts/workerd/REPORT.md). Still unverified without an account: edge
+  bot scores and geo, CPU-time limits, Queues delivery timing and retries at scale, latency between
+  locations. Pending `after`/`tick` room timers are lost when a Durable Object hibernates.
 - **Deno and Node:** `bun run smoke` runs the same HTTP checks on Bun, Node 24 and Deno 2 (routing,
   validation, body limits, cookies, `ctx.ip`, MCP, `waitUntil`); all pass. The full test suite runs on
   Bun only. Node won't strip types inside `node_modules`, so the npm build ships prebuilt JS and

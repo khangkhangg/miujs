@@ -146,6 +146,43 @@ describe("cloudflareQueue: consuming", () => {
     expect(calls).toBe(1);
   });
 
+  test("with `queue` set, also consumes the queue `miu deploy cloudflare` names after its binding", async () => {
+    // Regression (workerd harness): workflows use cloudflareQueue({ binding: "WORKFLOWS_QUEUE", queue: "miu-workflows" }),
+    // but the generated wrangler.toml names that queue "<app>-workflows-queue", so every batch was ignored.
+    let calls = 0;
+    const job = defineJob("work", { input: t.object({ n: t.number() }), run: () => void calls++ });
+    const app = miu({ name: "crm", plugins: [queue({ jobs: [job], adapter: cloudflareQueue({ binding: "WORKFLOWS_QUEUE", queue: "miu-workflows" }) })], ...silent });
+    for (const name of ["crm-workflows-queue", "workflows-queue", "miu-workflows"]) {
+      const b = fakeBatch([{ body: msg("work", { n: 1 }) }], name);
+      await app.queue(b.batch, {}, {});
+      expect(b.outcome).toEqual({ "msg-0": "ack" });
+    }
+    expect(calls).toBe(3);
+  });
+
+  test("a default consumer leaves batches of another queue() plugin's named queue to that plugin", async () => {
+    const ran: string[] = [];
+    const a = defineJob("a", { input: t.object({}), run: () => void ran.push("a") });
+    const w = defineJob("w", { input: t.object({}), run: () => void ran.push("w") });
+    const app = miu({
+      name: "crm",
+      plugins: [queue({ jobs: [a], adapter: cloudflareQueue() }), queue({ jobs: [w], adapter: cloudflareQueue({ binding: "WORKFLOWS_QUEUE", queue: "miu-workflows" }) })],
+      ...silent,
+    });
+    const acks: string[] = [];
+    const batch = {
+      queue: "crm-workflows-queue",
+      messages: [{ id: "m1", body: msg("w", {}), attempts: 1, ack: () => void acks.push("ack"), retry: () => void acks.push("retry") }],
+    };
+    await app.queue(batch, {}, {});
+    expect(ran).toEqual(["w"]);
+    // Acked once, by the workflows consumer; the default one did not ack it as an unknown job.
+    expect(acks).toEqual(["ack"]);
+    const jobs = fakeBatch([{ body: msg("a", {}) }], "crm-jobs");
+    await app.queue(jobs.batch, {}, {});
+    expect(ran).toEqual(["w", "a"]);
+  });
+
   test("jobs can dispatch follow-ups through the consumer's env", async () => {
     const JOBS = fakeQueue();
     const next = defineJob("next", { input: t.object({}), run: () => {} });

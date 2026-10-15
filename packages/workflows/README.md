@@ -243,7 +243,7 @@ crons = ["0 9 * * 1"]
 
 Add a `[[d1_databases]]` binding named `DB` yourself if you use `d1("DB")`. Queue delays are capped at 12 hours on Cloudflare; longer sleeps are chained automatically.
 
-Alternatively, run a code-defined workflow on Cloudflare Workflows with `createCloudflareWorkflow(def, { base: WorkflowEntrypoint })`, where `WorkflowEntrypoint` comes from `cloudflare:workers`. `step.run` maps to `step.do`, sleeps and `waitForEvent` map directly, and `waitForApproval` waits for an event of type `approval-<step>`.
+Alternatively, run a code-defined workflow on Cloudflare Workflows with `createCloudflareWorkflow(def, { base: WorkflowEntrypoint })`, where `WorkflowEntrypoint` comes from `cloudflare:workers`. The `base` is required on Workers: workerd refuses a Workflow class that does not extend `WorkflowEntrypoint` ("worker is not an actor but class name was requested"); the snippet below leaves it out only so it runs under Bun. `miu deploy cloudflare` can load an entry that imports `cloudflare:workers`. `step.run` maps to `step.do`, sleeps and `waitForEvent` map directly, and `waitForApproval` waits for an event of type `approval-<step>`.
 
 <!-- test -->
 ```ts

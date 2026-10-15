@@ -82,7 +82,9 @@ export function createApp(opts: CreateAppOptions = {}) {
     mcp: { instructions: "A CRM. Call admin_schema first to learn the resources, fields and filters; send x-org-id for the organization." },
     plugins: [
       secureHeaders({ csp: true }),
-      db({ database: source }),
+      // admin() only auto-migrates in dev; db() applies migrations everywhere (on Workers: D1, on
+      // the first request of each isolate), so the CRM and System-settings tables exist in production.
+      db({ database: source, migrations: kit.migrations }),
       session({ secret: opts.sessionSecret }),
       auth({ users: dbUserStore(source), password: opts.passwordIterations ? { algorithm: "pbkdf2", iterations: opts.passwordIterations } : undefined }),
       access({ roles, database: source, orgFrom }),

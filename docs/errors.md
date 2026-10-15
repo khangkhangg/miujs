@@ -21,10 +21,10 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 | Package | Codes |
 | --- | --- |
 | `miujs` | [MIU_E_APP_NOT_READY](#miu_e_app_not_ready), [MIU_E_APP_STARTED](#miu_e_app_started), [MIU_E_BAD_JSON](#miu_e_bad_json), [MIU_E_BAD_REQUEST](#miu_e_bad_request), [MIU_E_BODY_TOO_LARGE](#miu_e_body_too_large), [MIU_E_CLOUDFLARE_ASSETS_CONFLICT](#miu_e_cloudflare_assets_conflict), [MIU_E_CONFLICT](#miu_e_conflict), [MIU_E_COOKIE_VALUE_INVALID](#miu_e_cookie_value_invalid), [MIU_E_FORBIDDEN](#miu_e_forbidden), [MIU_E_INTERNAL](#miu_e_internal), [MIU_E_LISTEN_UNSUPPORTED](#miu_e_listen_unsupported), [MIU_E_MCP_TOOL_DUPLICATE](#miu_e_mcp_tool_duplicate), [MIU_E_METHOD_NOT_ALLOWED](#miu_e_method_not_allowed), [MIU_E_NOT_FOUND](#miu_e_not_found), [MIU_E_PARAM_MISSING](#miu_e_param_missing), [MIU_E_PARAM_SHADOWED](#miu_e_param_shadowed), [MIU_E_PARAM_UNKNOWN](#miu_e_param_unknown), [MIU_E_PERMISSION_UNCHECKED](#miu_e_permission_unchecked), [MIU_E_RATE_LIMITED](#miu_e_rate_limited), [MIU_E_RESPONSE_INVALID](#miu_e_response_invalid), [MIU_E_ROUTE_CONFLICT](#miu_e_route_conflict), [MIU_E_ROUTE_DUPLICATE](#miu_e_route_duplicate), [MIU_E_ROUTE_INVALID](#miu_e_route_invalid), [MIU_E_ROUTE_NAME_DUPLICATE](#miu_e_route_name_duplicate), [MIU_E_ROUTE_NOT_FOUND](#miu_e_route_not_found), [MIU_E_SERVICE_DUPLICATE](#miu_e_service_duplicate), [MIU_E_SERVICE_MISSING](#miu_e_service_missing), [MIU_E_UNAUTHORIZED](#miu_e_unauthorized), [MIU_E_VALIDATION](#miu_e_validation), [MIU_E_WS_EXPECTED](#miu_e_ws_expected), [MIU_E_WS_UNSUPPORTED](#miu_e_ws_unsupported) |
-| `@miujs/cli` | [MIU_E_CLI_ADD_USAGE](#miu_e_cli_add_usage), [MIU_E_CLI_BUILD_FAILED](#miu_e_cli_build_failed), [MIU_E_CLI_DB_NOT_FOUND](#miu_e_cli_db_not_found), [MIU_E_CLI_DB_SOURCE](#miu_e_cli_db_source), [MIU_E_CLI_DB_USAGE](#miu_e_cli_db_usage), [MIU_E_CLI_DENO_JSON](#miu_e_cli_deno_json), [MIU_E_CLI_DEPLOY_TARGET](#miu_e_cli_deploy_target), [MIU_E_CLI_DRIZZLE_MISSING](#miu_e_cli_drizzle_missing), [MIU_E_CLI_EXISTS](#miu_e_cli_exists), [MIU_E_CLI_FLAG_VALUE](#miu_e_cli_flag_value), [MIU_E_CLI_LOADTEST_USAGE](#miu_e_cli_loadtest_usage), [MIU_E_CLI_LOGS_FILE](#miu_e_cli_logs_file), [MIU_E_CLI_LOGS_SOURCE](#miu_e_cli_logs_source), [MIU_E_CLI_NEW_USAGE](#miu_e_cli_new_usage), [MIU_E_CLI_NO_APP](#miu_e_cli_no_app), [MIU_E_CLI_NO_DEFAULT_EXPORT](#miu_e_cli_no_default_export), [MIU_E_CLI_SCHEMA_EMPTY](#miu_e_cli_schema_empty), [MIU_E_CLI_SCHEMA_NOT_FOUND](#miu_e_cli_schema_not_found), [MIU_E_CLI_TEMPLATE](#miu_e_cli_template), [MIU_E_CLI_UNKNOWN_COMMAND](#miu_e_cli_unknown_command), [MIU_E_CLI_UNKNOWN_FLAG](#miu_e_cli_unknown_flag), [MIU_E_CLI_WRANGLER](#miu_e_cli_wrangler), [MIU_E_NOT_IMPLEMENTED](#miu_e_not_implemented), [MIU_W_DO_NOT_EXPORTED](#miu_w_do_not_exported), [MIU_W_SECRET_IN_CODE](#miu_w_secret_in_code), [MIU_W_TYPECHECK](#miu_w_typecheck), [MIU_W_UNAUTHENTICATED_MUTATION](#miu_w_unauthenticated_mutation), [MIU_W_WORKERS_BUNDLE](#miu_w_workers_bundle), [MIU_W_WORKERS_NODE_IMPORT](#miu_w_workers_node_import), [MIU_W_WORKFLOW_NOT_EXPORTED](#miu_w_workflow_not_exported) |
+| `@miujs/cli` | [MIU_E_CLI_ADD_USAGE](#miu_e_cli_add_usage), [MIU_E_CLI_BUILD_FAILED](#miu_e_cli_build_failed), [MIU_E_CLI_COMPAT_DATE](#miu_e_cli_compat_date), [MIU_E_CLI_DB_NOT_FOUND](#miu_e_cli_db_not_found), [MIU_E_CLI_DB_SOURCE](#miu_e_cli_db_source), [MIU_E_CLI_DB_USAGE](#miu_e_cli_db_usage), [MIU_E_CLI_DENO_JSON](#miu_e_cli_deno_json), [MIU_E_CLI_DEPLOY_TARGET](#miu_e_cli_deploy_target), [MIU_E_CLI_DRIZZLE_MISSING](#miu_e_cli_drizzle_missing), [MIU_E_CLI_EXISTS](#miu_e_cli_exists), [MIU_E_CLI_FLAG_VALUE](#miu_e_cli_flag_value), [MIU_E_CLI_LOADTEST_USAGE](#miu_e_cli_loadtest_usage), [MIU_E_CLI_LOGS_FILE](#miu_e_cli_logs_file), [MIU_E_CLI_LOGS_SOURCE](#miu_e_cli_logs_source), [MIU_E_CLI_NEW_USAGE](#miu_e_cli_new_usage), [MIU_E_CLI_NO_APP](#miu_e_cli_no_app), [MIU_E_CLI_NO_DEFAULT_EXPORT](#miu_e_cli_no_default_export), [MIU_E_CLI_SCHEMA_EMPTY](#miu_e_cli_schema_empty), [MIU_E_CLI_SCHEMA_NOT_FOUND](#miu_e_cli_schema_not_found), [MIU_E_CLI_TEMPLATE](#miu_e_cli_template), [MIU_E_CLI_UNKNOWN_COMMAND](#miu_e_cli_unknown_command), [MIU_E_CLI_UNKNOWN_FLAG](#miu_e_cli_unknown_flag), [MIU_E_CLI_WRANGLER](#miu_e_cli_wrangler), [MIU_E_NOT_IMPLEMENTED](#miu_e_not_implemented), [MIU_W_DO_NOT_EXPORTED](#miu_w_do_not_exported), [MIU_W_SECRET_IN_CODE](#miu_w_secret_in_code), [MIU_W_TYPECHECK](#miu_w_typecheck), [MIU_W_UNAUTHENTICATED_MUTATION](#miu_w_unauthenticated_mutation), [MIU_W_WORKERS_BUNDLE](#miu_w_workers_bundle), [MIU_W_WORKERS_NODE_IMPORT](#miu_w_workers_node_import), [MIU_W_WORKFLOW_NOT_EXPORTED](#miu_w_workflow_not_exported) |
 | `@miujs/auth` | [MIU_E_AUTH_ACCOUNT_DISABLED](#miu_e_auth_account_disabled), [MIU_E_AUTH_APP_URL_INVALID](#miu_e_auth_app_url_invalid), [MIU_E_AUTH_APP_URL_MISSING](#miu_e_auth_app_url_missing), [MIU_E_AUTH_EMAIL_TAKEN](#miu_e_auth_email_taken), [MIU_E_AUTH_EMAIL_UNVERIFIED](#miu_e_auth_email_unverified), [MIU_E_AUTH_HASH_UNSUPPORTED](#miu_e_auth_hash_unsupported), [MIU_E_AUTH_INVALID](#miu_e_auth_invalid), [MIU_E_AUTH_MAILER_MISSING](#miu_e_auth_mailer_missing), [MIU_E_AUTH_OAUTH_ACCOUNT_EXISTS](#miu_e_auth_oauth_account_exists), [MIU_E_AUTH_OAUTH_ALREADY_LINKED](#miu_e_auth_oauth_already_linked), [MIU_E_AUTH_OAUTH_CLIENT_SECRET_MISSING](#miu_e_auth_oauth_client_secret_missing), [MIU_E_AUTH_OAUTH_CONFIG](#miu_e_auth_oauth_config), [MIU_E_AUTH_OAUTH_CONFLICT](#miu_e_auth_oauth_conflict), [MIU_E_AUTH_OAUTH_DENIED](#miu_e_auth_oauth_denied), [MIU_E_AUTH_OAUTH_DISCOVERY](#miu_e_auth_oauth_discovery), [MIU_E_AUTH_OAUTH_EMAIL_UNVERIFIED](#miu_e_auth_oauth_email_unverified), [MIU_E_AUTH_OAUTH_ID_TOKEN](#miu_e_auth_oauth_id_token), [MIU_E_AUTH_OAUTH_LAST_METHOD](#miu_e_auth_oauth_last_method), [MIU_E_AUTH_OAUTH_PROFILE](#miu_e_auth_oauth_profile), [MIU_E_AUTH_OAUTH_PROVIDER_UNKNOWN](#miu_e_auth_oauth_provider_unknown), [MIU_E_AUTH_OAUTH_RETURN_TO](#miu_e_auth_oauth_return_to), [MIU_E_AUTH_OAUTH_SESSION_REQUIRED](#miu_e_auth_oauth_session_required), [MIU_E_AUTH_OAUTH_SIGNUPS_CLOSED](#miu_e_auth_oauth_signups_closed), [MIU_E_AUTH_OAUTH_STATE](#miu_e_auth_oauth_state), [MIU_E_AUTH_OAUTH_STATE_SECRET_MISSING](#miu_e_auth_oauth_state_secret_missing), [MIU_E_AUTH_OAUTH_TOKEN](#miu_e_auth_oauth_token), [MIU_E_AUTH_PASSKEY_ALGORITHM](#miu_e_auth_passkey_algorithm), [MIU_E_AUTH_PASSKEY_ATTESTATION](#miu_e_auth_passkey_attestation), [MIU_E_AUTH_PASSKEY_CHALLENGE](#miu_e_auth_passkey_challenge), [MIU_E_AUTH_PASSKEY_CLONED](#miu_e_auth_passkey_cloned), [MIU_E_AUTH_PASSKEY_CONFIG](#miu_e_auth_passkey_config), [MIU_E_AUTH_PASSKEY_EXISTS](#miu_e_auth_passkey_exists), [MIU_E_AUTH_PASSKEY_FLAGS](#miu_e_auth_passkey_flags), [MIU_E_AUTH_PASSKEY_INVALID](#miu_e_auth_passkey_invalid), [MIU_E_AUTH_PASSKEY_ORIGIN](#miu_e_auth_passkey_origin), [MIU_E_AUTH_PASSKEY_RP_ID](#miu_e_auth_passkey_rp_id), [MIU_E_AUTH_PASSKEY_SESSION_REQUIRED](#miu_e_auth_passkey_session_required), [MIU_E_AUTH_PASSWORD_INCORRECT](#miu_e_auth_password_incorrect), [MIU_E_AUTH_PASSWORD_WEAK](#miu_e_auth_password_weak), [MIU_E_AUTH_RATELIMIT_BINDING](#miu_e_auth_ratelimit_binding), [MIU_E_AUTH_RESET_INVALID](#miu_e_auth_reset_invalid), [MIU_E_AUTH_SESSION_REQUIRED](#miu_e_auth_session_required), [MIU_E_AUTH_SIGNUPS_CLOSED](#miu_e_auth_signups_closed), [MIU_E_AUTH_STORE_UNSUPPORTED](#miu_e_auth_store_unsupported), [MIU_E_AUTH_TOKEN_INVALID](#miu_e_auth_token_invalid), [MIU_E_AUTH_TURNSTILE_FAILED](#miu_e_auth_turnstile_failed), [MIU_E_AUTH_TURNSTILE_SECRET_MISSING](#miu_e_auth_turnstile_secret_missing), [MIU_E_AUTH_VERIFY_INVALID](#miu_e_auth_verify_invalid) |
 | `@miujs/session` | [MIU_E_CSRF](#miu_e_csrf), [MIU_E_SESSION_KV_MISSING](#miu_e_session_kv_missing), [MIU_E_SESSION_REDIS](#miu_e_session_redis), [MIU_E_SESSION_REDIS_CLIENT](#miu_e_session_redis_client), [MIU_E_SESSION_SECRET_MISSING](#miu_e_session_secret_missing), [MIU_E_SESSION_SECRET_WEAK](#miu_e_session_secret_weak), [MIU_E_SESSION_TABLE_INVALID](#miu_e_session_table_invalid), [MIU_E_SESSION_TOO_LARGE](#miu_e_session_too_large) |
-| `@miujs/db` | [MIU_E_DB_BIND_UNDEFINED](#miu_e_db_bind_undefined), [MIU_E_DB_BINDING_MISSING](#miu_e_db_binding_missing), [MIU_E_DB_CLOSED](#miu_e_db_closed), [MIU_E_DB_DRIZZLE_MISSING](#miu_e_db_drizzle_missing), [MIU_E_DB_MIGRATION_DUPLICATE](#miu_e_db_migration_duplicate), [MIU_E_DB_MIGRATION_FAILED](#miu_e_db_migration_failed), [MIU_E_DB_MIGRATION_INVALID](#miu_e_db_migration_invalid), [MIU_E_DB_MIGRATION_NAME](#miu_e_db_migration_name), [MIU_E_DB_MIGRATIONS_DIR](#miu_e_db_migrations_dir), [MIU_E_DB_MISSING](#miu_e_db_missing), [MIU_E_DB_SCHEMA](#miu_e_db_schema), [MIU_E_DB_UNSUPPORTED](#miu_e_db_unsupported) |
+| `@miujs/db` | [MIU_E_DB_BIND_UNDEFINED](#miu_e_db_bind_undefined), [MIU_E_DB_BINDING_MISSING](#miu_e_db_binding_missing), [MIU_E_DB_CLOSED](#miu_e_db_closed), [MIU_E_DB_DRIZZLE_MISSING](#miu_e_db_drizzle_missing), [MIU_E_DB_HYPERDRIVE_MISSING](#miu_e_db_hyperdrive_missing), [MIU_E_DB_MIGRATION_DUPLICATE](#miu_e_db_migration_duplicate), [MIU_E_DB_MIGRATION_FAILED](#miu_e_db_migration_failed), [MIU_E_DB_MIGRATION_INVALID](#miu_e_db_migration_invalid), [MIU_E_DB_MIGRATION_NAME](#miu_e_db_migration_name), [MIU_E_DB_MIGRATIONS_DIR](#miu_e_db_migrations_dir), [MIU_E_DB_MISSING](#miu_e_db_missing), [MIU_E_DB_POSTGRES_NOT_READY](#miu_e_db_postgres_not_ready), [MIU_E_DB_POSTGRES_RETRY](#miu_e_db_postgres_retry), [MIU_E_DB_POSTGRES_URL_MISSING](#miu_e_db_postgres_url_missing), [MIU_E_DB_SCHEMA](#miu_e_db_schema), [MIU_E_DB_UNSUPPORTED](#miu_e_db_unsupported) |
 | `@miujs/cache` | [MIU_E_CACHE_BINDING](#miu_e_cache_binding), [MIU_E_CACHE_CONFIG](#miu_e_cache_config), [MIU_E_CACHE_KEY](#miu_e_cache_key), [MIU_E_CACHE_REDIS](#miu_e_cache_redis), [MIU_E_CACHE_REDIS_RUNTIME](#miu_e_cache_redis_runtime), [MIU_E_CACHE_TTL](#miu_e_cache_ttl), [MIU_E_CACHE_VALUE](#miu_e_cache_value) |
 | `@miujs/queue` | [MIU_E_QUEUE_BINDING](#miu_e_queue_binding), [MIU_E_QUEUE_CONFIG](#miu_e_queue_config), [MIU_E_QUEUE_CRON](#miu_e_queue_cron), [MIU_E_QUEUE_DELAY](#miu_e_queue_delay), [MIU_E_QUEUE_JOB_DUPLICATE](#miu_e_queue_job_duplicate), [MIU_E_QUEUE_REDIS](#miu_e_queue_redis), [MIU_E_QUEUE_RUNTIME](#miu_e_queue_runtime), [MIU_E_QUEUE_SQLITE](#miu_e_queue_sqlite), [MIU_E_QUEUE_TIMEOUT](#miu_e_queue_timeout), [MIU_E_QUEUE_UNKNOWN_JOB](#miu_e_queue_unknown_job) |
 | `@miujs/ratelimit` | [MIU_E_RATELIMIT_BINDING](#miu_e_ratelimit_binding), [MIU_E_RATELIMIT_CONFIG](#miu_e_ratelimit_config), [MIU_E_RATELIMIT_ORDER](#miu_e_ratelimit_order), [MIU_E_RATELIMIT_STORE](#miu_e_ratelimit_store), [MIU_E_RATELIMIT_UNSUPPORTED](#miu_e_ratelimit_unsupported) |
@@ -419,6 +419,16 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 **What it means:** bun build --compile failed: {r.stderr}
 
 **How to fix:** Fix the errors above; `bun build --compile .miu/server.ts` reproduces them.
+
+## MIU_E_CLI_COMPAT_DATE
+
+- **Package:** `@miujs/cli`
+- **HTTP status:** not fixed (depends on the call)
+- **Source:** [`cli/src/deploy.ts`](../packages/cli/src/deploy.ts)
+
+**What it means:** --compatibility-date "{date}" is not a date
+
+**How to fix:** Pass it as YYYY-MM-DD, e.g. --compatibility-date 2026-09-01.
 
 ## MIU_E_CLI_DB_NOT_FOUND
 
@@ -1400,6 +1410,16 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 
 **How to fix:** Install drizzle-orm (bun add drizzle-orm) and add `import "@miujs/db/drizzle";` to your app entry (required when bundling, e.g. on Cloudflare Workers).
 
+## MIU_E_DB_HYPERDRIVE_MISSING
+
+- **Package:** `@miujs/db`
+- **HTTP status:** 500
+- **Source:** [`db/src/postgres.ts`](../packages/db/src/postgres.ts)
+
+**What it means:** No Hyperdrive binding named "{binding}" in env
+
+**How to fix:** Create one (bunx wrangler hyperdrive create &lt;name&gt; --connection-string="postgres://...") and add a [[hyperdrive]] entry with binding = "{binding}" to wrangler.toml (`miu deploy cloudflare` writes it), or pass pg({ binding }) with your binding's name.
+
 ## MIU_E_DB_MIGRATION_DUPLICATE
 
 - **Package:** `@miujs/db`
@@ -1414,7 +1434,7 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 
 - **Package:** `@miujs/db`
 - **HTTP status:** 500
-- **Source:** [`db/src/index.ts`](../packages/db/src/index.ts)
+- **Source:** [`db/src/index.ts`](../packages/db/src/index.ts), [`db/src/postgres.ts`](../packages/db/src/postgres.ts)
 
 **What it means:** Migration "{m.id}" failed: {err}
 
@@ -1459,6 +1479,36 @@ change the message or fix where the error is thrown, then regenerate. CI fails w
 **What it means:** drizzle(ctx) needs ctx.db, but no database is set on this request
 
 **How to fix:** Add db() from @miujs/db to miu({ plugins }), or call drizzleFor(database) with a database directly.
+
+## MIU_E_DB_POSTGRES_NOT_READY
+
+- **Package:** `@miujs/db`
+- **HTTP status:** 500
+- **Source:** [`db/src/postgres.ts`](../packages/db/src/postgres.ts)
+
+**What it means:** No Postgres connection on this request
+
+**How to fix:** Add the pg() plugin to miu({ plugins }) and call database.orm(ctx) / database.sql(ctx) inside a request.
+
+## MIU_E_DB_POSTGRES_RETRY
+
+- **Package:** `@miujs/db`
+- **HTTP status:** 503
+- **Source:** [`db/src/postgres.ts`](../packages/db/src/postgres.ts)
+
+**What it means:** The transaction conflicted with another one (SQLSTATE {code})
+
+**How to fix:** Retry the request; keep transactions short.
+
+## MIU_E_DB_POSTGRES_URL_MISSING
+
+- **Package:** `@miujs/db`
+- **HTTP status:** 500
+- **Source:** [`db/src/postgres.ts`](../packages/db/src/postgres.ts)
+
+**What it means:** pg() has no connection string
+
+**How to fix:** Set DATABASE_URL (e.g. postgres://user:pass@localhost:5432/app), or pass pg({ url }). On Workers, add a Hyperdrive binding instead.
 
 ## MIU_E_DB_SCHEMA
 

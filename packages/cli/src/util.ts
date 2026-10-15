@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { installWorkersShims } from "./workers-shims.ts";
 
 export interface RunOptions {
   cwd: string;
@@ -219,6 +220,8 @@ export interface AppLike {
 
 /** Imports the entry and waits for the app. Returns the module too (for checks on its exports). */
 export async function loadAppModule(entry: string): Promise<{ app: AppLike; mod: Record<string, unknown> }> {
+  // Apps written for Workers may import "cloudflare:workers" (WorkflowEntrypoint, DurableObject).
+  installWorkersShims();
   const mod = await import(pathToFileURL(entry).href);
   const app = mod.default;
   if (!app || typeof app.inspect !== "function" || typeof app.ready !== "function") {

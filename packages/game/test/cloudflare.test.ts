@@ -188,3 +188,35 @@ test("lobby Durable Object: runs lobby operations and persists them across insta
   const empty = new MiuLobbies(fakeState() as any, {});
   expect((await exec(empty, { op: "view", userId: "x" })).error.code).toBe("MIU_E_GAME_LOBBY_NOT_FOUND");
 });
+
+test("MIU_GAME_SECRET is read from the Worker / Durable Object env when no secret option is given", async () => {
+  // Regression (workerd harness): on Workers there is no process env, and the matchmaker object
+  // never sees a request through the app, so tickets failed with MIU_E_GAME_SECRET_MISSING even
+  // with MIU_GAME_SECRET set as a secret.
+  const ENV_SECRET = "env-secret-0123456789abcdef-env";
+  const clock = new FakeClock(100_000);
+  const arena = gameRoom("cfenv", { state: t.object({}), init: () => ({}) });
+  const realtime = rooms({ rooms: [arena], clock });
+  const mm = matchmaker({ rooms: realtime, database: sqlite(":memory:"), clock, queues: { ranked: { room: "cfenv", teamSize: 1, rating: "elo", widenAfterMs: 5_000, maxWaitMs: 60_000 } } });
+  const MiuMatchmaker = createMatchmakerDurableObject(mm, { clock, webSocketPair: () => [new CfSocket(), new CfSocket()] as any });
+  const env: Record<string, unknown> = { MIU_GAME_SECRET: ENV_SECRET };
+  const obj = new MiuMatchmaker(fakeState() as any, env);
+  const ns = { idFromName: (n: string) => n, get: () => obj };
+  env.MIU_MATCH = ns;
+  const host = durableHost(ns);
+  await host.join("ranked", { userId: "a", name: "Ann", rating: 1500 });
+  await host.join("ranked", { userId: "b", name: "Bob", rating: 1500 });
+  const a = await host.status("ranked", "a");
+  if (a.state !== "matched") throw new Error(`not matched: ${JSON.stringify(a)}`);
+  expect(await verifyTicket(ENV_SECRET, a.ticket, { roomType: "cfenv", roomId: a.room.id, now: clock.now() })).toMatchObject({ userId: "a" });
+});
+
+test("game rooms verify tickets with MIU_GAME_SECRET from the room's env", async () => {
+  const ENV_SECRET = "env-secret-0123456789abcdef-env";
+  const { issueTicket } = await import("../src/sign.ts");
+  const { gameSecretFor } = await import("../src/sign.ts");
+  expect(gameSecretFor(undefined, { MIU_GAME_SECRET: ENV_SECRET })).toBe(ENV_SECRET);
+  expect(gameSecretFor("explicit-secret-0123456789", { MIU_GAME_SECRET: ENV_SECRET })).toBe("explicit-secret-0123456789");
+  const tk = await issueTicket(ENV_SECRET, { userId: "u", name: "U", roomType: "x", roomId: "r1", matchId: "m", team: 0 }, 1000, 60_000);
+  expect(await verifyTicket(gameSecretFor(undefined, { MIU_GAME_SECRET: ENV_SECRET }), tk, { roomType: "x", roomId: "r1", now: 1000 })).toMatchObject({ userId: "u" });
+});

@@ -65,6 +65,6 @@ bun test examples/crm
 miu deploy cloudflare --entry examples/crm/app.ts --dry-run
 ```
 
-On Workers the app uses the D1 binding `DB` and a Queue for workflow resumes. Seed a local
+On Workers the app uses the D1 binding `DB` and a Queue for workflow resumes. The admin's tables (CRM records, System settings) are created by `db({ migrations: kit.migrations })` on the first request of each isolate, because `admin()` itself only auto-migrates in dev. Seed a local
 SQLite file and load it with `wrangler d1 execute DB --file=...`, or register users through the
 UI. Set `SESSION_SECRET` with `wrangler secret put SESSION_SECRET`.

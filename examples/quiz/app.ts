@@ -8,15 +8,9 @@
 import { miu, route } from "miujs";
 import { createRoomDurableObject, rooms } from "@miujs/realtime";
 import { quiz } from "./room.ts";
-
-declare const Bun: { file(path: URL): { text(): Promise<string> } } | undefined;
-
-async function readText(url: URL): Promise<string> {
-  if (typeof Bun !== "undefined") return Bun.file(url).text();
-  return (await fetch(url)).text();
-}
-
-const html = await readText(new URL("./public/index.html", import.meta.url));
+// A text import, not a file read at startup: Workers have no filesystem and forbid fetch() in
+// global scope. Bun inlines it; wrangler bundles it as a Text module.
+import html from "./public/index.html" with { type: "text" };
 
 // `codes`: on Cloudflare, join codes live in this KV namespace (declared for `miu deploy cloudflare`).
 const realtime = rooms({ rooms: [quiz], codes: "ROOM_CODES" });
@@ -24,7 +18,8 @@ const realtime = rooms({ rooms: [quiz], codes: "ROOM_CODES" });
 export const home = route.get("/", {
   summary: "The quiz web client (host and players)",
   mcp: false,
-  handler: () => new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } }),
+  // bun-types types every *.html import as an HTMLBundle; with { type: "text" } it is a string.
+  handler: () => new Response(html as unknown as string, { headers: { "content-type": "text/html; charset=utf-8" } }),
 });
 
 export const createGame = route.post("/api/games", {

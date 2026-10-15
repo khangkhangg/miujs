@@ -179,8 +179,9 @@ describe("deploy cloudflare --dry-run", () => {
     expect(toml).toMatch(/compatibility_date = "\d{4}-\d{2}-\d{2}"/);
     expect(toml).toContain('[[kv_namespaces]]\nbinding = "CACHE"');
     expect(toml).toContain('[[d1_databases]]\nbinding = "DB"');
-    expect(toml).toContain('[[queues.producers]]\nbinding = "JOBS"\nqueue = "jobs"');
-    expect(toml).toContain('[[queues.consumers]]\nqueue = "jobs"');
+    // Queue names are unique per account: prefixed with the app name.
+    expect(toml).toContain('[[queues.producers]]\nbinding = "JOBS"\nqueue = "basic-fixture-jobs"');
+    expect(toml).toContain('[[queues.consumers]]\nqueue = "basic-fixture-jobs"');
     expect(toml).toContain('[[durable_objects.bindings]]\nname = "MIU_ROOMS"\nclass_name = "MiuRooms"');
     expect(toml).toContain('new_sqlite_classes = ["MiuRooms"]');
     expect(toml).toContain('crons = ["0 * * * *"]');

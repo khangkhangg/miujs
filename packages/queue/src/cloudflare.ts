@@ -30,10 +30,23 @@ export interface CloudflareQueueOptions {
   binding?: string;
   /**
    * Queue name this app consumes. When set, batches from other queues are ignored (left for
-   * other handlers). Default: handle every batch.
+   * other handlers), except the queue `miu deploy cloudflare` names after `binding`
+   * ("<app>-<binding>"). Default: handle every batch that no such named consumer claims.
    */
   queue?: string;
 }
+
+/**
+ * Queue names `miu deploy cloudflare` gives a producer binding: "<app>-<binding>" (and the older
+ * "<binding>"), lower-case with "_" → "-".
+ */
+export function generatedQueueName(binding: string, queue: string): boolean {
+  const k = binding.toLowerCase().replace(/_/g, "-");
+  return queue === k || queue.endsWith(`-${k}`);
+}
+
+/** Per app: matchers of consumers that only take their own named queue (see `queue` option). */
+const namedConsumers = new WeakMap<object, ((queue: string) => boolean)[]>();
 
 function isMessage(body: unknown): body is QueueMessage {
   const b = body as QueueMessage | null;
@@ -52,6 +65,9 @@ function isMessage(body: unknown): body is QueueMessage {
  */
 export function cloudflareQueue(opts: CloudflareQueueOptions = {}): QueueAdapter {
   const binding = opts.binding ?? "JOBS";
+  // With `queue` set: that name, or the one the CLI generated for this binding.
+  const named = opts.queue ? (q: string) => q === opts.queue || generatedQueueName(binding, q) : null;
+  let owner: object | undefined;
   let rt: QueueRuntime | undefined;
   const runtime = () => {
     if (!rt) throw queueErrors.config("cloudflareQueue is not attached to a queue()", "Pass it as `queue({ adapter: cloudflareQueue() })`.");
@@ -59,7 +75,12 @@ export function cloudflareQueue(opts: CloudflareQueueOptions = {}): QueueAdapter
   };
 
   const consume = async (batch: CfMessageBatch, env: Env) => {
-    if (opts.queue && batch.queue !== opts.queue) return;
+    if (named) {
+      if (!named(batch.queue)) return;
+    } else if (owner && namedConsumers.get(owner)?.some((m) => m(batch.queue))) {
+      // Another queue() plugin of this app consumes this queue (e.g. @miujs/workflows): leave it.
+      return;
+    }
     const r = runtime();
     await Promise.all(
       batch.messages.map(async (m) => {
@@ -99,6 +120,8 @@ export function cloudflareQueue(opts: CloudflareQueueOptions = {}): QueueAdapter
       await q.send(msg, o.delay ? { delaySeconds: Math.ceil(o.delay) } : undefined);
     },
     setup(app: App) {
+      owner = app;
+      if (named) namedConsumers.set(app, [...(namedConsumers.get(app) ?? []), named]);
       app.on("queue", (batch: CfMessageBatch, env: Env) => consume(batch, env));
       app.on("scheduled", (controller: { cron: string; scheduledTime?: number }, env: Env) => onCron(controller, env));
     },

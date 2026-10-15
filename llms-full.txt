@@ -403,13 +403,16 @@ export const followUp = defineWorkflow("contact-follow-up", {
 
 ## Known limitations (0.2)
 
-- **Cloudflare:** never deployed to a real account. Durable Objects, D1, KV and Queues are tested
-  against in-test fakes, and every package bundles for a Workers target. Pending `after`/`tick`
-  room timers are lost when a Durable Object hibernates.
+- **Cloudflare:** never deployed to a real account. `bun run workerd` runs the example apps on
+  Cloudflare's runtime locally (workerd through `wrangler dev --local`, with Miniflare's D1, KV, R2,
+  Queues, Durable Objects, Workflows, rate limits and Cache API) over real HTTP and WebSockets; see
+  [scripts/workerd/REPORT.md](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/scripts/workerd/REPORT.md). Still unverified without an account: edge
+  bot scores and geo, CPU-time limits, Queues delivery timing and retries at scale, latency between
+  locations. Pending `after`/`tick` room timers are lost when a Durable Object hibernates.
 - **Deno and Node:** `bun run smoke` runs the same HTTP checks on Bun, Node 24 and Deno 2 (routing,
   validation, body limits, cookies, `ctx.ip`, MCP, `waitUntil`); all pass. The full test suite runs on
-  Bun only. Published packages will need prebuilt JS for Node, because Node won't strip types inside
-  `node_modules`.
+  Bun only. Node won't strip types inside `node_modules`, so the npm build ships prebuilt JS and
+  `.d.ts` for Node and Deno (Bun still loads the TypeScript source).
 - **Speed:** fastest on validated JSON bodies; 10–18% behind Elysia on a params route and
   10–16% behind on a trivial text route under `Bun.serve`. Elysia compiles one function per route
   with `new Function`, which Workers forbid ([bench](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/bench/README.md)).
@@ -418,8 +421,11 @@ export const followUp = defineWorkflow("contact-follow-up", {
 - **Verified only against fakes:** Redis and S3 adapters (fake servers, AWS signature test vectors),
   Laravel/Django session crypto (independent reference ports, no real PHP/Python app yet), OAuth
   providers and the Anthropic/Workers AI APIs (recorded shapes, no live calls).
-- **Not built yet:** an npm release (`scripts/build-packages.ts` builds it; the `@miujs` npm scope isn't
-  registered yet).
+- **Not on npm yet:** the packages are release-ready (prebuilt JS and `.d.ts` for Node, Deno and
+  bundlers; TypeScript source for Bun), and `bun scripts/release/verify.ts` installs the packed
+  tarballs on Node 24, Deno 2, Bun, a Workers bundle and strict `tsc`. Publishing waits on the
+  `@miujs` npm scope and the unscoped `miujs` name, which another project owns
+  ([RELEASING.md](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/RELEASING.md)).
 
 ## Developing MiuJS
 
@@ -559,7 +565,7 @@ export default miu({ name: "notes", routes: [listNotes], plugins: [db({ migratio
 | --- | --- |
 | [`@miujs/auth`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/auth/README.md) | Email and password accounts, API tokens, roles (`user`, `auth: "required"`) |
 | [`@miujs/session`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/session/README.md) | Signed-cookie or server-side sessions, flash, CSRF protection |
-| [`@miujs/db`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/db/README.md) | D1-compatible SQL on SQLite or Cloudflare D1, migrations |
+| [`@miujs/db`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/db/README.md) | D1-compatible SQL on SQLite or Cloudflare D1, migrations; [Postgres over Hyperdrive](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/postgres.md) |
 | [`@miujs/cache`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/cache/README.md) | `remember()`, tags; memory, KV or Redis |
 | [`@miujs/queue`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/queue/README.md) | Typed jobs, retries, cron; Cloudflare Queues |
 | [`@miujs/ratelimit`](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/ratelimit/README.md) | Rate limiting rules |
@@ -722,7 +728,7 @@ Other route options: `name`, `description`, `tags`, `mcp: false`, `permission` (
 
 ## Schemas
 
-`t.string({ minLength, maxLength, pattern, format })`, `t.number({ min, max })`, `t.integer()`, `t.boolean()`, `t.date()`, `t.literal(v)`, `t.enum([...])`, `t.array(item, { min, max })`, `t.object(shape)`, `t.record(value)`, `t.union([...])`, `t.optional(s)`, `t.default(s, value)`, `t.nullable(s)`, `t.any()`, `t.unknown()`. String formats: `uuid`, `email`, `url`, `date`, `date-time`.
+`t.string({ minLength, maxLength, pattern, format, secret })`, `t.number({ min, max })`, `t.integer()`, `t.boolean()`, `t.date()`, `t.literal(v)`, `t.enum([...])`, `t.array(item, { min, max })`, `t.object(shape)`, `t.record(value)`, `t.union([...])`, `t.optional(s)`, `t.default(s, value)`, `t.nullable(s)`, `t.any()`, `t.unknown()`. String formats: `uuid`, `email`, `url`, `date`, `date-time`. `secret: true` marks an API key, password or connection string: the JSON Schema gets `writeOnly: true` and `format: "password"` (unless `format` is set), so admin screens and audit logs redact it; validation is unchanged.
 
 <!-- test -->
 ```ts
@@ -939,7 +945,7 @@ miu openapi [entry] [--out f]      # print or write the OpenAPI 3.1 spec
 miu check [entry]                  # leaked secrets (error) and unauthenticated mutations (warning)
 miu add route|job|room|plugin <name>   # scaffold routes/, jobs/, rooms/ or plugins/<name>.ts
 miu new <dir>                      # new project in an empty folder
-miu deploy cloudflare [--dry-run] [--force] [--out wrangler.toml] [--entry app.ts]
+miu deploy cloudflare [--dry-run] [--force] [--out wrangler.toml] [--entry app.ts] [--compatibility-date YYYY-MM-DD]
 miu db pull | migrate ...          # see below
 miu loadtest <ws-url> --action '{"type":"inc","data":{}}' [--players 10] [--duration 10s] [--rate 5] [--json]
 miu help                           # also: miu <command> --help
@@ -992,6 +998,7 @@ Flags per command (anything else is `MIU_E_CLI_UNKNOWN_FLAG`). Value flags accep
 | `--out` | path | stdout (openapi), `wrangler.toml` (deploy), `schema.ts` (db pull) | Output file. |
 | `--dry-run` | bool | `false` | deploy: write and print `wrangler.toml`, run nothing. |
 | `--force` | bool | `false` | deploy: overwrite an existing `wrangler.toml`. |
+| `--compatibility-date` | `YYYY-MM-DD` | today, capped at what the `workerd` in `node_modules` supports | deploy cloudflare: `compatibility_date`. An older local wrangler refuses dates newer than its workerd. |
 | `--db` | path | the only `*.sqlite`/`*.db` file in cwd | db: local SQLite file. |
 | `--d1` | string | none | db: remote D1 database name (`bunx wrangler d1 execute --remote --json`). |
 | `--dir` | path | `migrations` | db migrate: folder of `NNNN_name.sql` files. |
@@ -1469,16 +1476,17 @@ See [all error codes](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/d
 
 > D1-compatible SQL for MiuJS: one `Database` interface over Cloudflare D1 and local bun:sqlite, with migrations, introspection and optional Drizzle ORM.
 
-`@miujs/db` adds `ctx.db`, a small D1-shaped interface (`prepare`/`bind`/`first`/`all`/`run`/`raw`, `batch`, `exec`). The same code runs on a Cloudflare D1 binding and, locally, on `bun:sqlite`. It applies SQL migrations once per database, reads schemas back with `introspect()`, and, through the `@miujs/db/drizzle` entry point, decorates `ctx.orm` with Drizzle. It targets SQLite/D1 only; for Postgres or MySQL use Drizzle directly.
+`@miujs/db` adds `ctx.db`, a small D1-shaped interface (`prepare`/`bind`/`first`/`all`/`run`/`raw`, `batch`, `exec`). The same code runs on a Cloudflare D1 binding and, locally, on `bun:sqlite`. It applies SQL migrations once per database, reads schemas back with `introspect()`, and, through the `@miujs/db/drizzle` entry point, decorates `ctx.orm` with Drizzle. The `@miujs/db/postgres` entry adds Postgres (Hyperdrive on Workers, a pool elsewhere) with Drizzle and postgres.js; see [Postgres](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/db/README.md#postgres). MySQL is not supported; use Drizzle directly.
 
 ## Install
 
 ```bash
 bun add @miujs/db miujs
-bun add drizzle-orm   # optional, only for @miujs/db/drizzle
+bun add drizzle-orm   # optional, for @miujs/db/drizzle and @miujs/db/postgres
+bun add postgres      # optional, only for @miujs/db/postgres
 ```
 
-Bun runs the TypeScript source; Node and Deno get prebuilt JS with `.d.ts` types (npm packages are not published yet). `drizzle-orm` (`>=0.45.0 <1`) is an optional peer dependency used only by the `@miujs/db/drizzle` subpath; `@miujs/db` itself never imports it.
+Bun runs the TypeScript source; Node and Deno get prebuilt JS with `.d.ts` types (npm packages are not published yet). `drizzle-orm` (`>=0.45.0 <1`) is an optional peer dependency used only by the `@miujs/db/drizzle` and `@miujs/db/postgres` subpaths, and `postgres` (postgres.js, `>=3.4.4 <4`) only by `@miujs/db/postgres`; `@miujs/db` itself imports neither.
 
 ## Quick start
 
@@ -1615,6 +1623,19 @@ The subpath also exports `tableFromSchema(name, t.object(...), { primaryKey, ind
 
 `sqlite(path)`: `path` defaults to `":memory:"`.
 
+## Postgres
+
+`@miujs/db/postgres` (needs `postgres` and `drizzle-orm`) gives each request `ctx.orm` (Drizzle over postgres.js) and `ctx.sql` (the postgres.js client). On Cloudflare Workers it creates a client per request from a Hyperdrive binding and closes it after the response; on Bun, Node and Deno it keeps one pool from `DATABASE_URL` that `app.stop()` closes. `migratePostgres(sql, migrations)` applies the same `NNNN_name.sql` files, and `fromPgError(err)` maps constraint errors to 409/400 MiuErrors.
+
+```ts
+import { pg } from "@miujs/db/postgres";
+
+const database = pg({ schema, hyperdriveId: "<id>" }); // DATABASE_URL off Workers, env.HYPERDRIVE on Workers
+const app = miu({ plugins: [database], routes: [route.get("/n", { handler: async (ctx) => (await ctx.sql`SELECT 1 AS n`)[0] })] });
+```
+
+The rest of this package (`db()`, `ctx.db`, `migrate()`, `introspect()`, `diffSchema()`, `tableFromSchema()`) and `@miujs/admin` resources are SQLite/D1 only. Setup, Hyperdrive, pooling, transactions, migrations, testing with PGlite and what is and is not tested: [docs/postgres.md](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/postgres.md). Example: [examples/postgres](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/examples/postgres).
+
 ## In @miujs/admin
 
 `db()` has a management section (`manage()`), shown by `@miujs/admin`:
@@ -1659,6 +1680,7 @@ When bundling with `db({ drizzle })`, add `import "@miujs/db/drizzle";` to your 
 ## Links
 
 - [Getting started guide](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/guide.md)
+- [Postgres and Hyperdrive](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/postgres.md)
 - [Error codes](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/docs/errors.md)
 - [AGENTS.md](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/AGENTS.md)
 - [Source](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/db/src)
@@ -1786,7 +1808,7 @@ await client.connect();
 const store = redisStore(redisFromCommand((cmd, args) => client.sendCommand([cmd, ...args])));
 ```
 
-`RedisLike` avoids MULTI and EVAL, so Valkey, Dragonfly, KeyDB and Upstash work. The same client also serves `redisQueue` from `@miujs/queue`.
+`RedisLike` avoids MULTI and EVAL, so Valkey, Dragonfly, KeyDB and Upstash work. The same client also serves `redisQueue` from `@miujs/queue`. Its `scan` method is optional: without it the cache works the same but the admin cannot list or purge keys by prefix.
 
 ### Custom stores
 
@@ -1825,8 +1847,8 @@ A `CacheStore` moves strings: `name`, `get(key)`, `set(key, value, { ttl })`, `d
 With `@miujs/admin`, the plugin shows a **Cache** section:
 
 - **Status**: store name, entries and total size (memory store; `null` with a hint on KV and Redis, which cannot count cheaply), hits, misses and hit rate counted by this instance since it started.
-- **Keys** list (paged, search = key prefix, values are never shown): memory store, and KV when the binding has `list()` (real Cloudflare bindings do). Redis cannot list keys (no `SCAN` in `RedisLike`), so the list explains that instead. Row action: delete.
-- **Actions**: `deleteKey`, `invalidateTag`, `purgePrefix` (danger) and `purgeAll` (danger). Purges need a store that can list keys and delete at most 1000 keys per run; the result says when more remain. `purgeAll` on the memory store clears it at once.
+- **Keys** list (paged, search = key prefix, values are never shown): memory store, KV when the binding has `list()` (real Cloudflare bindings do), and Redis when the client has `scan` (`bunRedis()` and `redisFromCommand()` do). On Redis the list walks `SCAN cursor MATCH <prefix>* COUNT 250` over the store's own prefix only (glob characters in the search are matched literally); size and expiry show as empty. With a `RedisLike` that lacks the optional `scan`, the list explains that it cannot list keys. Row action: delete.
+- **Actions**: `deleteKey`, `invalidateTag`, `purgePrefix` (danger) and `purgeAll` (danger). Purges need a store that can list keys and delete at most 1000 keys per run; the result says when more remain. `purgeAll` on the memory store clears it at once; on Redis it deletes the keys under the store's prefix, never other keys in the database.
 
 Custom stores can opt in by implementing `scan({ prefix, cursor, limit })`, `clear()` and `bytes()`.
 
@@ -2062,7 +2084,7 @@ With `@miujs/admin`, the plugin shows a **Queue** section:
 
 - **Status**: adapter, pending, delayed, running and dead-letter counts (memory, SQLite and Redis; Cloudflare Queues cannot be counted or listed from a Worker, so those stats are `null` with a hint pointing to the Cloudflare dashboard), whether this instance is paused, its concurrency, a **Jobs** table (retries, backoff, last run and result in this instance) and a **Schedules** table (cron, job, last fired in this instance).
 - **Jobs** list (memory, SQLite, Redis), filtered by state (`pending`, `delayed`, `running`), paged by offset up to 10 000. Row action: `delete` (danger, only jobs that have not started).
-- **Dead letters** list, newest first. Row actions: `retry` (queues the message again as attempt 1) and `delete` (danger). Both are idempotent: a second run says there is nothing to do. On Redis, retry/delete look through the newest 10 000 dead letters.
+- **Dead letters** list, newest first. Row actions: `retry` (queues the message again as attempt 1) and `delete` (danger). Both are idempotent: a second run says there is nothing to do. On Redis, retry/delete find a letter by id through a `deadid:<id>` index key wherever it is in the list; letters dead-lettered before that index existed (no migration needed) are looked for among the newest 10 000.
 - **Actions**: `dispatch` (enqueue a job with JSON input, validated by its schema; internal `miu.*` jobs are refused), `runSchedule` (dispatch a schedule's job with its input now; pass `cron` when the job has several), and `pause` / `resume` (this instance only; jobs are still accepted, other instances keep running, a restart resumes).
 - **Settings**: `concurrency` (1–1000), applied at once in this instance.
 
@@ -3644,6 +3666,7 @@ console.log(await store.getMembership(org.id, "carol")); // { role: "member" }
 | `roles` | `Roles` | required | Roles from `defineRoles()`. Must include `ownerRole`. |
 | `policies` | `Policy[]` | `[]` | Row-level rules from `policy()`. |
 | `database` | `DatabaseSource` | `ctx.db` from `db()` in `@miujs/db` | Where orgs, memberships and invites live. |
+| `store` | `AccessStore \| (ctx) => AccessStore` | `accessStore(database)` | Your own store for orgs, memberships and invites. `counts`, `pageOrgs` and `pageMembers` are optional (see [In @miujs/admin](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/packages/access/README.md#in-miujsadmin)). Its `database` must still hold `access_memberships`: inviting checks for an existing member there. |
 | `orgFrom` | `"header" \| "path" \| "session" \| (ctx) => string \| null \| undefined` | `"header"` (`x-org-id`) | Where the active org id comes from when the route has no `:orgId`. |
 | `ownerRole` | `string` | `"owner"` | Role that creates orgs and cannot be left empty. |
 | `routes` | `boolean` | `true` | Serve the org, member and invite routes. |
@@ -3664,6 +3687,8 @@ console.log(await store.getMembership(org.id, "carol")); // { role: "member" }
 - **Check a permission**: would this user (by their role in an org), or this role, be granted `resource:action`, and by which pattern. Record-level policies are not evaluated.
 
 Invite token hashes are never shown.
+
+With a custom `store` that lacks the optional admin methods, the section degrades instead of failing: without `counts()` the status leaves out the organization, membership and invite counts and shows a **Store** stat whose hint names the missing methods; without `pageOrgs()` the organizations list is left out; without `pageMembers()` the members list is left out and **Change role** / **Remove from organization** become section actions taking `{ orgId, userId }` (same rules: danger, last owner kept). A per-request store (`store: (ctx) => ...`) keeps both lists, which answer 400 with a fix when that request's store lacks the method.
 
 ## Errors
 
@@ -4095,11 +4120,17 @@ The memory store is bounded so a long-running process does not grow: it keeps th
 With `@miujs/admin`, the plugin shows a **Workflows** section next to the admin's workflow builder (which edits definitions; this section operates runs):
 
 - **Status**: registered and disabled workflows, runs queued, running, sleeping, waiting and failed (each counted up to 200, then shown as `200+`), the store and queue in use, a **Workflows** table (triggers, enabled) and the 5 most recent failures.
-- **Runs** list, newest first, filtered by workflow and status; search finds a run by id. Rows never include the resume token, and inputs hide secret-looking keys. Row actions: `cancel` (danger) and `retry` (failed runs, from the failed step). Both answer with a message instead of failing when there is nothing to do.
+- **Runs** list, newest first, filtered by workflow and status; search finds a run by id. Rows never include the resume token, and inputs hide secret-looking keys. Row actions: `cancel` (danger), `retry` (failed runs, from the failed step) and `wakeNow` (sleeping or waiting runs, see below). They answer with a message instead of failing when there is nothing to do.
 - **Actions**: `start` (start a workflow with JSON input as a manual run by the operator) and `emit` (send an event with optional data and idempotency key).
 - **Settings**: `disabled`, a list of workflow names that start no new runs from any trigger (event, cron, webhook, manual, admin). Runs already started go on; cancel them from the runs list. Starting a disabled workflow fails with `MIU_E_CONFLICT` (409); emit reports it under `skipped`; cron firings are skipped without retries.
 
-There is no "resume now" action for sleeping or waiting runs: they wake on their timer or event (use `emit`).
+`wakeNow` (not marked dangerous) wakes a run now instead of at its timer:
+
+- In `step.sleep` / `step.sleepUntil`: the sleep ends now and the run continues with the next step.
+- In `step.waitForEvent`: the wait times out now, so the step returns `null` exactly as on its `timeout` (also for waits without one). An event that arrives before the run resumes still wins.
+- In `step.waitForApproval`: refused with `MIU_E_CONFLICT` (409); approve or reject it instead.
+
+It works the same on every run store: the step's journaled wake-up time moves to now and the run gets a new resume token, so the original timer message does nothing when it fires. Waking twice wakes once; a run that is no longer sleeping or waiting is left alone ("nothing to do").
 
 ## Errors
 
@@ -4119,15 +4150,15 @@ See [all error codes](https://github.com/khangkhangg/miujs/blob/miujs-monorepo/d
 
 ## Cloudflare Workers
 
-The default engine resumes runs through Cloudflare Queues (binding `WORKFLOWS_QUEUE`); cron triggers become Worker cron triggers. Store runs in D1 with `dbRunStore(d1("DB"))`. `miu deploy cloudflare` declares the queue and crons:
+The default engine resumes runs through Cloudflare Queues (binding `WORKFLOWS_QUEUE`); cron triggers become Worker cron triggers. Store runs in D1 with `dbRunStore(d1("DB"))`. `miu deploy cloudflare` declares the queue (named after the app, here `crm`) and crons:
 
 ```toml
 [[queues.producers]]
 binding = "WORKFLOWS_QUEUE"
-queue = "workflows-queue"
+queue = "crm-workflows-queue"
 
 [[queues.consumers]]
-queue = "workflows-queue"
+queue = "crm-workflows-queue"
 
 [triggers]
 crons = ["0 9 * * 1"]
@@ -4135,7 +4166,7 @@ crons = ["0 9 * * 1"]
 
 Add a `[[d1_databases]]` binding named `DB` yourself if you use `d1("DB")`. Queue delays are capped at 12 hours on Cloudflare; longer sleeps are chained automatically.
 
-Alternatively, run a code-defined workflow on Cloudflare Workflows with `createCloudflareWorkflow(def, { base: WorkflowEntrypoint })`, where `WorkflowEntrypoint` comes from `cloudflare:workers`. `step.run` maps to `step.do`, sleeps and `waitForEvent` map directly, and `waitForApproval` waits for an event of type `approval-<step>`.
+Alternatively, run a code-defined workflow on Cloudflare Workflows with `createCloudflareWorkflow(def, { base: WorkflowEntrypoint })`, where `WorkflowEntrypoint` comes from `cloudflare:workers`. The `base` is required on Workers: workerd refuses a Workflow class that does not extend `WorkflowEntrypoint` ("worker is not an actor but class name was requested"); the snippet below leaves it out only so it runs under Bun. `miu deploy cloudflare` can load an entry that imports `cloudflare:workers`. `step.run` maps to `step.do`, sleeps and `waitForEvent` map directly, and `waitForApproval` waits for an event of type `approval-<step>`.
 
 <!-- test -->
 ```ts

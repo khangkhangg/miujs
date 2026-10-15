@@ -117,6 +117,7 @@ export function createMatchmakerDurableObject(mm: Matchmaker, opts: MatchmakerDu
     constructor(state: DurableStateLike, env: unknown) {
       this.state = state;
       this.env = (env ?? {}) as Env;
+      inner.useEnv?.(this.env);
     }
 
     async fetch(req: Request): Promise<Response> {

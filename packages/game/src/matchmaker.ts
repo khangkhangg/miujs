@@ -30,7 +30,7 @@ import { ticketGate } from "./gate.ts";
 import { matchmakerManage } from "./manage.ts";
 import { QueueCore, checkQueueConfig, type Assignment, type MatchSpec, type QueueConfig, type QueueEntry, type QueueStatus } from "./queue.ts";
 import { registerResultSink, type GameRoomData, type MatchInfo } from "./room.ts";
-import { gameSecret, hmac, hmacVerify, issueTicket } from "./sign.ts";
+import { gameSecret, gameSecretFor, hmac, hmacVerify, issueTicket } from "./sign.ts";
 import { storeFor, type GameStore, type Result, type ResultSummary } from "./store.ts";
 
 /** The parts of the `rooms()` plugin the matchmaker uses. */
@@ -80,6 +80,8 @@ export interface MatchmakerInternals {
   queues: Record<string, QueueConfig>;
   clock: Clock;
   secret(): string;
+  /** Give the env to code that runs outside requests (the matchmaker Durable Object). */
+  useEnv?(env: Env): void;
   createMatch(spec: MatchSpec, env: Env | undefined): Promise<Record<string, Assignment>>;
   present(status: QueueStatus, userId: string): Promise<QueueStatus>;
 }
@@ -241,13 +243,18 @@ export function matchmaker(opts: MatchmakerOptions) {
   const roomsPath = roomsPathOf(opts.rooms);
   let lastEnv: Env = {};
   let secret: string | null = null;
-  const key = () => (secret ??= gameSecret(opts.secret));
+  // MIU_GAME_SECRET may only exist in the Workers env (request or Durable Object), not process env.
+  const key = (env?: Env) => (secret ??= gameSecretFor(opts.secret, env ?? lastEnv));
   const store = (env?: Env): GameStore => storeFor(source, env ?? lastEnv, { clock, k: opts.k, achievements: opts.achievements });
 
   const inner: MatchmakerInternals = {
     queues: opts.queues,
     clock,
-    secret: key,
+    secret: () => key(),
+    useEnv(env) {
+      // The matchmaker Durable Object has the Worker's env but never sees a request through the app.
+      if (env && !Object.keys(lastEnv).length) lastEnv = env;
+    },
     async createMatch(spec, env) {
       const cfg = opts.queues[spec.queue];
       const info: MatchInfo = { id: spec.id, queue: spec.queue, rated: true, players: spec.players.map(({ userId, name, team }) => ({ userId, name, team })), teams: spec.teams };
@@ -257,7 +264,7 @@ export function matchmaker(opts: MatchmakerOptions) {
       const room = { type: cfg.room, id, url: `${roomsPath}/${cfg.room}/${id}` };
       const out: Record<string, Assignment> = {};
       for (const p of spec.players) {
-        out[p.userId] = { room, team: p.team, ticket: await issueTicket(key(), { userId: p.userId, name: p.name, roomType: cfg.room, roomId: id, matchId: spec.id, team: p.team }, clock.now(), ticketTtl) };
+        out[p.userId] = { room, team: p.team, ticket: await issueTicket(key(env), { userId: p.userId, name: p.name, roomType: cfg.room, roomId: id, matchId: spec.id, team: p.team }, clock.now(), ticketTtl) };
       }
       return out;
     },

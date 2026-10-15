@@ -26,7 +26,7 @@ import { LobbyCore, lobbyId, type LobbyInit, type LobbySnapshot, type LobbyView 
 import type { MatchSpec, RoomRef } from "./queue.ts";
 import { roomsPathOf, type RoomsLike } from "./matchmaker.ts";
 import { registerResultSink, type GameRoomData } from "./room.ts";
-import { gameSecret, issueTicket } from "./sign.ts";
+import { gameSecretFor, issueTicket } from "./sign.ts";
 import { storeFor } from "./store.ts";
 
 export interface LobbiesOptions {
@@ -124,7 +124,7 @@ export function lobbies(opts: LobbiesOptions) {
   const roomsPath = roomsPathOf(opts.rooms);
   let lastEnv: Env = {};
   let secret: string | null = null;
-  const key = () => (secret ??= gameSecret(opts.secret));
+  const key = () => (secret ??= gameSecretFor(opts.secret, lastEnv));
   const store = (env?: Env) => storeFor(source, env ?? lastEnv, { clock, achievements: opts.achievements });
   const unregisterSink = registerResultSink(opts.room, (m, r, env) => store(env).reportResult(m, r));
 

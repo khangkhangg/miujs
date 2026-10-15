@@ -104,3 +104,16 @@ describe("CRM example", () => {
     expect((await sales("/admin/system")).status).toBe(403);
   });
 });
+
+test("in production (as on Workers, where admin does not auto-migrate) the CRM tables still exist", async () => {
+  // Regression (workerd harness): on D1 every /api/contacts call failed with "no such table:
+  // contacts" and System settings with "no such table: admin_system_settings", because admin()
+  // only auto-migrates in dev. The example now hands kit.migrations to db(), which always applies them.
+  const { app } = createApp({ sessionSecret: SECRET, passwordIterations: 1000, dev: false });
+  const b = browser(app);
+  expect((await b("/auth/register", { json: { email: "prod@example.com", password: "correct horse battery" } })).status).toBe(201);
+  const org = await b("/orgs", { json: { name: "Prod" } });
+  expect(org.status).toBe(201);
+  const created = await b("/api/contacts", { json: { name: "Ada", stage: "customer" }, headers: { "x-org-id": org.json.org.id } });
+  expect(created.status).toBe(201);
+});

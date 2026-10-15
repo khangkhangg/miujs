@@ -13,7 +13,7 @@ import { CliError, defaultRunner, findEntry, loadApp, parseArgs, str, writeFile,
 
 export { CliError, defaultRunner, parseArgs, type CliIO, type RunOptions, type RunResult, type Runner } from "./util.ts";
 export { inlineParams, wranglerD1 } from "./db.ts";
-export { appEnv, dockerfile, shippedPaths, wranglerToml, DEPLOY_TARGETS } from "./deploy.ts";
+export { appEnv, defaultCompatDate, dockerfile, shippedPaths, withHyperdrive, wranglerToml, DEPLOY_TARGETS } from "./deploy.ts";
 export { formatEntry, entriesFromTail, jsonObjectSplitter, parseLine, type LogEntry } from "./logs.ts";
 export { parseActions } from "./loadtest.ts";
 export { workersImports } from "./check.ts";
@@ -65,7 +65,8 @@ Usage:
                                   Pretty-print the app's JSON-lines log: a local file (--file),
                                   or \`wrangler tail --format json\` for Cloudflare
   miu deploy <target> [--dry-run] [--force] [--entry app.ts]
-      cloudflare [--out wrangler.toml]  wrangler.toml from your plugins, secrets to set, then deploy
+      cloudflare [--out wrangler.toml] [--compatibility-date YYYY-MM-DD]
+                                        wrangler.toml from your plugins, secrets to set, then deploy
       fly                               Dockerfile (oven/bun, non-root) + fly.toml, then flyctl deploy
       railway                           Dockerfile + railway.json, then railway up
       render                            Dockerfile + render.yaml (deploy from git as a Blueprint)
@@ -86,7 +87,7 @@ const FLAGS: Record<string, FlagSpec> = {
   check: { ...ENTRY, "no-types": "bool" },
   add: {},
   new: { template: "value" },
-  deploy: { ...ENTRY, out: "value", "dry-run": "bool", force: "bool", host: "value", domain: "value", region: "value", port: "value" },
+  deploy: { ...ENTRY, out: "value", "dry-run": "bool", force: "bool", host: "value", domain: "value", region: "value", port: "value", "compatibility-date": "value" },
   db: { db: "value", d1: "value", out: "value", json: "bool", dir: "value", generate: "value", schema: "value" },
   loadtest: { players: "value", duration: "value", action: "value", rate: "value", json: "bool" },
   logs: { last: "value", json: "bool", file: "value", worker: "value" },

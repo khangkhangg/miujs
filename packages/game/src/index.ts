@@ -31,5 +31,5 @@ export { profiles, type ProfilesOptions } from "./profiles.ts";
 export { QueueCore, checkQueueConfig, type Assignment, type MatchPlayer, type MatchSpec, type QueueConfig, type QueueEntry, type QueueSnapshot, type QueueStatus, type RatingSystem, type RoomRef } from "./queue.ts";
 export { DEFAULT_K, DEFAULT_RATING, eloExpected, eloMatch, eloUpdate, glicko2Match, glicko2Update, type Glicko, type Outcome } from "./rating.ts";
 export { gameRoom, matchOf, reportResult, seatOf, seats, type GameInitContext, type GameRoomData, type GameRoomDefinition, type GameRoomOptions, type MatchInfo, type Seat } from "./room.ts";
-export { gameSecret, issueTicket, signToken, verifyTicket, verifyToken, type Ticket, type TicketClaims } from "./sign.ts";
+export { gameSecret, gameSecretFor, issueTicket, signToken, verifyTicket, verifyToken, type Ticket, type TicketClaims } from "./sign.ts";
 export { GameStore, gameMigrations, storeFor, type GameStoreOptions, type MatchRecord, type Profile, type RatingMode, type RatingRow, type Result, type ResultSummary } from "./store.ts";

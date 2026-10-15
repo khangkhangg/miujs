@@ -116,6 +116,16 @@ export function gameSecret(explicit?: string, where: { env?: Record<string, unkn
   return devSecret;
 }
 
+/**
+ * `gameSecret()` that also reads `MIU_GAME_SECRET` from a Worker / Durable Object / room env
+ * (`ctx.env`, the object's `env`, `room.env`). Workers have no process env, so without this the
+ * secret set with `wrangler secret put MIU_GAME_SECRET` was never found there.
+ */
+export function gameSecretFor(explicit: string | undefined, env: Record<string, unknown> | undefined): string {
+  if (explicit === undefined && typeof env?.MIU_GAME_SECRET === "string") return gameSecret(env.MIU_GAME_SECRET);
+  return gameSecret(explicit);
+}
+
 // ---- tickets --------------------------------------------------------------------------------
 
 export interface TicketClaims {

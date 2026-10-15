@@ -61,7 +61,7 @@ miu openapi [entry] [--out f]      # print or write the OpenAPI 3.1 spec
 miu check [entry]                  # leaked secrets (error) and unauthenticated mutations (warning)
 miu add route|job|room|plugin <name>   # scaffold routes/, jobs/, rooms/ or plugins/<name>.ts
 miu new <dir>                      # new project in an empty folder
-miu deploy cloudflare [--dry-run] [--force] [--out wrangler.toml] [--entry app.ts]
+miu deploy cloudflare [--dry-run] [--force] [--out wrangler.toml] [--entry app.ts] [--compatibility-date YYYY-MM-DD]
 miu db pull | migrate ...          # see below
 miu loadtest <ws-url> --action '{"type":"inc","data":{}}' [--players 10] [--duration 10s] [--rate 5] [--json]
 miu help                           # also: miu <command> --help
@@ -114,6 +114,7 @@ Flags per command (anything else is `MIU_E_CLI_UNKNOWN_FLAG`). Value flags accep
 | `--out` | path | stdout (openapi), `wrangler.toml` (deploy), `schema.ts` (db pull) | Output file. |
 | `--dry-run` | bool | `false` | deploy: write and print `wrangler.toml`, run nothing. |
 | `--force` | bool | `false` | deploy: overwrite an existing `wrangler.toml`. |
+| `--compatibility-date` | `YYYY-MM-DD` | today, capped at what the `workerd` in `node_modules` supports | deploy cloudflare: `compatibility_date`. An older local wrangler refuses dates newer than its workerd. |
 | `--db` | path | the only `*.sqlite`/`*.db` file in cwd | db: local SQLite file. |
 | `--d1` | string | none | db: remote D1 database name (`bunx wrangler d1 execute --remote --json`). |
 | `--dir` | path | `migrations` | db migrate: folder of `NNNN_name.sql` files. |
