@@ -151,7 +151,7 @@ The subpath also exports `tableFromSchema(name, t.object(...), { primaryKey, ind
 
 ## Postgres
 
-`@miujs/db/postgres` (needs `postgres` and `drizzle-orm`) gives each request `ctx.orm` (Drizzle over postgres.js) and `ctx.sql` (the postgres.js client). On Cloudflare Workers it creates a client per request from a Hyperdrive binding and closes it after the response; on Bun, Node and Deno it keeps one pool from `DATABASE_URL` that `app.stop()` closes. `migratePostgres(sql, migrations)` applies the same `NNNN_name.sql` files, and `fromPgError(err)` maps constraint errors to 409/400 MiuErrors.
+`@miujs/db/postgres` (needs `postgres` and `drizzle-orm`) gives each request `ctx.orm` (Drizzle over postgres.js) and `ctx.sql` (the postgres.js client). On Cloudflare Workers it creates a client per request from a Hyperdrive binding and closes it after the response; on Bun, Node and Deno it keeps one pool from `DATABASE_URL` that `app.close()` closes. `migratePostgres(sql, migrations)` applies the same `NNNN_name.sql` files, and `fromPgError(err)` maps constraint errors to 409/400 MiuErrors.
 
 ```ts
 import { pg } from "@miujs/db/postgres";

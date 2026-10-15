@@ -55,7 +55,7 @@ describe("todos on Bun (pooled connection)", () => {
 
     expect((await app.request(`/todos/${created.id}`, { method: "DELETE" })).status).toBe(204);
     expect((await app.request(`/todos/${created.id}`, { method: "DELETE" })).status).toBe(404);
-    await app.stop();
+    await app.close();
   });
 });
 

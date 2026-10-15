@@ -7,7 +7,7 @@
 //     Workers at all. A new small client per request, ended through `ctx.waitUntil` after the
 //     response. Workers must not share sockets between requests; Hyperdrive does the pooling.
 //   - Pooled: elsewhere. One long-lived client from `url` / `env.DATABASE_URL`, closed by
-//     `app.stop()` so the process can exit.
+//     `app.close()` so the process can exit.
 //
 // Needs the optional peers `postgres` (postgres.js) and `drizzle-orm`. On Workers, postgres.js
 // needs `compatibility_flags = ["nodejs_compat"]` (`miu deploy cloudflare` adds it with a Hyperdrive

@@ -169,8 +169,10 @@ await server.stop();
 - When you call `app.fetch()` yourself, read or cancel every response body (`await res.text()`,
   `await res.body?.cancel()`). A dropped body keeps its source (an open file, an upstream request)
   alive until garbage collection. Servers (`Bun.serve`, `listen()`, Workers) do this for you.
-- `await app.stop()` waits for background work and calls each plugin's `stop()`, so timers and
+- `await app.close()` waits for background work and calls each plugin's `stop()`, so timers and
   sockets are released and the process can exit. Stopping a `listen()` server calls it for you.
+  (It is `close()`, not `stop()`: Bun does not auto-serve a default export that has a `stop`
+  member, so `bun app.ts` would exit instead of serving.)
 
 ## Options
 

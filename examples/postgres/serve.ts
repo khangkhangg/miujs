@@ -1,5 +1,5 @@
 // Runs the app on Bun / Node with a pooled connection: DATABASE_URL=postgres://... bun serve.ts
-// Ctrl+C stops the server and closes the pool (app.stop()), so the process exits cleanly.
+// Ctrl+C stops the server and closes the pool (app.close()), so the process exits cleanly.
 import app from "./app.ts";
 
 const server = await app.listen(Number(process.env.PORT ?? 3000));

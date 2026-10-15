@@ -108,7 +108,7 @@ by where the app runs, so the same files deploy to Workers, Bun, Deno or Node.
 3. **Router and validation**: params, query and body checked against the route's schemas; bodies
    capped at `maxBodySize`.
 4. **Handler**, then `onResponse` hooks (the bot cache stores eligible responses here).
-5. **Background work** (`waitUntil`, jobs, room timers). `app.stop()` drains it and calls each
+5. **Background work** (`waitUntil`, jobs, room timers). `app.close()` drains it and calls each
    plugin's `stop()`, so processes exit cleanly.
 
 ## Core concepts
@@ -279,7 +279,7 @@ that runs end to end. The full plan is in the
 | **2. Admin + CRM kit** | Done (preview) | Define a resource once and get tables, API, MCP tools, lifecycle events and an admin UI. Pipelines, tasks, search, CSV import/export, and a visual workflow builder |
 | **3. Game kit** | Done (preview) | Room timers on Durable Object alarms, matchmaking and lobbies, join codes, leaderboards, achievements, Unity/Godot clients |
 | **4. 3D tour kit** | Done (preview) | 360° tiling and 3D model compression jobs, hotspots and floor plans, live guided tours, viewing analytics. Healthcare building blocks: field encryption, consent, retention |
-| **5. Hardening** | Done | Leak and exit tests for every package, soak tests over HTTP and WebSockets, memory caps for password hashing, faster body reads, `app.stop()` |
+| **5. Hardening** | Done | Leak and exit tests for every package, soak tests over HTTP and WebSockets, memory caps for password hashing, faster body reads, `app.close()` |
 | **6. Traffic and operations** | Done (preview) | `@miujs/bots` (done): bot, AI crawler and location detection with block / partial / cached / full. Admin System area (done): every package shows its status, lists, settings and actions in the admin and as MCP tools |
 | **Next** | Planned | First real Cloudflare deploy (D1, KV, R2, Queues, Durable Objects, bot score and geo), npm release with prebuilt JS for Node, a Postgres-over-Hyperdrive guide |
 

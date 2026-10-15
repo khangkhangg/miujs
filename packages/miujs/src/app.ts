@@ -812,7 +812,7 @@ export class App {
     // background work finishes, so the process can exit.
     server.stop = async () => {
       await closeServer();
-      await this.stop();
+      await this.close();
     };
     return server;
   }
@@ -821,7 +821,7 @@ export class App {
    * Shut the app down: waits for `ctx.waitUntil` work, then calls each plugin's `stop()` in
    * reverse order (a failing one is logged and the rest still run). Safe to call more than once.
    */
-  stop(): Promise<void> {
+  close(): Promise<void> {
     return (this.stopping ??= (async () => {
       await this.drain();
       for (const p of [...this.plugins].reverse()) {

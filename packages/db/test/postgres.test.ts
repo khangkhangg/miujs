@@ -83,7 +83,7 @@ describe("long-lived pool (Bun / Node / Deno)", () => {
     expect(clients[0].url).toBe(server.url);
     expect(clients[0].options.max).toBe(1);
     expect(clients[0].ended).toBe(false);
-    await a.stop();
+    await a.close();
     expect(clients[0].ended).toBe(true);
   });
 
@@ -94,7 +94,7 @@ describe("long-lived pool (Bun / Node / Deno)", () => {
     const res = await a.dispatch(new Request("http://x/"), { DATABASE_URL: server.url }, { runtime: "bun" });
     expect(await res.json()).toEqual({ n: 42 });
     expect(clients[0].url).toBe(server.url);
-    await a.stop();
+    await a.close();
   });
 
   test("no url and no DATABASE_URL explains the fix", async () => {
@@ -134,7 +134,7 @@ describe("long-lived pool (Bun / Node / Deno)", () => {
     await a.request("/ok", { method: "POST" });
     expect((await a.request("/fail", { method: "POST" })).status).toBe(500);
     expect(await (await a.request("/count")).json()).toEqual({ n: 3 });
-    await a.stop();
+    await a.close();
   });
 
   test("inspect() describes the plugin without the connection string", async () => {
@@ -268,7 +268,7 @@ describe("migratePostgres", () => {
     const a = app(database, [route.get("/", { handler: async (ctx) => (await ctx.sql`SELECT count(*)::int AS n FROM notes`)[0] })]);
     expect(await (await a.request("/")).json()).toEqual({ n: 0 });
     expect(await (await a.request("/")).json()).toEqual({ n: 0 });
-    await a.stop();
+    await a.close();
     // Checked in-process once the socket client is closed: PGlite has a single backend.
     expect((await server.db.query<{ n: number }>("SELECT count(*)::int AS n FROM _miu_migrations")).rows[0].n).toBe(1);
   });

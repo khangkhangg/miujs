@@ -3,7 +3,7 @@
 // reach the app:
 //
 //   GET /__soak/mem[?gc=1][&types=1]   RSS, JSC heap, object counts, in-flight requests, rooms
-//   GET /__soak/stop                   graceful shutdown: server.stop(), app.stop(), then nothing
+//   GET /__soak/stop                   graceful shutdown: server.stop(), app.close(), then nothing
 //                                      (the process should exit by itself)
 //
 // One test-only shim: `x-soak-ip` sets the client IP the app sees (Bun's server.requestIP), so
@@ -128,8 +128,8 @@ server = Bun.serve({
         setTimeout(async () => {
           const t = performance.now();
           await server.stop(true);
-          // app.stop() (drain + plugins' stop hooks) where the framework has it, else drain only.
-          await (app.stop ? app.stop() : app.drain());
+          // app.close() (drain + plugins' stop hooks) where the framework has it, else drain only.
+          await (app.close ? app.close() : app.drain());
           console.error(`STOPPED ${Math.round(performance.now() - t)}`);
         }, 5);
         return new Response("stopping");

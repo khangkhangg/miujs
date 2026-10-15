@@ -12,7 +12,7 @@ A runnable app is in [examples/postgres](../examples/postgres).
 | Drizzle (`drizzle-orm/postgres-js`): select, insert, `returning`, relational `query`, `transaction` | PGlite, as above | |
 | `migratePostgres()`: ordering, bookkeeping, rollback, `$$` bodies, drizzle-kit files | PGlite, as above | |
 | Hyperdrive wiring: client per request from `env.HYPERDRIVE.connectionString`, closed with `ctx.waitUntil` | A fake env binding plus runtime `"workerd"`; the connection behind it is PGlite | This is everything the plugin reads on Workers. |
-| Pool closed by `app.stop()`; the process exits | PGlite, plus an exit check in a fresh process | |
+| Pool closed by `app.close()`; the process exits | PGlite, plus an exit check in a fresh process | |
 | `miu deploy cloudflare` writing `[[hyperdrive]]` | CLI tests | |
 | A networked Postgres server (TLS, auth, many concurrent backends) | Not tested | PGlite has one backend; tests use pools of 1. |
 | Cloudflare Hyperdrive itself, and postgres.js running inside `workerd` | Not tested | Nothing here has been deployed to a real Cloudflare account. |
@@ -56,7 +56,7 @@ export default miu({ name: "notes", routes: [addNote, getNote], plugins: [databa
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/notes bun serve.ts
 ```
 
-where `serve.ts` calls `await app.listen(3000)` (see [examples/postgres/serve.ts](../examples/postgres/serve.ts)). `app.stop()` (or stopping the server returned by `app.listen()`) closes the pool, so the process exits.
+where `serve.ts` calls `await app.listen(3000)` (see [examples/postgres/serve.ts](../examples/postgres/serve.ts)). `app.close()` (or stopping the server returned by `app.listen()`) closes the pool, so the process exits.
 
 ## `pg()` options
 
@@ -149,7 +149,7 @@ Without a Hyperdrive binding on Workers, `pg()` throws `MIU_E_DB_HYPERDRIVE_MISS
 
 | Where | Clients | Pool |
 | --- | --- | --- |
-| Bun, Node, Deno | One long-lived postgres.js client per app | `max` connections (default 10), opened lazily. Closed by `app.stop()`. |
+| Bun, Node, Deno | One long-lived postgres.js client per app | `max` connections (default 10), opened lazily. Closed by `app.close()`. |
 | Workers + Hyperdrive | One client per request, up to 5 connections | Hyperdrive pools real connections to Postgres for you. |
 
 Off Workers, size `max` below your server's `max_connections` divided by the number of app processes. If your database sits behind PgBouncer in transaction mode, pass `options: { prepare: false }`.

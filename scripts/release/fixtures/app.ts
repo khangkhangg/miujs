@@ -166,7 +166,7 @@ try {
   failures.push(`threw: ${e instanceof Error ? e.stack : String(e)}`);
 } finally {
   await server.stop();
-  if (runtime === "node") await app.stop(); // app.listen()'s stop() already stops the app
+  if (runtime === "node") await app.close(); // app.listen()'s stop() already stops the app
 }
 
 console.log(JSON.stringify({
