@@ -1,0 +1,9 @@
+{
+  "name": "@miujs/admin",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "exports": { ".": "./src/index.ts", "./crm": "./src/crm.ts", "./drizzle": "./src/drizzle.ts" },
+  "files": ["src"],
+  "dependencies": { "miujs": "workspace:*", "@miujs/db": "workspace:*", "@miujs/access": "workspace:*", "@miujs/audit": "workspace:*", "@miujs/workflows": "workspace:*", "@miujs/web": "workspace:*", "@miujs/session": "workspace:*", "@miujs/auth": "workspace:*" }
+}
