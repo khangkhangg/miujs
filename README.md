@@ -49,7 +49,7 @@ wrangler deploy     # Cloudflare Workers (or: miu deploy cloudflare)
 | [`@miujs/cli`](packages/cli) | `miu new / dev / test / inspect / openapi / check / add / deploy` |
 | [`@miujs/auth`](packages/auth) | Email + password, API tokens, roles, legacy hash verification |
 | [`@miujs/session`](packages/session) | Signed-cookie or server-side sessions, flash, CSRF protection |
-| [`@miujs/db`](packages/db) | D1-compatible SQL on SQLite (Bun) and Cloudflare D1, migrations |
+| [`@miujs/db`](packages/db) | D1-compatible SQL on SQLite (Bun) and Cloudflare D1, migrations; Postgres over Hyperdrive with Drizzle |
 | [`@miujs/cache`](packages/cache) | `remember()`, tags, memory LRU or Cloudflare KV |
 | [`@miujs/queue`](packages/queue) | Typed jobs, retries with backoff, cron schedules, Cloudflare Queues |
 | [`@miujs/realtime`](packages/realtime) | Authoritative rooms over WebSockets, Durable Objects, join codes, sharding, React/Vue/Svelte bindings |
@@ -219,14 +219,26 @@ compare within a row, since absolute numbers move ±10% between runs):
 
 | Scenario | MiuJS | Compared with the fastest of Elysia and Hono |
 | --- | ---: | ---: |
-| `POST /json`, body validation → JSON | ~400k req/s | **103–104%** (fastest) |
-| `GET /users/:id`, params → JSON | ~950k–1M req/s | 82–90% |
-| `GET /` text, called the way `Bun.serve` calls it | ~1.5M req/s | 84–90% |
+| `POST /json`, body validation → JSON | ~400k req/s | **94–111%** (usually fastest) |
+| `GET /users/:id`, params → JSON | ~1M req/s | **95–103%** |
+| `GET /` text, called the way `Bun.serve` calls it | ~1.5M req/s | 83–101% |
+| `GET /` text, plain `app.fetch(req)` | ~1.3M req/s | 81–91% |
 | Cold start, process start → first response | **~11 ms** | Hono ~13 ms, Elysia ~53 ms |
+
+MiuJS gets there without generating code at runtime (Workers forbid `eval` and `new Function`):
+each route picks a specialized dispatcher at startup, unconstrained string params skip a no-op
+validation, and repeated text responses are cloned from a cached `Response`. CI fails a pull
+request that drops any of these ratios by more than 5% (`bench/compare.ts`).
 
 Over real HTTP all three frameworks hit the same loopback ceiling (~72k req/s on this
 machine). Memory kept per 10,000 requests is about zero for all three. Method and history:
 [bench/README.md](bench/README.md); run it with `bun bench/run.ts` (`BENCH_HTTP=1` adds HTTP).
+
+**On Cloudflare's runtime** (workerd, run locally with `bun run workerd`;
+[report](scripts/workerd/REPORT.md)): the core bundle is **16.2 KB gzipped** (target under 60 KB),
+the first request after a fresh start takes ~14 ms for the core alone and ~30 ms with auth, session
+and cache, and a D1 read with a session check has p99 9.3 ms. These are local numbers, not edge
+numbers.
 
 **Memory and stability** ([soak report](scripts/soak/REPORT.md)): the example apps ran under
 sustained load over real HTTP and WebSockets on Bun, Node and Deno.
@@ -281,7 +293,8 @@ that runs end to end. The full plan is in the
 | **4. 3D tour kit** | Done (preview) | 360° tiling and 3D model compression jobs, hotspots and floor plans, live guided tours, viewing analytics. Healthcare building blocks: field encryption, consent, retention |
 | **5. Hardening** | Done | Leak and exit tests for every package, soak tests over HTTP and WebSockets, memory caps for password hashing, faster body reads, `app.close()` |
 | **6. Traffic and operations** | Done (preview) | `@miujs/bots` (done): bot, AI crawler and location detection with block / partial / cached / full. Admin System area (done): every package shows its status, lists, settings and actions in the admin and as MCP tools |
-| **Next** | Planned | First real Cloudflare deploy (D1, KV, R2, Queues, Durable Objects, bot score and geo), npm release with prebuilt JS for Node, a Postgres-over-Hyperdrive guide |
+| **7. Release readiness** | Done (preview) | Example apps run on Cloudflare's runtime locally (`bun run workerd`, 69 scenarios), npm packages verified on Node, Deno, Bun and a Workers bundle, Postgres over Hyperdrive (`@miujs/db/postgres`, [guide](docs/postgres.md)), per-route fast paths, CI benchmark gate |
+| **Next** | Needs accounts | First deploy to a real Cloudflare account (edge bot score and geo, CPU limits, Queues at scale), first npm publish (needs the `@miujs` scope and the `miujs` name) |
 
 ### Automation workflows
 
@@ -318,9 +331,10 @@ export const followUp = defineWorkflow("contact-follow-up", {
   validation, body limits, cookies, `ctx.ip`, MCP, `waitUntil`); all pass. The full test suite runs on
   Bun only. Node won't strip types inside `node_modules`, so the npm build ships prebuilt JS and
   `.d.ts` for Node and Deno (Bun still loads the TypeScript source).
-- **Speed:** fastest on validated JSON bodies; 10–18% behind Elysia on a params route and
-  10–16% behind on a trivial text route under `Bun.serve`. Elysia compiles one function per route
-  with `new Function`, which Workers forbid ([bench](bench/README.md)).
+- **Speed:** level with Elysia on params and validated bodies. A trivial text route is still
+  9–19% behind when called as plain `app.fetch(req)`: MiuJS keeps `content-type` on the Response
+  object (tests and plugins rely on it) and pays ~30–50 ns of generic dispatch that only runtime code
+  generation would remove, which Workers forbid ([bench](bench/README.md)).
 - **Bot detection:** without Cloudflare's bot score, detection relies on user agents and headers,
   so a crawler that copies a browser's headers passes as human.
 - **Verified only against fakes:** Redis and S3 adapters (fake servers, AWS signature test vectors),
