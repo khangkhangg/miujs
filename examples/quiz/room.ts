@@ -42,13 +42,12 @@ interface Secret {
   questions: Question[];
   questionMs: number;
   answers: Record<string, { choice: number; at: number }>;
+  /** Id of the pending `reveal` timer (secret state is persisted, so this survives hibernation). */
+  deadlineTimer: string | null;
 }
 
 type QuizState = Infer<typeof quizState>;
 type QuizRoom = Room<QuizState, Secret>;
-
-// Pending deadline timers, per room (functions are not part of persisted state).
-const deadlines = new WeakMap<object, () => void>();
 
 function leaderboard(state: QuizState) {
   return Object.entries(state.players)
@@ -76,15 +75,20 @@ function ask(room: QuizRoom, now: number) {
   s.reveal = null;
   room.secret.answers = {};
   for (const p of Object.values(s.players)) p.gained = 0;
-  deadlines.get(room)?.();
-  deadlines.set(room, room.after(questionMs, () => reveal(room)));
+  clearDeadline(room);
+  // A named timer (not an after() closure): it is persisted and survives Durable Object hibernation.
+  room.secret.deadlineTimer = room.schedule("reveal", questionMs, { round: s.round });
+}
+
+function clearDeadline(room: QuizRoom) {
+  if (room.secret.deadlineTimer) room.cancel(room.secret.deadlineTimer);
+  room.secret.deadlineTimer = null;
 }
 
 function reveal(room: QuizRoom) {
   const s = room.state;
   if (s.phase !== "question") return;
-  deadlines.get(room)?.();
-  deadlines.delete(room);
+  clearDeadline(room);
   const q = room.secret.questions[s.round];
   const counts = q.choices.map(() => 0);
   const ms = room.secret.questionMs;
@@ -112,7 +116,13 @@ export function createQuiz(questions: Question[], opts: { questionMs?: number } 
       next: t.object({}),
     },
     init: () => ({ phase: "lobby" as const, round: -1, total: questions.length, question: null, deadline: null, answered: [], reveal: null, players: {}, leaderboard: [] }),
-    secret: (): Secret => ({ questions, questionMs, answers: {} }),
+    secret: (): Secret => ({ questions, questionMs, answers: {}, deadlineTimer: null }),
+    timers: {
+      // The question deadline. `round` guards against a stale timer from an earlier question.
+      reveal: ({ room, data }) => {
+        if (room.state.round === data.round) reveal(room);
+      },
+    },
     onJoin: ({ room, player }) => {
       if (player.role !== "player") return;
       room.state.players[player.id] = { name: player.name, score: 0, gained: 0 };

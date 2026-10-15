@@ -31,8 +31,8 @@ a `correct` field before the reveal. `test/app.test.ts` plays over real WebSocke
 
 | File | What |
 |------|------|
-| `room.ts` | The quiz room: state schema, `start` / `answer` / `next` handlers, scoring. `createQuiz(questions)` builds one with your own questions. |
-| `app.ts` | The server: rooms plugin, `POST /api/games` (new code), `GET /` (the web page), MCP on. |
+| `room.ts` | The quiz room: state schema, `start` / `answer` / `next` handlers, scoring, and the question deadline as a named timer (`timers.reveal`, scheduled with `room.schedule`) so it survives Durable Object hibernation. `createQuiz(questions)` builds one with your own questions. |
+| `app.ts` | The server: rooms plugin, `POST /api/games` (`createRoom` → room id + 6-digit code), `GET /rooms/code/:code` (code → room id, rate-limited per IP), `GET /` (the web page), MCP on. |
 | `public/index.html` | Single-file vanilla JS client speaking the [wire protocol](../../packages/realtime/PROTOCOL.md). |
 
 ## For agents
@@ -54,6 +54,10 @@ class_name = "MiuRooms"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["MiuRooms"]
+
+[[kv_namespaces]]
+binding = "ROOM_CODES"   # join codes (rooms({ codes: "ROOM_CODES" }))
+id = "<your KV namespace id>"
 ```
 
 `miu deploy cloudflare` generates this from the rooms plugin. Note: `GET /` reads

@@ -18,7 +18,8 @@ async function readText(url: URL): Promise<string> {
 
 const html = await readText(new URL("./public/index.html", import.meta.url));
 
-const realtime = rooms({ rooms: [quiz] });
+// `codes`: on Cloudflare, join codes live in this KV namespace (declared for `miu deploy cloudflare`).
+const realtime = rooms({ rooms: [quiz], codes: "ROOM_CODES" });
 
 export const home = route.get("/", {
   summary: "The quiz web client (host and players)",
@@ -27,11 +28,11 @@ export const home = route.get("/", {
 });
 
 export const createGame = route.post("/api/games", {
-  summary: "Reserve a 6-digit room code for a new quiz game",
-  handler: () => {
-    let code = rooms.createCode();
-    while (realtime.registry.get("quiz", code)) code = rooms.createCode();
-    return { code, join: `/rooms/quiz/${code}` };
+  summary: "Create a quiz game and its 6-digit join code",
+  handler: async () => {
+    // Players type the code; GET /rooms/code/:code turns it into the room id to connect to.
+    const { id, code } = await realtime.createRoom("quiz");
+    return { id, code, join: `/rooms/quiz/${id}` };
   },
 });
 

@@ -5,7 +5,12 @@
   "license": "AGPL-3.0-only",
   "exports": {
     ".": "./src/index.ts",
-    "./client": "./src/client.ts"
+    "./client": "./src/client.ts",
+    "./react": "./src/react.ts",
+    "./vue": "./src/vue.ts",
+    "./svelte": "./src/svelte.ts",
+    "./msgpack": "./src/msgpack.ts",
+    "./loadtest": "./src/loadtest.ts"
   },
   "files": ["src", "PROTOCOL.md"],
   "dependencies": { "miujs": "workspace:*" }

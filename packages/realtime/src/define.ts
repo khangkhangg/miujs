@@ -31,13 +31,27 @@ export interface Room<S = any, X = any> {
   /** Everyone in the room, including players inside the reconnect grace period. */
   readonly players: readonly Player[];
   player(id: string): Player | undefined;
-  /** Send an event to every connected player (optionally skipping one). */
-  broadcast(event: string, data?: unknown, opts?: { except?: string }): void;
+  /**
+   * Send an event to every connected player. `except` skips one player id; `to` picks who gets it
+   * (e.g. `{ to: (p) => p.role === "host" }` or a team).
+   */
+  broadcast(event: string, data?: unknown, opts?: { except?: string; to?: (player: Player) => boolean }): void;
   /** Send an event to one player. */
   send(playerId: string, event: string, data?: unknown): void;
-  /** Run `fn` once after `ms`. Returns a cancel function. */
+  /**
+   * Run the timer handler `name` (declared in `defineRoom({ timers })`) after `delayMs`, with
+   * `data` (JSON). Named timers are persisted, so they survive Durable Object hibernation and
+   * restarts. Returns the timer id for `cancel()`.
+   */
+  schedule(name: string, delayMs: number, data?: unknown): string;
+  /** Cancel a named timer. Returns false if it already ran or never existed. */
+  cancel(timerId: string): boolean;
+  /**
+   * Run `fn` once after `ms`. Returns a cancel function. Local rooms only: a closure cannot
+   * survive Durable Object hibernation, so on Cloudflare this throws; use `schedule()`.
+   */
   after(ms: number, fn: () => void | Promise<void>): () => void;
-  /** Run `fn` `hz` times per second until cancelled. */
+  /** Run `fn` `hz` times per second until cancelled. Local rooms only (see `after`). */
   tick(hz: number, fn: (info: { dt: number; now: number }) => void | Promise<void>): () => void;
   /** Current time from the room clock (ms since epoch; fake in tests). */
   now(): number;
@@ -65,6 +79,26 @@ export interface RoomDefinition<S, X, C extends Record<string, Schema<any>>> {
   onJoin?(ctx: { room: Room<S, X>; player: Player; now: number }): MaybePromise<void>;
   onLeave?(ctx: { room: Room<S, X>; player: Player; now: number }): MaybePromise<void>;
   on?: { [K in keyof C]?: (ctx: { room: Room<S, X>; sender: Player; msg: Infer<C[K]>; now: number }) => MaybePromise<void> };
+  /**
+   * What one player may see (interest management: hidden hands, fog of war). Each client gets
+   * `view(state, player)` instead of the full state, and patches are diffed per view. Must be
+   * pure and return JSON; `state` is the committed state (do not mutate it).
+   */
+  view?: (state: S, player: Player) => unknown;
+  /**
+   * Named timer handlers for `room.schedule(name, delayMs, data)`. Unlike `after()` closures,
+   * these are addressable by name after a restart, so they work on Durable Objects (alarms).
+   */
+  timers?: Record<string, (ctx: { room: Room<S, X>; data: any; now: number }) => MaybePromise<void>>;
+  /**
+   * Per-connection inbound frame limit. Default 30 frames/s with a burst of 60. Frames over the
+   * limit are dropped (the first drop sends `MIU_E_ROOM_RATE_LIMITED`); a client that stays over
+   * the limit for `kickAfterMs` (default 3000) without a quiet second is disconnected (4008).
+   * `false` turns it off.
+   */
+  rateLimit?: { perSecond?: number; burst?: number; kickAfterMs?: number } | false;
+  /** Largest accepted inbound frame in bytes. Default 16 384. Bigger frames close the socket (1009). */
+  maxMessageBytes?: number;
   /** Max non-spectator players. Default unlimited. */
   maxPlayers?: number;
   /** How long a disconnected player keeps their seat. Default 30 000 ms. */

@@ -7,6 +7,7 @@
 //   room.send("answer", { choice: 2 });
 
 import { applyPatch, type PatchOp } from "./diff.ts";
+import { decode as msgpackDecode, encode as msgpackEncode } from "./msgpack.ts";
 
 export interface Me {
   id: string;
@@ -26,6 +27,8 @@ export interface ConnectOptions {
   WebSocket?: new (url: string) => WebSocket;
   /** Auto-reconnect with the resume token. Default on. */
   reconnect?: boolean | { minDelayMs?: number; maxDelayMs?: number; maxAttempts?: number };
+  /** Wire encoding. `msgpack` sends `?enc=msgpack` and uses binary MessagePack frames. Default `json`. */
+  encoding?: "json" | "msgpack";
 }
 
 export interface ErrorFrame {
@@ -62,7 +65,7 @@ export interface RoomClient<S = any> {
 }
 
 /** Close codes after which reconnecting would not help. */
-const TERMINAL = new Set([1000, 4001, 4003, 4004, 4005]);
+const TERMINAL = new Set([1000, 1003, 1009, 4001, 4003, 4004, 4005, 4008]);
 
 export function connect<S = any>(url: string, opts: ConnectOptions = {}): RoomClient<S> {
   const WS = opts.WebSocket ?? (globalThis as { WebSocket?: new (url: string) => WebSocket }).WebSocket;
@@ -70,7 +73,8 @@ export function connect<S = any>(url: string, opts: ConnectOptions = {}): RoomCl
   const rc = opts.reconnect === false ? null : { minDelayMs: 250, maxDelayMs: 5_000, maxAttempts: Infinity, ...(typeof opts.reconnect === "object" ? opts.reconnect : {}) };
 
   const listeners = new Map<string, Set<(data: any, extra?: any) => void>>();
-  const queue: string[] = [];
+  const packed = opts.encoding === "msgpack";
+  const queue: (string | Uint8Array<ArrayBuffer>)[] = [];
   let state: S | undefined;
   let me: Me | null = null;
   let hostKey = opts.hostKey;
@@ -106,18 +110,20 @@ export function connect<S = any>(url: string, opts: ConnectOptions = {}): RoomCl
     if (opts.role) u.searchParams.set("role", opts.role);
     if (hostKey) u.searchParams.set("hostKey", hostKey);
     if (resumeToken) u.searchParams.set("resume", resumeToken);
+    if (packed) u.searchParams.set("enc", "msgpack");
     return u.toString();
   };
 
   const open = () => {
     const sock = new WS(buildUrl());
+    if (packed) sock.binaryType = "arraybuffer";
     ws = sock;
     joined = false;
     sock.addEventListener("open", () => emit("open"));
     sock.addEventListener("message", (e: MessageEvent) => {
       let f: any;
       try {
-        f = JSON.parse(String(e.data));
+        f = typeof e.data === "string" ? JSON.parse(e.data) : msgpackDecode(e.data instanceof Uint8Array ? e.data : new Uint8Array(e.data as ArrayBuffer));
       } catch {
         return;
       }
@@ -201,7 +207,8 @@ export function connect<S = any>(url: string, opts: ConnectOptions = {}): RoomCl
       return () => set!.delete(fn);
     },
     send(type, data = {}) {
-      const msg = JSON.stringify({ t: "msg", type, data });
+      const f = { t: "msg", type, data };
+      const msg = packed ? msgpackEncode(f) : JSON.stringify(f);
       if (ws && joined && ws.readyState === 1) ws.send(msg);
       else queue.push(msg);
     },

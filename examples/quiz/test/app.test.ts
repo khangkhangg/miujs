@@ -2,14 +2,16 @@ import { expect, test } from "bun:test";
 import { connect } from "@miujs/realtime/client";
 import app from "../app.ts";
 
-test("serves the web client and hands out 6-digit game codes", async () => {
+test("serves the web client and hands out 6-digit game codes that resolve to the room", async () => {
   const page = await app.request("/");
   expect(page.headers.get("content-type")).toContain("text/html");
   expect(await page.text()).toContain("MiuJS Quiz");
   const res = await app.request("/api/games", { method: "POST" });
   const body = await res.json();
   expect(body.code).toMatch(/^\d{6}$/);
-  expect(body.join).toBe(`/rooms/quiz/${body.code}`);
+  expect(body.join).toBe(`/rooms/quiz/${body.id}`);
+  const found = await app.request(`/rooms/code/${body.code}`);
+  expect(await found.json()).toEqual({ type: "quiz", id: body.id });
 });
 
 test("host and player play over real WebSockets; the question arrives without its answer", async () => {

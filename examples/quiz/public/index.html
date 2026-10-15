@@ -42,7 +42,7 @@ const $app = document.getElementById("app");
 const $err = document.getElementById("err");
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
-let ws = null, state = null, me = null, code = null, name = null, role = null, closedByUser = false, timer = null;
+let ws = null, state = null, me = null, code = null, roomId = null, name = null, role = null, closedByUser = false, timer = null;
 const store = { get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } },
                 set: (k, v) => { try { sessionStorage.setItem(k, v); } catch {} } };
 
@@ -58,29 +58,29 @@ function applyPatch(doc, ops) {
   return doc;
 }
 
-function join(roomCode, playerName, asHost) {
-  code = roomCode; name = playerName; role = asHost ? "host" : "player";
-  const u = new URL(`/rooms/quiz/${code}`, location.href);
+function join(id, roomCode, playerName, asHost) {
+  roomId = id; code = roomCode; name = playerName; role = asHost ? "host" : "player";
+  const u = new URL(`/rooms/quiz/${roomId}`, location.href);
   u.protocol = location.protocol === "https:" ? "wss:" : "ws:";
   u.searchParams.set("name", name);
   if (asHost) u.searchParams.set("role", "host");
-  const resume = store.get(`resume:${code}`);
+  const resume = store.get(`resume:${roomId}`);
   if (resume) u.searchParams.set("resume", resume);
-  const hostKey = store.get(`hostKey:${code}`);
+  const hostKey = store.get(`hostKey:${roomId}`);
   if (hostKey) u.searchParams.set("hostKey", hostKey);
   ws = new WebSocket(u);
   ws.onmessage = (e) => {
     const f = JSON.parse(e.data);
-    if (f.t === "welcome") { me = f.me; store.set(`resume:${code}`, f.resumeToken); if (f.hostKey) store.set(`hostKey:${code}`, f.hostKey); $err.textContent = ""; }
+    if (f.t === "welcome") { me = f.me; store.set(`resume:${roomId}`, f.resumeToken); if (f.hostKey) store.set(`hostKey:${roomId}`, f.hostKey); $err.textContent = ""; }
     else if (f.t === "state") state = f.state;
     else if (f.t === "patch") state = applyPatch(state, f.ops);
     else if (f.t === "error") $err.textContent = `${f.message}${f.fix ? " — " + f.fix : ""}`;
     render();
   };
   ws.onclose = (e) => {
-    if (closedByUser || [1000, 4003, 4004, 4005].includes(e.code)) return;
+    if (closedByUser || [1000, 1003, 1009, 4003, 4004, 4005, 4008].includes(e.code)) return;
     $err.textContent = "Connection lost, reconnecting…";
-    setTimeout(() => join(code, name, role === "host"), 1000);
+    setTimeout(() => join(roomId, code, name, role === "host"), 1000);
   };
 }
 
@@ -96,14 +96,18 @@ function home() {
       <button id="join">Join</button></div>`;
   document.getElementById("create").onclick = async () => {
     const res = await fetch("/api/games", { method: "POST" });
-    const { code } = await res.json();
-    join(code, "Host", true);
+    const { id, code } = await res.json();
+    join(id, code, "Host", true);
   };
-  document.getElementById("join").onclick = () => {
+  document.getElementById("join").onclick = async () => {
     const c = document.getElementById("code").value.trim();
     const n = document.getElementById("name").value.trim();
     if (!/^\d{6}$/.test(c) || !n) { $err.textContent = "Enter the 6-digit code and your name."; return; }
-    join(c, n, false);
+    // The code is only for typing; the server turns it into the room id (rate-limited per IP).
+    const res = await fetch(`/rooms/code/${c}`);
+    if (!res.ok) { $err.textContent = (await res.json()).error?.message ?? "Unknown code."; return; }
+    const { id } = await res.json();
+    join(id, c, n, false);
   };
 }
 

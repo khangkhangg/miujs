@@ -158,3 +158,38 @@ test("the built-in question set never ships answers in state", () => {
   expect(JSON.stringify(inst.room.state)).not.toContain('"answer"');
   expect(hasKey(inst.room.state, "correct")).toBe(false);
 });
+
+test("the question deadline is a named timer, so it survives hibernation (snapshot → durable restore)", async () => {
+  const { clock, inst, say } = setup();
+  const host = client();
+  const ann = client();
+  inst.connect(host, { name: "Host" });
+  inst.connect(ann, { name: "Ann" });
+  say(host, "start");
+  const snap = JSON.parse(JSON.stringify(inst.snapshot()));
+  inst.close();
+  expect(snap.timers).toEqual([expect.objectContaining({ name: "reveal", at: clock.now() + QUESTION_MS })]);
+
+  const woken = createRoomInstance(quiz, { id: "123456", clock, durable: true, restore: snap });
+  woken.attach(ann, ann.me.id);
+  clock.advance(QUESTION_MS);
+  await woken.runDue();
+  expect(woken.room.state.phase).toBe("reveal");
+  expect(ann.view.phase).toBe("reveal");
+});
+
+test("a stale deadline from an earlier round never reveals the next question early", () => {
+  const { clock, inst, say } = setup();
+  const host = client();
+  const ann = client();
+  inst.connect(host, { name: "Host" });
+  inst.connect(ann, { name: "Ann" });
+  say(host, "start");
+  clock.advance(1_000);
+  say(ann, "answer", { choice: 1 }); // everyone answered → reveal now; round-0 deadline is moot
+  say(host, "next");
+  clock.advance(QUESTION_MS - 1_000); // round 0's deadline time passes during round 1
+  expect(ann.view.phase).toBe("question");
+  clock.advance(1_000);
+  expect(ann.view.phase).toBe("reveal");
+});

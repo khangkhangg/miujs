@@ -1,12 +1,27 @@
 # MiuJS rooms wire protocol (v1)
 
 Everything a client needs to join a MiuJS realtime room from any language (Unity, Godot,
-Swift, Python, a browser without the JS SDK). The protocol is plain JSON over WebSocket.
+Swift, Python, a browser without the JS SDK). Frames are JSON over WebSocket by default, or
+MessagePack if you ask for it (see [Encodings](#encodings)).
+
+## Join codes
+
+Rooms made with `createRoom()` on the server have a 6-digit code for humans to type. Resolve it
+over plain HTTP, then connect to the room id:
+
+```
+GET http(s)://<host>/rooms/code/<code>   →  200 {"type":"quiz","id":"r1f3a…"}
+```
+
+| Status | Code | When |
+|--------|------|------|
+| 404 | `MIU_E_ROOM_CODE_UNKNOWN` | No live room has this code (codes expire, default 6 hours). |
+| 429 | `MIU_E_ROOM_CODE_RATE_LIMITED` | Too many lookups from your IP (default 30/minute, burst 10). Wait and retry. |
 
 ## Connecting
 
 ```
-GET ws(s)://<host>/rooms/<type>/<id>?name=<name>&role=<role>&resume=<token>&hostKey=<key>
+GET ws(s)://<host>/rooms/<type>/<id>?name=<name>&role=<role>&resume=<token>&hostKey=<key>&enc=<json|msgpack>
 ```
 
 | Query     | Required | Meaning |
@@ -15,8 +30,9 @@ GET ws(s)://<host>/rooms/<type>/<id>?name=<name>&role=<role>&resume=<token>&host
 | `role`    | no       | `player` (default), `host` or `spectator`. |
 | `resume`  | no       | `resumeToken` from an earlier `welcome`: get your old seat back. |
 | `hostKey` | no       | `hostKey` from the host's `welcome`: join as a second host device. |
+| `enc`     | no       | `json` (default) or `msgpack`. Any other value: `MIU_E_ROOM_ENCODING_UNSUPPORTED`, close `1003`. |
 
-- `<type>` is the room type (e.g. `quiz`); `<id>` is 1-64 of `A-Z a-z 0-9 _ -` (e.g. a 6-digit code).
+- `<type>` is the room type (e.g. `quiz`); `<id>` is 1-64 of `A-Z a-z 0-9 _ -` (from a join code, or any id you pick).
 - The room is created on first join. **The first non-spectator to join is the host.**
 - Plain HTTP on this URL returns `426` (`MIU_E_WS_EXPECTED`); an unknown type returns `404`
   (`MIU_E_ROOM_TYPE_UNKNOWN`). Both are JSON `{ "error": { code, message, fix } }`.
@@ -25,7 +41,17 @@ If the query has no `name` and no `resume`, the connection stays open and waits 
 
 ## Frames
 
-Every frame is one JSON object (text frame) with a string field `t`. Binary frames are rejected.
+Every frame is one object with a string field `t`: a JSON text frame, or a MessagePack binary
+frame on `enc=msgpack` connections. Binary frames on a JSON connection are rejected.
+
+Limits per connection (the room may change them):
+
+- **Size:** a frame over 16 KiB (UTF-8 bytes) gets `MIU_E_ROOM_MESSAGE_TOO_LARGE` and the socket
+  is closed with `1009`.
+- **Rate:** 30 frames per second with bursts of 60 (every frame counts, `ping` included). Extra
+  frames are dropped; the first drop in a streak gets one `MIU_E_ROOM_RATE_LIMITED` error. If you
+  stay over the limit for 3 seconds without a quiet second, the socket is closed with `4008`. Your
+  seat is kept for the reconnect grace period, as with any disconnect.
 
 ### Client → server
 
@@ -40,7 +66,7 @@ Every frame is one JSON object (text frame) with a string field `t`. Binary fram
 | `t`       | Fields | Meaning |
 |-----------|--------|---------|
 | `welcome` | `me: {id, name, role}`, `room: {type, id}`, `resumeToken`, `resumed`, `hostKey?` | You joined. Store `resumeToken` to reconnect. `hostKey` is only sent to hosts. Sent again on the same connection if your role changes (e.g. you were promoted to host). |
-| `state`   | `state` | The full room state. Sent right after `welcome` (also after a resume). Replace your copy. |
+| `state`   | `state` | The full room state, or your view of it (see below). Sent right after `welcome` (also after a resume). Replace your copy. |
 | `patch`   | `ops: [...]` | Changes since the last `state`/`patch`. Apply in order (see below). |
 | `event`   | `event`, `data` | A one-off event from `room.broadcast()` / `room.send()`. |
 | `error`   | `code`, `message`, `fix?`, `details?`, `id?` | Something you sent was rejected. The connection stays open unless noted. |
@@ -48,6 +74,11 @@ Every frame is one JSON object (text frame) with a string field `t`. Binary fram
 
 Ordering guarantee: state changes made by the server before it sends an `event` arrive (as a
 `patch`) before that event.
+
+**Per-player views.** A room may define `view(state, player)`. Then each client's `state` and
+`patch` frames describe *its own* view (e.g. only your hand, or only nearby units), and patches
+are diffed against what that client last saw. Nothing changes for the client: apply them as usual.
+Events may likewise go to some players only.
 
 ## Patches
 
@@ -85,11 +116,26 @@ with `reconnectMs`). Reconnect with `?resume=<resumeToken>`: you get a `welcome`
 
 If the same player connects twice, the older connection is closed with code `4001`.
 
+Reconnect to the same URL you joined (`/rooms/<type>/<id>`). In large sharded rooms the token
+starts with `s<n>.`, which routes you back to your shard; treat it as opaque.
+
+## Encodings
+
+Add `?enc=msgpack` to use [MessagePack](https://msgpack.org) instead of JSON. Every frame in both
+directions is then one binary WebSocket message holding a MessagePack map with exactly the same
+fields as the JSON frame (`{t: "msg", type: "answer", data: {choice: 2}}`). The server uses nil,
+bool, int, float64, str, array and map (and bin only if your data carries bytes). It reads any
+standard format, including float32 and int64. Text JSON frames are still accepted on a msgpack
+connection. JSON stays the default; the JS SDK opts in with `connect(url, { encoding: "msgpack" })`.
+
 ## Close codes
 
 | Code | Meaning | Reconnect? |
 |------|---------|------------|
 | 1000 | Room closed normally | no |
+| 1003 | `MIU_E_ROOM_ENCODING_UNSUPPORTED`: unknown `enc` | no |
+| 1009 | `MIU_E_ROOM_MESSAGE_TOO_LARGE`: a frame was over the size limit | no (fix the client) |
+| 4008 | `MIU_E_ROOM_RATE_LIMITED`: kept sending over the rate limit | no (fix the client) |
 | 4001 | Replaced by a newer connection for the same player | no |
 | 4003 | `MIU_E_ROOM_HOST_KEY`: asked for `host` without the right `hostKey` | no |
 | 4004 | `MIU_E_ROOM_CLOSED`: room was closed | no |
@@ -100,7 +146,10 @@ If the same player connects twice, the older connection is closed with code `400
 
 | Code | When |
 |------|------|
-| `MIU_E_ROOM_BAD_FRAME` | Not JSON, not an object, binary, or unknown `t`. |
+| `MIU_E_ROOM_BAD_FRAME` | Not JSON/MessagePack, not an object, binary on a JSON connection, or unknown `t`. |
+| `MIU_E_ROOM_RATE_LIMITED` | Frame dropped for exceeding the rate limit; sustained abuse closes the connection (4008). |
+| `MIU_E_ROOM_MESSAGE_TOO_LARGE` | Frame over the size limit (connection closed, 1009). |
+| `MIU_E_ROOM_ENCODING_UNSUPPORTED` | `enc` is not `json` or `msgpack` (connection closed, 1003). |
 | `MIU_E_ROOM_JOIN_INVALID` | Missing/too long name, unknown role. |
 | `MIU_E_ROOM_ALREADY_JOINED` | A second `join` on one connection. |
 | `MIU_E_ROOM_NOT_JOINED` | `msg` before joining. |
@@ -132,4 +181,7 @@ Errors never close the room and, unless listed above, never close your connectio
 ## Cloudflare
 
 On Workers each room is one Durable Object named `"<type>:<id>"` (binding `MIU_ROOMS` by
-default). The wire protocol is identical.
+default). Sharded rooms use `"<type>:<id>"` as the coordinator and `"<type>:<id>:shard<n>"`
+per shard; `welcome.room.id` is then `<id>:shard<n>`. Join codes live in a KV namespace. Timers
+and the reconnect grace period run from Durable Object alarms, so they fire even after the room
+hibernated. The wire protocol is identical.

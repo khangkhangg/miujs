@@ -108,3 +108,16 @@ test("close() stops reconnecting", async () => {
   expect(reopened).toBe(0);
   expect(c.connected).toBe(false);
 });
+
+test("encoding: 'msgpack' negotiates ?enc=msgpack and speaks binary frames both ways", async () => {
+  const c = connect<{ lines: string[] }>(base + "C6", { name: "Ann", encoding: "msgpack" });
+  await c.ready;
+  expect(new URL(c.socket!.url).searchParams.get("enc")).toBe("msgpack");
+  const kinds: string[] = [];
+  c.socket!.addEventListener("message", (e: MessageEvent) => kinds.push(typeof e.data === "string" ? "text" : "binary"));
+  c.send("say", { text: "packed" });
+  await until(() => c.state && c.state.lines.length === 1);
+  expect(c.state!.lines).toEqual(["Ann: packed"]);
+  expect(kinds).toEqual(["binary"]);
+  c.close();
+});
