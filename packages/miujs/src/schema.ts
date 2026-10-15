@@ -75,7 +75,8 @@ const FORMATS: Record<string, RegExp> = {
 export interface StringOptions extends Common {
   minLength?: number;
   maxLength?: number;
-  pattern?: RegExp;
+  /** A RegExp, or a pattern string (compiled once with `new RegExp`, which Workers allow). */
+  pattern?: RegExp | string;
   format?: "uuid" | "email" | "url" | "date" | "date-time";
 }
 
@@ -83,10 +84,11 @@ function string(opts: StringOptions = {}): Schema<string> {
   const json: JsonSchema = { type: "string" };
   if (opts.minLength !== undefined) json.minLength = opts.minLength;
   if (opts.maxLength !== undefined) json.maxLength = opts.maxLength;
-  if (opts.pattern) json.pattern = opts.pattern.source;
+  const pattern = typeof opts.pattern === "string" ? new RegExp(opts.pattern) : opts.pattern;
+  if (pattern) json.pattern = pattern.source;
   if (opts.format) json.format = opts.format;
   const format = opts.format ? FORMATS[opts.format] : undefined;
-  const { minLength, maxLength, pattern } = opts;
+  const { minLength, maxLength } = opts;
   return schema("string", json, (v, path, issues) => {
     if (typeof v !== "string") {
       issues.push({ path, message: `expected string, got ${typeName(v)}` });
