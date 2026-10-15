@@ -1,5 +1,18 @@
 // @miujs/db — a D1-compatible SQL interface. The same code runs on Cloudflare D1 and, locally,
-// on bun:sqlite. Deliberately small: prepare/bind/first/all/run, batch, exec, migrate.
+// on bun:sqlite. Deliberately small: prepare/bind/first/all/run/raw, batch, exec, migrate.
+//
+// Entry points:
+//   "@miujs/db"          Database, sqlite(), d1(), db() plugin, migrate()/migrateOnce(), splitSql(),
+//                        loadMigrations()/migrationsFromGlob(), introspect(), generateDrizzleSchema().
+//   "@miujs/db/drizzle"  drizzle(ctx)/drizzleFor(db), tableFromSchema()/schemaFromTable(),
+//                        describeTable()/diffSchema(). Needs the optional peer `drizzle-orm`.
+//
+// Postgres / MySQL (not built): MiuJS targets D1/SQLite. On Cloudflare, Postgres or MySQL is
+// reached through a Hyperdrive binding plus a driver (postgres.js / pg / mysql2) and Drizzle's own
+// adapter (drizzle-orm/postgres-js, drizzle-orm/mysql2), created per request from
+// `ctx.env.HYPERDRIVE.connectionString`. None of this package's SQL helpers (splitSql, introspect,
+// diffSchema, tableFromSchema DDL) speak those dialects. A future `@miujs/db` adapter would need a
+// dialect-aware Database interface first; until then use Drizzle directly for those databases.
 
 import { definePlugin, detectRuntime, errors, targetRuntime, type CloudflareNeeds, type Env, type Runtime } from "miujs";
 
@@ -26,6 +39,8 @@ export interface Statement {
   first<T = Record<string, unknown>>(): Promise<T | null>;
   all<T = Record<string, unknown>>(): Promise<D1Result<T>>;
   run<T = Record<string, unknown>>(): Promise<D1Result<T>>;
+  /** Rows as arrays in column order; with `columnNames`, the first array holds the names. */
+  raw<T = unknown[]>(options?: { columnNames?: boolean }): Promise<T[]>;
 }
 
 /** The subset of Cloudflare's `D1Database` MiuJS relies on. A D1 binding satisfies it as-is. */
@@ -100,6 +115,8 @@ const INFO = Symbol.for("miujs.db.info");
 
 interface BunStmt {
   all(...p: unknown[]): any[];
+  values(...p: unknown[]): unknown[][];
+  readonly columnNames: string[];
   get(...p: unknown[]): any;
   run(...p: unknown[]): { changes: number; lastInsertRowid: number | bigint };
 }
@@ -125,35 +142,80 @@ function normalize(values: unknown[]): unknown[] {
   });
 }
 
-/** Splits SQL on `;` outside quotes and comments. Good enough for migrations; not a parser. */
+const WORD = /[A-Za-z0-9_$]/;
+const CLOSE: Record<string, string> = { "'": "'", '"': '"', "`": "`", "[": "]" };
+
+/**
+ * Splits a SQLite script into statements on `;`. Understands quoted strings and identifiers
+ * (`'…'`, `"…"`, `` `…` ``, `[…]`), strips `--` and `/* *\/` comments, and keeps
+ * `CREATE TRIGGER … BEGIN …; …; END` bodies (including nested `CASE … END`) in one statement.
+ * SQLite has no `$$` quoting, so `$` is an ordinary character. A tokenizer, not a parser.
+ */
 export function splitSql(sql: string): string[] {
   const out: string[] = [];
   let cur = "";
-  let quote: string | null = null;
+  // Per-statement state: leading keywords (to spot CREATE [TEMP] TRIGGER), trigger body, CASE depth.
+  let head: string[] = [];
+  let inBody = false;
+  let caseDepth = 0;
+  const flush = () => {
+    const s = cur.trim();
+    if (s) out.push(s);
+    cur = "";
+    head = [];
+    inBody = false;
+    caseDepth = 0;
+  };
+  const isTrigger = () =>
+    head[0] === "CREATE" && (head[1] === "TRIGGER" || ((head[1] === "TEMP" || head[1] === "TEMPORARY") && head[2] === "TRIGGER"));
   for (let i = 0; i < sql.length; i++) {
     const c = sql[i];
-    if (quote) {
-      cur += c;
-      if (c === quote) quote = null;
-      continue;
-    }
-    if (c === "'" || c === '"' || c === "`") {
-      quote = c;
-      cur += c;
+    const close = CLOSE[c];
+    if (close) {
+      const end = sql.indexOf(close, i + 1);
+      const stop = end === -1 ? sql.length : end + 1;
+      cur += sql.slice(i, stop);
+      i = stop - 1;
       continue;
     }
     if (c === "-" && sql[i + 1] === "-") {
-      while (i < sql.length && sql[i] !== "\n") i++;
+      const nl = sql.indexOf("\n", i);
+      if (nl === -1) break;
+      i = nl - 1; // keep the newline itself
       continue;
     }
-    if (c === ";") {
-      if (cur.trim()) out.push(cur.trim());
-      cur = "";
+    if (c === "/" && sql[i + 1] === "*") {
+      const end = sql.indexOf("*/", i + 2);
+      if (end === -1) break;
+      cur += " ";
+      i = end + 1;
+      continue;
+    }
+    if (WORD.test(c) && !(i > 0 && WORD.test(sql[i - 1]))) {
+      let j = i;
+      while (j < sql.length && WORD.test(sql[j])) j++;
+      const word = sql.slice(i, j);
+      const upper = word.toUpperCase();
+      if (head.length < 3) head.push(upper);
+      if (isTrigger()) {
+        if (upper === "CASE") caseDepth++;
+        else if (upper === "BEGIN" && !inBody) inBody = true;
+        else if (upper === "END") {
+          if (caseDepth > 0) caseDepth--;
+          else inBody = false;
+        }
+      }
+      cur += word;
+      i = j - 1;
+      continue;
+    }
+    if (c === ";" && !inBody) {
+      flush();
       continue;
     }
     cur += c;
   }
-  if (cur.trim()) out.push(cur.trim());
+  flush();
   return out;
 }
 
@@ -217,6 +279,11 @@ export function sqlite(path: string = ":memory:", opts: SqliteOptions = {}): Dat
     }
     async run<T>(): Promise<D1Result<T>> {
       return runOne(await open(), this.sql, normalize(this.values), "run");
+    }
+    async raw<T>(options?: { columnNames?: boolean }): Promise<T[]> {
+      const stmt = (await open()).prepare(this.sql);
+      const rows = stmt.values(...normalize(this.values));
+      return (options?.columnNames ? [stmt.columnNames, ...rows] : rows) as T[];
     }
   }
 
@@ -306,11 +373,21 @@ export function migrateOnce(database: Database, migrations: Migration[]): Promis
 // ---------------------------------------------------------------------------------------------
 // plugin
 
+/** Options for `db({ drizzle })`. Needs the optional peer dependency `drizzle-orm`. */
+export interface DrizzleOptions {
+  /** Tables (and relations) for the relational query API, `ctx.orm.query.<table>`. */
+  schema?: Record<string, unknown>;
+  logger?: boolean;
+  casing?: "snake_case" | "camelCase";
+}
+
 export interface DbOptions {
   /** Default: `d1("DB")` on Workers, `sqlite(":memory:")` elsewhere. */
   database?: DatabaseSource;
   /** Applied once per database before it is first handed to a request. */
   migrations?: Migration[];
+  /** Also decorate `ctx.orm` with Drizzle over `ctx.db` (see `@miujs/db/drizzle`). */
+  drizzle?: DrizzleOptions;
 }
 
 declare module "miujs" {
@@ -320,20 +397,60 @@ declare module "miujs" {
   }
 }
 
-/** Decorates `ctx.db`. */
+/** @internal Where `@miujs/db/drizzle` registers its factory when it is loaded. */
+export const DRIZZLE_FACTORY = Symbol.for("miujs.db.drizzle");
+type OrmFactory = (database: Database, options: DrizzleOptions) => unknown;
+
+async function loadDrizzle(): Promise<OrmFactory> {
+  const registered = () => (globalThis as Record<symbol, unknown>)[DRIZZLE_FACTORY] as OrmFactory | undefined;
+  if (!registered()) {
+    try {
+      // Not a literal specifier on purpose: bundlers must not pull in drizzle-orm for apps that
+      // don't use it. Bundled apps (Workers) import "@miujs/db/drizzle" themselves.
+      const entry = new URL("./drizzle.ts", import.meta.url).href;
+      await import(/* @vite-ignore */ entry);
+    } catch (err) {
+      if (!registered()) {
+        throw errors.config(
+          "MIU_E_DB_DRIZZLE_MISSING",
+          `db({ drizzle }) could not load Drizzle: ${(err as Error)?.message ?? err}`,
+          'Install drizzle-orm (bun add drizzle-orm) and add `import "@miujs/db/drizzle";` to your app entry (required when bundling, e.g. on Cloudflare Workers).',
+        );
+      }
+    }
+  }
+  return registered()!;
+}
+
+function tableNames(schema: Record<string, unknown> | undefined): string[] {
+  const NAME = Symbol.for("drizzle:Name");
+  const IS_TABLE = Symbol.for("drizzle:IsDrizzleTable");
+  return Object.values(schema ?? {})
+    .filter((v) => typeof v === "object" && v !== null && (v as any)[IS_TABLE] === true)
+    .map((v) => (v as any)[NAME] as string);
+}
+
+/** Decorates `ctx.db`, and `ctx.orm` when `drizzle` is set. */
 export function db(opts: DbOptions = {}) {
   let source: DatabaseSource | undefined = opts.database;
   const getSource = () => (source ??= targetRuntime() === "workerd" ? d1("DB") : sqlite());
+  let factory: Promise<OrmFactory> | undefined;
   return definePlugin({
     name: "db",
     async onRequest(ctx) {
       const database = resolveDatabase(getSource(), ctx.env);
       if (opts.migrations?.length) await migrateOnce(database, opts.migrations);
       (ctx as { db: Database }).db = database;
+      if (opts.drizzle) {
+        const make = await (factory ??= loadDrizzle());
+        (ctx as unknown as { orm: unknown }).orm = make(database, opts.drizzle);
+      }
     },
     inspect() {
-      const info = describeDatabase(getSource());
-      return opts.migrations?.length ? { ...info, migrations: opts.migrations.map((m) => m.id) } : info;
+      const info: Record<string, unknown> = describeDatabase(getSource());
+      if (opts.migrations?.length) info.migrations = opts.migrations.map((m) => m.id);
+      if (opts.drizzle) info.drizzle = { tables: tableNames(opts.drizzle.schema) };
+      return info;
     },
     cloudflare(): CloudflareNeeds {
       const s = getSource();
@@ -341,3 +458,24 @@ export function db(opts: DbOptions = {}) {
     },
   });
 }
+
+// ---------------------------------------------------------------------------------------------
+// introspection, DDL and schema generation (no drizzle-orm needed)
+
+export {
+  createIndexSql,
+  createTableSql,
+  generateDrizzleSchema,
+  introspect,
+  quoteIdent,
+  tableSql,
+  type ColumnDescription,
+  type ForeignKeyDescription,
+  type IndexDescription,
+  type SchemaDescription,
+  type TableDescription,
+} from "./introspect.ts";
+
+// migrations from files
+
+export { loadMigrations, migrationsFromGlob, type LoadMigrationsOptions } from "./files.ts";
